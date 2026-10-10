@@ -1,0 +1,23 @@
+[package]
+name = "swoop-core"
+description = "Swoop 下载引擎：多连接分段、动态分段窃取、断点续传、限速"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+percent-encoding = { workspace = true }
+bytes = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tracing-subscriber = { workspace = true }

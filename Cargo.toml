@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["mufeng"]
+
+[workspace.dependencies]
+swoop-core = { path = "crates/core" }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync"] }
+tokio-util = { version = "0.7" }
+reqwest = { version = "0.13", features = ["stream", "socks"] }
+url = "2"
+percent-encoding = "2"
+bytes = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dirs = "7"
+
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "persistence"] }
+egui = "0.36"
+egui_extras = "0.36"
+egui-phosphor = "0.14"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2
