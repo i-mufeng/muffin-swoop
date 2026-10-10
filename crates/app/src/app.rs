@@ -22,11 +22,16 @@ pub struct SwoopApp {
     pub default_dir: PathBuf,
     pub limit_enabled: bool,
     pub limit_mbps: f64,
+    pub progress_style: crate::ui::progress::ProgressStyle,
 }
 
 impl SwoopApp {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>) -> Self {
-        let palette = Palette::dark();
+        // SWOOP_THEME=light 可指定启动主题（主题持久化放在 v0.2）
+        let palette = match std::env::var("SWOOP_THEME").as_deref() {
+            Ok("light") => Palette::light(),
+            _ => Palette::dark(),
+        };
         palette.apply(&cc.egui_ctx);
         let default_dir = dirs::download_dir()
             .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
@@ -43,6 +48,7 @@ impl SwoopApp {
             default_dir,
             limit_enabled: false,
             limit_mbps: 5.0,
+            progress_style: crate::ui::progress::ProgressStyle::from_env(),
         }
     }
 
@@ -108,6 +114,9 @@ impl eframe::App for SwoopApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.tasks = self.engine.snapshot();
+        if crate::demo::enabled() {
+            self.tasks.extend(crate::demo::tasks(&self.default_dir));
+        }
         self.handle_shortcuts(&ctx);
 
         // 面板顺序决定布局：侧栏占满左侧，状态栏/顶栏只占右侧剩余宽度

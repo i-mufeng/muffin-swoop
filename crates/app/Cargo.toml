@@ -11,6 +11,10 @@ authors.workspace = true
 name = "swoop"
 path = "src/main.rs"
 
+[features]
+# 开发用：SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=shot.png 自动截图后退出（wgpu 后端不支持截图）
+screenshot = ["eframe/glow", "eframe/__screenshot"]
+
 [dependencies]
 swoop-core = { workspace = true }
 eframe = { workspace = true }

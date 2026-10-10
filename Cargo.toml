@@ -29,7 +29,7 @@ dirs = "7"
 eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit", "persistence"] }
 egui = "0.36"
 egui_extras = "0.36"
-egui-phosphor = "0.14"
+egui-phosphor = { version = "0.14", features = ["regular", "fill"] }
 
 [profile.release]
 opt-level = 3

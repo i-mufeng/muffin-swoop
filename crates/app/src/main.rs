@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod demo;
 mod fonts;
 mod theme;
 mod ui;
@@ -37,10 +38,15 @@ fn main() -> eframe::Result {
             .with_fullsize_content_view(true);
     }
 
-    let options = eframe::NativeOptions {
+    #[allow(unused_mut)]
+    let mut options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    #[cfg(feature = "screenshot")]
+    if std::env::var("SWOOP_RENDERER").as_deref() == Ok("glow") {
+        options.renderer = eframe::Renderer::Glow;
+    }
 
     eframe::run_native(
         "Swoop",

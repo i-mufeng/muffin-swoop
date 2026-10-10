@@ -44,6 +44,17 @@ impl SwoopApp {
                     });
                     ui.end_row();
 
+                    ui.label(RichText::new("进度条样式").color(p.text_muted));
+                    ui.horizontal(|ui| {
+                        use super::progress::ProgressStyle as S;
+                        for (s, label) in [(S::Cells, "像素格"), (S::Lanes, "轨道"), (S::Overlay, "叠加")] {
+                            if ui.selectable_label(self.progress_style == s, label).clicked() {
+                                self.progress_style = s;
+                            }
+                        }
+                    });
+                    ui.end_row();
+
                     ui.label(RichText::new("每任务连接数").color(p.text_muted));
                     ui.label(format!("{}（v0.2 支持修改与持久化）", self.engine.config().connections));
                     ui.end_row();

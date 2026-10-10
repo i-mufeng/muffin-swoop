@@ -29,6 +29,17 @@ cargo test --workspace            # 单元 + 本地 HTTP 服务器端到端测�
 RUST_LOG=debug cargo run -p swoop-app
 ```
 
+调界面时的两个开关：
+
+```bash
+SWOOP_DEMO=1 cargo run -p swoop-app                     # 混入 8 条假任务，覆盖所有状态
+SWOOP_THEME=light cargo run -p swoop-app                # 以浅色主题启动
+SWOOP_PROGRESS=cells|lanes|overlay cargo run -p swoop-app   # 进度条样式（默认 cells，设置里也可切换）
+# 自动截图后退出（需要 glow 后端）：
+SWOOP_DEMO=1 SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=tmp/shot.png \
+  cargo run -p swoop-app --features screenshot
+```
+
 ## 路线图
 
 - v0.1 骨架：引擎（分段/续传/限速）+ 基础列表 UI ✅

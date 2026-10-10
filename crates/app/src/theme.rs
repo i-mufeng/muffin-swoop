@@ -1,4 +1,4 @@
-//! 设计令牌与 egui 样式映射。所有颜色只在这里定义。
+//! 设计令牌与 egui 样式映射。所有颜色、圆角、图标尺寸只在这里定义。
 
 use egui::epaint::Shadow;
 use egui::{Color32, CornerRadius, FontId, Stroke, TextStyle, Visuals, vec2};
@@ -9,14 +9,23 @@ pub enum Mode {
     Light,
 }
 
+/// 圆角（像素）
+pub const R_CARD: u8 = 12;
+pub const R_CTRL: u8 = 8;
+pub const R_TILE: u8 = 10;
+
+/// 图标尺寸
+pub const ICON_SM: f32 = 14.0;
+pub const ICON_MD: f32 = 16.0;
+
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub mode: Mode,
     /// 窗口最底层背景
     pub bg: Color32,
-    /// 侧栏/面板
+    /// 侧栏/状态栏
     pub panel: Color32,
-    /// 卡片
+    /// 卡片、输入框
     pub surface: Color32,
     pub surface_hover: Color32,
     pub border: Color32,
@@ -25,51 +34,87 @@ pub struct Palette {
     pub accent: Color32,
     pub accent_soft: Color32,
     pub success: Color32,
-    /// 预留给排队/限速等提示状态
-    #[allow(dead_code)]
-    pub warning: Color32,
+    pub success_soft: Color32,
     pub danger: Color32,
+    pub danger_soft: Color32,
     /// 进度条轨道
     pub track: Color32,
+    /// 悬停时叠加的半透明层
+    pub hover_tint: Color32,
+    /// 文件类型色块
+    pub tint_blue: Color32,
+    pub tint_cyan: Color32,
+    pub tint_purple: Color32,
+    pub tint_pink: Color32,
+    pub tint_red: Color32,
+    pub tint_amber: Color32,
+    pub tint_green: Color32,
 }
 
 impl Palette {
     pub fn dark() -> Self {
         Self {
             mode: Mode::Dark,
-            bg: Color32::from_rgb(0x0f, 0x11, 0x15),
-            panel: Color32::from_rgb(0x14, 0x17, 0x1e),
-            surface: Color32::from_rgb(0x1b, 0x1f, 0x29),
-            surface_hover: Color32::from_rgb(0x22, 0x27, 0x33),
-            border: Color32::from_rgb(0x2a, 0x30, 0x3d),
-            text: Color32::from_rgb(0xe8, 0xeb, 0xf2),
-            text_muted: Color32::from_rgb(0x8a, 0x93, 0xa6),
-            accent: Color32::from_rgb(0x6c, 0x8c, 0xff),
-            accent_soft: Color32::from_rgba_unmultiplied(0x6c, 0x8c, 0xff, 0x30),
-            success: Color32::from_rgb(0x3e, 0xcf, 0x8e),
-            warning: Color32::from_rgb(0xf5, 0xb1, 0x4c),
+            bg: Color32::from_rgb(0x0b, 0x0d, 0x12),
+            panel: Color32::from_rgb(0x10, 0x13, 0x1a),
+            surface: Color32::from_rgb(0x16, 0x1a, 0x23),
+            surface_hover: Color32::from_rgb(0x1d, 0x22, 0x2e),
+            border: Color32::from_rgb(0x25, 0x2b, 0x38),
+            text: Color32::from_rgb(0xee, 0xf0, 0xf5),
+            text_muted: Color32::from_rgb(0x8f, 0x98, 0xab),
+            accent: Color32::from_rgb(0x6d, 0x8c, 0xff),
+            accent_soft: Color32::from_rgba_unmultiplied(0x6d, 0x8c, 0xff, 0x2e),
+            success: Color32::from_rgb(0x3d, 0xd6, 0x8c),
+            success_soft: Color32::from_rgba_unmultiplied(0x3d, 0xd6, 0x8c, 0x26),
             danger: Color32::from_rgb(0xff, 0x6b, 0x6b),
-            track: Color32::from_rgb(0x2a, 0x30, 0x3d),
+            danger_soft: Color32::from_rgba_unmultiplied(0xff, 0x6b, 0x6b, 0x26),
+            track: Color32::from_rgb(0x23, 0x29, 0x36),
+            hover_tint: Color32::from_rgba_unmultiplied(0xff, 0xff, 0xff, 0x12),
+            tint_blue: Color32::from_rgb(0x6d, 0x8c, 0xff),
+            tint_cyan: Color32::from_rgb(0x3f, 0xc4, 0xe0),
+            tint_purple: Color32::from_rgb(0xa7, 0x8b, 0xfa),
+            tint_pink: Color32::from_rgb(0xf0, 0x7a, 0xb8),
+            tint_red: Color32::from_rgb(0xff, 0x6b, 0x6b),
+            tint_amber: Color32::from_rgb(0xf5, 0xb1, 0x4c),
+            tint_green: Color32::from_rgb(0x3d, 0xd6, 0x8c),
         }
     }
 
     pub fn light() -> Self {
         Self {
             mode: Mode::Light,
-            bg: Color32::from_rgb(0xf4, 0xf5, 0xf8),
-            panel: Color32::from_rgb(0xed, 0xef, 0xf4),
+            bg: Color32::from_rgb(0xf5, 0xf6, 0xfa),
+            panel: Color32::from_rgb(0xee, 0xf0, 0xf5),
             surface: Color32::WHITE,
-            surface_hover: Color32::from_rgb(0xf6, 0xf7, 0xfb),
-            border: Color32::from_rgb(0xdd, 0xe1, 0xea),
-            text: Color32::from_rgb(0x17, 0x1b, 0x24),
-            text_muted: Color32::from_rgb(0x6b, 0x74, 0x86),
-            accent: Color32::from_rgb(0x4f, 0x72, 0xf5),
-            accent_soft: Color32::from_rgba_unmultiplied(0x4f, 0x72, 0xf5, 0x26),
-            success: Color32::from_rgb(0x1f, 0xa9, 0x71),
-            warning: Color32::from_rgb(0xd9, 0x8c, 0x1e),
-            danger: Color32::from_rgb(0xe0, 0x4f, 0x4f),
-            track: Color32::from_rgb(0xe3, 0xe6, 0xee),
+            surface_hover: Color32::from_rgb(0xf3, 0xf5, 0xf9),
+            border: Color32::from_rgb(0xe1, 0xe5, 0xee),
+            text: Color32::from_rgb(0x16, 0x1a, 0x24),
+            text_muted: Color32::from_rgb(0x63, 0x6b, 0x7e),
+            accent: Color32::from_rgb(0x4a, 0x6c, 0xf2),
+            accent_soft: Color32::from_rgba_unmultiplied(0x4a, 0x6c, 0xf2, 0x22),
+            success: Color32::from_rgb(0x1c, 0x9c, 0x68),
+            success_soft: Color32::from_rgba_unmultiplied(0x1c, 0x9c, 0x68, 0x1f),
+            danger: Color32::from_rgb(0xd6, 0x45, 0x45),
+            danger_soft: Color32::from_rgba_unmultiplied(0xd6, 0x45, 0x45, 0x1f),
+            track: Color32::from_rgb(0xe6, 0xe9, 0xf0),
+            hover_tint: Color32::from_rgba_unmultiplied(0x10, 0x16, 0x28, 0x10),
+            tint_blue: Color32::from_rgb(0x4a, 0x6c, 0xf2),
+            tint_cyan: Color32::from_rgb(0x12, 0x9e, 0xbd),
+            tint_purple: Color32::from_rgb(0x7c, 0x5c, 0xe6),
+            tint_pink: Color32::from_rgb(0xd9, 0x4f, 0x9a),
+            tint_red: Color32::from_rgb(0xd6, 0x45, 0x45),
+            tint_amber: Color32::from_rgb(0xd1, 0x88, 0x14),
+            tint_green: Color32::from_rgb(0x1c, 0x9c, 0x68),
         }
+    }
+
+    /// 色块背景：取色 + 低透明度
+    pub fn soft(&self, c: Color32) -> Color32 {
+        let a = match self.mode {
+            Mode::Dark => 0x2a,
+            Mode::Light => 0x1e,
+        };
+        Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
     }
 
     pub fn apply(&self, ctx: &egui::Context) {
@@ -85,13 +130,14 @@ impl Palette {
         v.hyperlink_color = self.accent;
         v.window_corner_radius = CornerRadius::same(14);
         v.window_stroke = Stroke::new(1.0, self.border);
-        v.window_shadow = Shadow { offset: [0, 10], blur: 30, spread: 0, color: Color32::from_black_alpha(90) };
+        v.window_shadow = Shadow { offset: [0, 12], blur: 36, spread: 0, color: Color32::from_black_alpha(110) };
         v.popup_shadow = Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(70) };
         v.menu_corner_radius = CornerRadius::same(10);
         v.selection.bg_fill = self.accent_soft;
         v.selection.stroke = Stroke::new(1.0, self.accent);
+        v.text_cursor.stroke = Stroke::new(2.0, self.accent);
 
-        let r = CornerRadius::same(8);
+        let r = CornerRadius::same(R_CTRL);
         let w = &mut v.widgets;
         w.noninteractive.bg_fill = self.surface;
         w.noninteractive.weak_bg_fill = self.surface;
@@ -129,9 +175,10 @@ impl Palette {
         ctx.all_styles_mut(|s| {
             s.spacing.item_spacing = vec2(8.0, 6.0);
             s.spacing.button_padding = vec2(12.0, 6.0);
-            s.spacing.interact_size.y = 30.0;
+            s.spacing.interact_size.y = 28.0;
             s.spacing.window_margin = egui::Margin::same(18);
             s.spacing.menu_margin = egui::Margin::same(8);
+            s.spacing.icon_width = 16.0;
             s.interaction.selectable_labels = false;
             s.text_styles.insert(TextStyle::Heading, FontId::proportional(20.0));
             s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
