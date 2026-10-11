@@ -1,7 +1,9 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-Build a native Windows Swoop zip without installation, signing, or upload.
+Build a native Windows Swoop zip and per-user NSIS installer without installation, signing, or upload.
+.DESCRIPTION
+Requires cargo-packager: cargo install cargo-packager --version 0.11.8 --locked
 .EXAMPLE
 powershell -File scripts/package-windows.ps1 -Profile release
 .EXAMPLE
@@ -26,7 +28,7 @@ $stageDir = $null
 $lockDir = $null
 Push-Location -LiteralPath $repoRoot
 try {
-    foreach ($tool in @('cargo', 'rustc')) {
+    foreach ($tool in @('cargo', 'cargo-packager', 'rustc')) {
         if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
             throw "Required command is missing: $tool"
         }
@@ -77,6 +79,7 @@ try {
     $packageName = "Swoop-$version-windows-$arch-$Profile"
     $packageDir = Join-Path $OutputDir $packageName
     $archive = "$packageDir.zip"
+    $installer = "$packageDir-setup.exe"
     # Directory creation without -Force is an exclusive lock for this package name.
     # Set lockDir only after acquisition, so finally never removes another run's lock.
     $candidateLock = Join-Path $OutputDir ".$packageName.lock"
@@ -87,7 +90,7 @@ try {
         throw "Package output is locked; use another -OutputDir or inspect this lock: $candidateLock"
     }
     $lockDir = $candidateLock
-    foreach ($path in @($packageDir, $archive, "$archive.sha256")) {
+    foreach ($path in @($packageDir, $archive, "$archive.sha256", $installer, "$installer.sha256")) {
         if (Test-Path -LiteralPath $path) {
             throw "Output already exists; use another -OutputDir: $path"
         }
@@ -133,6 +136,52 @@ crt_linkage=static_requested
 authenticode_signature=none
 "@ | Set-Content -LiteralPath (Join-Path $stagedPackage 'build-info.txt') -Encoding UTF8
 
+    # The per-user installer puts swoop.exe, swoop-cli.exe and build-info.txt side by side in
+    # %LOCALAPPDATA%\Swoop, the layout swoop-updater replaces in place without elevation.
+    $packagerDir = Join-Path $stageDir 'packager'
+    $packagerOut = Join-Path $packagerDir 'out'
+    $null = New-Item -ItemType Directory -Path $packagerOut
+    # An explicit name keeps cargo-packager 0.11 from probing the config file path as a directory.
+    $packagerConfig = [ordered]@{
+        name         = 'swoop-app'
+        productName  = 'Swoop'
+        version      = $version
+        identifier   = 'com.muffin.swoop'
+        publisher    = 'mufeng'
+        category     = 'Utility'
+        targetTriple = $target
+        binariesDir  = $stagedPackage
+        outDir       = $packagerOut
+        binaries     = @(
+            [ordered]@{ path = 'swoop'; main = $true },
+            [ordered]@{ path = 'swoop-cli'; main = $false }
+        )
+        icons        = @((Join-Path $repoRoot 'assets/brand/swoop/swoop.ico'))
+        resources    = @(
+            [ordered]@{ src = (Join-Path $stagedPackage 'build-info.txt'); target = 'build-info.txt' },
+            [ordered]@{ src = (Join-Path $stagedPackage 'FONT-NOTICE.md'); target = 'FONT-NOTICE.md' }
+        )
+        nsis         = [ordered]@{
+            installMode   = 'currentUser'
+            installerIcon = (Join-Path $repoRoot 'assets/brand/swoop/swoop.ico')
+            languages     = @('SimpChinese', 'English')
+            # Offered as an unchecked option in the uninstaller; downloaded files are never touched.
+            appdataPaths  = @('$APPDATA\com.muffin.swoop')
+        }
+    }
+    $packagerConfigPath = Join-Path $packagerDir 'packager.json'
+    # cargo-packager rejects a UTF-8 BOM, which Windows PowerShell's Set-Content -Encoding UTF8 writes.
+    [System.IO.File]::WriteAllText($packagerConfigPath, ($packagerConfig | ConvertTo-Json -Depth 5), (New-Object System.Text.UTF8Encoding $false))
+    & cargo packager --config $packagerConfigPath --formats nsis
+    if ($LASTEXITCODE -ne 0) { throw "cargo packager failed: $LASTEXITCODE" }
+    $setups = @(Get-ChildItem -LiteralPath $packagerOut -Filter '*-setup.exe' -File)
+    if ($setups.Count -ne 1) { throw "Expected exactly one NSIS installer in $packagerOut" }
+    $stagedInstaller = Join-Path $stageDir "$packageName-setup.exe"
+    Move-Item -LiteralPath $setups[0].FullName -Destination $stagedInstaller
+    $installerHash = (Get-FileHash -LiteralPath $stagedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$installerHash  $packageName-setup.exe" | Set-Content -LiteralPath "$stagedInstaller.sha256" -Encoding ASCII
+    Remove-Item -LiteralPath $packagerDir -Recurse -Force
+
     # Build the complete zip before moving it into its final location.
     $stagedArchive = Join-Path $stageDir "$packageName.zip"
     Compress-Archive -LiteralPath $stagedPackage -DestinationPath $stagedArchive -CompressionLevel Optimal
@@ -141,9 +190,12 @@ authenticode_signature=none
     Move-Item -LiteralPath $stagedPackage -Destination $packageDir
     Move-Item -LiteralPath $stagedArchive -Destination $archive
     Move-Item -LiteralPath "$stagedArchive.sha256" -Destination "$archive.sha256"
+    Move-Item -LiteralPath $stagedInstaller -Destination $installer
+    Move-Item -LiteralPath "$stagedInstaller.sha256" -Destination "$installer.sha256"
     Write-Output "Package: $packageDir"
     Write-Output "Archive: $archive"
     Write-Output "Checksum: $archive.sha256"
+    Write-Output "Installer: $installer"
     Write-Output 'Local development package only; no Authenticode signature, install, launch, registry change, or upload performed.'
 }
 finally {

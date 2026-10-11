@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       upload_artifacts:
-        description: Upload unsigned desktop packages and extension bundles to this workflow run
+        description: Upload unsigned desktop packages, installers and extension bundles to this workflow run
         type: boolean
         required: false
         default: false
@@ -40,6 +40,9 @@ jobs:
         with:
           toolchain: stable
           components: clippy
+      # Installed before the static-CRT/target overrides below so they do not apply to the tool build.
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
       - name: Configure native Windows static CRT
         if: runner.os == 'Windows'
         shell: pwsh
@@ -108,6 +111,37 @@ jobs:
           $cli = Join-Path $packages[0].FullName 'swoop-cli.exe'
           python scripts/verify-windows-icon.py $gui $cli
           if ($LASTEXITCODE -ne 0) { throw 'Packaged executable icons do not match A.' }
+      - name: Smoke test Windows installer silent install and uninstall
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -Path target/packages -Directory -Filter 'Swoop-*-windows-*-release')
+          if ($packages.Count -ne 1) { throw 'Expected exactly one packaged Windows release.' }
+          $setup = "$($packages[0].FullName)-setup.exe"
+          $dir = Join-Path $env:RUNNER_TEMP 'swoop-install'
+          # /NS skips shortcuts; /D must be the last argument and unquoted.
+          $p = Start-Process -FilePath $setup -ArgumentList '/S', '/NS', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode)" }
+          foreach ($name in 'swoop.exe', 'swoop-cli.exe', 'build-info.txt', 'FONT-NOTICE.md', 'uninstall.exe') {
+            if (-not (Test-Path -LiteralPath (Join-Path $dir $name) -PathType Leaf)) { throw "Installed file missing: $name" }
+          }
+          foreach ($name in 'swoop.exe', 'swoop-cli.exe', 'build-info.txt') {
+            $installed = (Get-FileHash -LiteralPath (Join-Path $dir $name)).Hash
+            $packaged = (Get-FileHash -LiteralPath (Join-Path $packages[0].FullName $name)).Hash
+            if ($installed -ne $packaged) { throw "Installed $name differs from the zip package" }
+          }
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Swoop'
+          if (-not (Test-Path -LiteralPath $key)) { throw 'Per-user uninstall entry missing' }
+          $version = & (Join-Path $dir 'swoop-cli.exe') --json --version
+          if ($LASTEXITCODE -ne 0) { throw "Installed CLI failed: $LASTEXITCODE" }
+          Write-Output "Installed CLI: $version"
+          # _?= keeps the uninstaller in place so -Wait covers the whole removal.
+          $p = Start-Process -FilePath (Join-Path $dir 'uninstall.exe') -ArgumentList '/S', "_?=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstaller exited with $($p.ExitCode)" }
+          foreach ($name in 'swoop.exe', 'swoop-cli.exe', 'build-info.txt') {
+            if (Test-Path -LiteralPath (Join-Path $dir $name)) { throw "Uninstall left $name behind" }
+          }
+          if (Test-Path -LiteralPath $key) { throw 'Uninstall entry was not removed' }
       - name: Upload explicitly requested validation artifacts
         if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -115,6 +149,8 @@ jobs:
           name: Swoop-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
           path: |
             target/packages/*.zip
+            target/packages/*.dmg
+            target/packages/*-setup.exe
             target/packages/*.sha256
             extension/dist/
             extension/dist-firefox/

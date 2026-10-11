@@ -8,7 +8,8 @@ Usage: bash scripts/package-macos.sh [--profile release|debug] [--skip-build] [-
 
 Defaults: release profile, build the native architecture, output to target/packages.
 --skip-build reuses an existing binary; it does not verify that binary matches current sources.
-Output contains Swoop.app, swoop-cli, usage/validation notes, a zip, and its SHA-256 checksum.
+Output contains Swoop.app, swoop-cli, usage/validation notes, a zip, a DMG installer, and their SHA-256 checksums.
+Requires cargo-packager (cargo install cargo-packager --version 0.11.8 --locked).
 EOF
 }
 
@@ -35,7 +36,7 @@ done
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root"
-for tool in cargo rustc plutil ditto shasum lipo; do
+for tool in cargo cargo-packager rustc plutil ditto shasum lipo hdiutil cmp; do
   command -v "$tool" >/dev/null || fail "Required command is missing: $tool"
 done
 
@@ -74,47 +75,79 @@ output_dir=$(cd "$output_dir" && pwd)
 package_name="Swoop-$version-macos-$arch-$profile"
 package_dir="$output_dir/$package_name"
 archive="$output_dir/$package_name.zip"
+dmg="$output_dir/$package_name.dmg"
 # mkdir 是同名打包的独占锁，避免两个进程都通过存在性检查后互相覆盖。
 lock_dir="$output_dir/.$package_name.lock"
 mkdir "$lock_dir" 2>/dev/null || fail "Package output is locked; use another --output-dir or inspect this lock: $lock_dir"
 stage_dir=
+mount_dir=
 cleanup() {
+  [[ -z "$mount_dir" ]] || hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
   [[ -z "$stage_dir" ]] || rm -rf "$stage_dir"
   rmdir "$lock_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
-for path in "$package_dir" "$archive" "$archive.sha256"; do
+for path in "$package_dir" "$archive" "$archive.sha256" "$dmg" "$dmg.sha256"; do
   [[ ! -e "$path" && ! -L "$path" ]] || fail "Output already exists; use another --output-dir: $path"
 done
 
 stage_dir=$(mktemp -d "$output_dir/.swoop-package.XXXXXX")
-bundle="$stage_dir/$package_name/Swoop.app"
-mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
-cp "$binary" "$bundle/Contents/MacOS/swoop"
-chmod 755 "$bundle/Contents/MacOS/swoop"
-cp "$cli_binary" "$stage_dir/$package_name/swoop-cli"
-chmod 755 "$stage_dir/$package_name/swoop-cli"
-cp assets/fonts/NOTICE.md "$bundle/Contents/Resources/FONT-NOTICE.md"
-cp assets/brand/swoop/swoop.icns "$bundle/Contents/Resources/swoop.icns"
-cat > "$bundle/Contents/Info.plist" <<EOF
+# Swoop.app 与 DMG 都由 cargo-packager 生成，ZIP 复用同一个 .app，保证两种包内容一致。
+packager_dir="$stage_dir/packager"
+mkdir -p "$packager_dir/bin" "$packager_dir/out"
+cp "$binary" "$packager_dir/bin/swoop"
+chmod 755 "$packager_dir/bin/swoop"
+# cargo-packager 用完整 semver 和构建时间戳写版本号；macOS 只认数字点分版本，这里覆盖回去。
+cat > "$packager_dir/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Swoop</string>
-  <key>CFBundleDisplayName</key><string>Swoop</string>
-  <key>CFBundleIdentifier</key><string>com.muffin.swoop</string>
-  <key>CFBundleExecutable</key><string>swoop</string>
-  <key>CFBundleIconFile</key><string>swoop.icns</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$bundle_version</string>
   <key>CFBundleVersion</key><string>$bundle_version</string>
-  <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
-  <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>
 EOF
+json_str() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
+# 显式写 name：cargo-packager 0.11 缺 name 时会把配置文件路径当目录探测而失败。
+cat > "$packager_dir/packager.json" <<EOF
+{
+  "name": "swoop-app",
+  "productName": "Swoop",
+  "version": $(json_str "$version"),
+  "identifier": "com.muffin.swoop",
+  "category": "Utility",
+  "targetTriple": $(json_str "$host_target"),
+  "binariesDir": $(json_str "$packager_dir/bin"),
+  "outDir": $(json_str "$packager_dir/out"),
+  "binaries": [{ "path": "swoop", "main": true }],
+  "icons": [$(json_str "$repo_root/assets/brand/swoop/swoop.icns")],
+  "resources": [{ "src": $(json_str "$repo_root/assets/fonts/NOTICE.md"), "target": "FONT-NOTICE.md" }],
+  "macos": { "infoPlistPath": $(json_str "$packager_dir/Info.plist") }
+}
+EOF
+cargo packager --config "$packager_dir/packager.json" --formats app,dmg
+dmgs=("$packager_dir/out"/*.dmg)
+[[ ${#dmgs[@]} -eq 1 && -f "${dmgs[0]}" ]] || fail "Expected exactly one DMG in $packager_dir/out"
+mkdir -p "$stage_dir/$package_name"
+bundle="$stage_dir/$package_name/Swoop.app"
+ditto "$packager_dir/out/Swoop.app" "$bundle"
 plutil -lint "$bundle/Contents/Info.plist"
+cmp -s "$binary" "$bundle/Contents/MacOS/swoop" || fail 'Packaged executable differs from the built binary'
+cp "$cli_binary" "$stage_dir/$package_name/swoop-cli"
+chmod 755 "$stage_dir/$package_name/swoop-cli"
+
+# 挂载只读 DMG 核对：拖进「应用程序」的 Swoop.app 必须与 ZIP 中的同一份。
+hdiutil verify -quiet "${dmgs[0]}"
+mount_dir="$stage_dir/mnt"
+mkdir "$mount_dir"
+hdiutil attach "${dmgs[0]}" -readonly -nobrowse -noautoopen -mountpoint "$mount_dir" -quiet
+[[ -L "$mount_dir/Applications" ]] || fail 'DMG is missing the Applications link'
+diff -r "$bundle" "$mount_dir/Swoop.app" >/dev/null || fail 'DMG Swoop.app differs from the zip bundle'
+hdiutil detach "$mount_dir" -quiet
+mount_dir=
+mv "${dmgs[0]}" "$stage_dir/$package_name.dmg"
+(cd "$stage_dir" && shasum -a 256 "$package_name.dmg" > "$package_name.dmg.sha256")
 
 cp README.md "$stage_dir/$package_name/README.md"
 mkdir -p "$stage_dir/$package_name/docs" "$stage_dir/$package_name/crates/media" "$stage_dir/$package_name/assets/fonts"
@@ -148,5 +181,7 @@ ditto -c -k --sequesterRsrc --keepParent "$stage_dir/$package_name" "$stage_dir/
 mv "$stage_dir/$package_name" "$package_dir"
 mv "$stage_dir/$package_name.zip" "$archive"
 mv "$stage_dir/$package_name.zip.sha256" "$archive.sha256"
-printf 'Bundle: %s\nArchive: %s\nChecksum: %s\n' "$package_dir/Swoop.app" "$archive" "$archive.sha256"
+mv "$stage_dir/$package_name.dmg" "$dmg"
+mv "$stage_dir/$package_name.dmg.sha256" "$dmg.sha256"
+printf 'Bundle: %s\nArchive: %s\nChecksum: %s\nInstaller: %s\n' "$package_dir/Swoop.app" "$archive" "$archive.sha256" "$dmg"
 printf 'Local development package only; no Developer ID signature, notarization, install, launch, or upload performed.\n'

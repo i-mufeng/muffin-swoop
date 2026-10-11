@@ -38,6 +38,7 @@ python3 -m venv target/ftp-fixture-venv && target/ftp-fixture-venv/bin/python -m
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings   # 与 CI 一致，警告即失败
 cd extension && npm test && npm run typecheck && npm run build
+bash scripts/package-macos.sh   # zip + DMG；Windows 用 scripts/package-windows.ps1 出 zip + NSIS setup.exe；需先 cargo install cargo-packager --version 0.11.8 --locked
 ```
 
 CI（`.github/workflows/ci.yml`）在 macOS 和 Windows 上跑以上检查并打包；Windows 只能靠 CI 验证。

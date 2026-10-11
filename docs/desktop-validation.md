@@ -2,13 +2,15 @@
 
 应用名称为 **Swoop**，应用标识为 **`com.muffin.swoop`**。桌面版本直接读取 Cargo workspace，当前为 `0.1.0`；浏览器扩展使用自己的 manifest/package 版本，不能拿扩展版本替代桌面版本。
 
-推荐每个平台原生构建和验证：macOS 生成 `.app`，Windows 生成可解压运行的 zip。脚本使用 `Cargo.lock`，不修改用户设置、系统注册表或安装目录，不签名、公证、发布、上传、启动应用，不覆盖已有产物。这里的可重现指相同锁文件和命令可再次构建、核对哈希；未承诺不同机器、不同工具链产物逐字节一致。
+推荐每个平台原生构建和验证：macOS 生成 `.app`、zip 和 DMG，Windows 生成可解压运行的 zip 和按用户安装的 NSIS 安装包。安装包由 [cargo-packager](https://github.com/crabnebula-dev/cargo-packager) 0.11.8 生成；zip 仍是签名更新使用的包格式，安装包只负责首次安装。脚本使用 `Cargo.lock`，不修改用户设置、系统注册表或安装目录，不签名、公证、发布、上传、启动应用，不覆盖已有产物。这里的可重现指相同锁文件和命令可再次构建、核对哈希；未承诺不同机器、不同工具链产物逐字节一致。
 
 ## 本地构建
 
 ### macOS
 
-需要 Rust 1.95 或更新版本及 Xcode Command Line Tools。脚本使用系统自带的 Bash、`plutil`、`ditto`、`lipo`、`shasum`；不需要安装额外打包器。
+需要 Rust 1.95 或更新版本、Xcode Command Line Tools 和 cargo-packager（`cargo install cargo-packager --version 0.11.8 --locked`）。`Swoop.app` 由 cargo-packager 生成，zip 与 DMG 共用同一份；其余步骤使用系统自带的 Bash、`plutil`、`ditto`、`lipo`、`shasum`、`hdiutil`。
+
+cargo-packager 首次生成 DMG 时会从 GitHub 下载固定提交的 `create-dmg` 脚本到用户缓存目录。本地运行时它用 AppleScript 让 Finder 摆放 DMG 窗口图标，系统可能询问是否允许终端控制 Finder；设置 `CI=true` 会跳过这一步（DMG 内容不变，只是窗口不排版）。脚本最后会只读挂载 DMG，核对其中的 `Swoop.app` 与 zip 内完全一致，并确认有「应用程序」快捷方式。
 
 ```bash
 # 原生架构 release 构建；M 系列 Mac 产出 arm64，Intel Mac 产出 x86_64。
@@ -35,9 +37,11 @@ Swoop-0.1.0-macos-arm64-release/
   build-info.txt
 Swoop-0.1.0-macos-arm64-release.zip
 Swoop-0.1.0-macos-arm64-release.zip.sha256
+Swoop-0.1.0-macos-arm64-release.dmg
+Swoop-0.1.0-macos-arm64-release.dmg.sha256
 ```
 
-用 Finder 把 `Swoop.app` 复制到自己的 `~/Applications/` 后打开即可，不必写入系统 `/Applications/`，不需要管理员权限。重新打包时指定新的输出目录；脚本会拒绝覆盖旧包。用 `shasum -a 256 -c <zip>.sha256` 核对压缩包，命令在校验文件所在目录执行。
+DMG 只含 `Swoop.app` 和「应用程序」快捷方式，打开后拖入即可；`swoop-cli` 只在 zip 中提供。也可用 Finder 把 zip 里的 `Swoop.app` 复制到自己的 `~/Applications/` 后打开，不必写入系统 `/Applications/`，不需要管理员权限。重新打包时指定新的输出目录；脚本会拒绝覆盖旧包。用 `shasum -a 256 -c <zip>.sha256` 核对压缩包，命令在校验文件所在目录执行。
 
 两平台脚本都以输出目录内的 `.<包名>.lock/` 防止同名并发打包；检查到已有包、zip 或校验文件便失败。正常退出会释放自己的锁，异常断电或强制结束后可能留锁，此时先确认没有打包进程，再选择新输出目录或检查残留锁。脚本不会自动删除其他进程的锁，也不会覆盖旧包。
 
@@ -52,7 +56,7 @@ macOS 通知需要系统能解析应用标识。若日志明确显示 `set_appli
 
 ### Windows
 
-构建机需要 MSVC 版 Rust 1.95 或更新版本、Visual Studio C++ Build Tools / Windows SDK，以及 PowerShell 5.1 或更新版本。安装编译工具可能需要管理员，但运行产物不需要这些构建工具。
+构建机需要 MSVC 版 Rust 1.95 或更新版本、Visual Studio C++ Build Tools / Windows SDK、PowerShell 5.1 或更新版本，以及 cargo-packager（`cargo install cargo-packager --version 0.11.8 --locked`）。cargo-packager 首次生成安装包时会把 NSIS 3.09 工具链和插件下载到用户缓存目录（带哈希校验）。安装编译工具可能需要管理员，但运行产物不需要这些构建工具。
 
 ```powershell
 # 从仓库根目录执行。默认 release，也可 -Profile debug。
@@ -81,11 +85,17 @@ Swoop-0.1.0-windows-x86_64-release/
   build-info.txt
 Swoop-0.1.0-windows-x86_64-release.zip
 Swoop-0.1.0-windows-x86_64-release.zip.sha256
+Swoop-0.1.0-windows-x86_64-release-setup.exe
+Swoop-0.1.0-windows-x86_64-release-setup.exe.sha256
 ```
+
+`-setup.exe` 是按当前用户安装的 NSIS 安装包：默认装到 `%LOCALAPPDATA%\Swoop\`，不需要管理员权限，写入的是当前用户的「已安装应用」卸载项。安装目录与 zip 一样把 `swoop.exe`、`swoop-cli.exe`、`build-info.txt` 放在一起，签名更新可以原地替换。安装界面按系统语言显示简体中文或英文。卸载时可勾选删除应用数据 `%APPDATA%\com.muffin.swoop`，默认不勾选；已下载的文件不会被删除。静默安装用 `setup.exe /S /NS`，`/NS` 表示不建快捷方式，`/D=路径` 可改安装目录（必须放在最后且不加引号）。CI 会做一次静默安装、校验文件哈希、运行已安装的 CLI，然后静默卸载。
+
+已知限制：自更新只替换文件，「已安装应用」里显示的版本号停留在安装时的版本；卸载不会清除应用自己写入的开机启动项，也不会删除更新器留在安装目录中的 `.swoop-backup-*` 备份，这时目录会被保留。
 
 把 zip 解压到当前用户可写目录，例如 `%LOCALAPPDATA%\Programs\Swoop\` 或 `%USERPROFILE%\Downloads\Swoop 验收\`，直接双击 `swoop.exe`。不使用“以管理员身份运行”，不注册服务、不改系统 PATH。哈希用 `Get-FileHash <zip> -Algorithm SHA256` 与 `.sha256` 比较。debug 版本出现控制台是预期行为，release 版本使用 Windows GUI 子系统。
 
-Windows zip 没有 Authenticode 签名、MSIX/MSI 安装器或自动更新；应用标识写入包的 `build-info.txt`，不代表已经注册了 Windows Toast 的系统身份。SmartScreen、缺失 DLL、通知身份与实际标准用户运行都必须在干净 Windows 桌面验证。不得把静态 CRT 参数视作“所有运行时依赖均已验证”。
+Windows zip 与安装包都没有 Authenticode 签名，从网络下载后运行可能触发 SmartScreen 提示；应用标识写入包的 `build-info.txt`，不代表已经注册了 Windows Toast 的系统身份。SmartScreen、缺失 DLL、通知身份与实际标准用户运行都必须在干净 Windows 桌面验证。不得把静态 CRT 参数视作“所有运行时依赖均已验证”。
 
 ### 浏览器扩展
 
@@ -109,7 +119,7 @@ Chromium 系浏览器在扩展管理页加载 `extension/dist/`。Firefox 适配
 2. `cargo clippy --workspace --all-targets --locked -- -D warnings`。
 3. `cargo build --workspace --locked --release`。
 4. 扩展 `npm ci`、`npm test`、`npm run typecheck`、`npm run build`。
-5. 本平台打包脚本。
+5. 本平台打包脚本（含 DMG / NSIS 安装包）；Windows 另做安装包静默安装与卸载烟测。
 
 Windows job 设置明确的本机 Cargo target 和静态 CRT 参数，构建、测试、Clippy 与打包采用同一目标。任何步骤失败都会使该 job 失败，没有忽略错误或降低 Clippy 门槛。两个平台独立完成，某一平台失败不会取消另一平台。
 
@@ -305,3 +315,12 @@ FTP 报告：`target/iteration-validation/idm-completion-ftp-release-smoke/ftp-d
 实际 ZIP 更新检查使用原样包、公开测试 seed 和相同生产源码的临时 `0.0.0` 宿主，执行验签、准备、应用与幂等重入。完整应用文件与执行权限、独立 CLI、2 份原件备份、其他用户文件及原始 ZIP 不变均通过。没有启动或替换用户现有安装；这是当前源码更新流程与包兼容证明，不是历史正式版升级实测。
 
 两份应用报告明确 `native_ui_verified: false`。Windows 完整原生编译/打包/桌面、macOS 弹窗/拖放手势/托盘/通知、双浏览器真实加载接管、系统凭据授权、企业域、MMST 服务器及正式代码签名/公证/更新源/商店发布继续保留。媒体的代理账号、TTML/封装 wvtt、任意分片内字节续传和带宽限制仍不支持，MMS 仅直连；细项以媒体说明为准。未启用登录启动、关机、部署、上传、提交或推送。本节在打包后补录，包内验收文档是打包时快照，以仓库最新记录为准。
+
+### 2026-10-11 安装包（cargo-packager）验证记录
+
+| 项目 | 结果 |
+| --- | --- |
+| macOS arm64 release | `CI=true bash scripts/package-macos.sh --profile release` 退出码 0，产出 zip、DMG 及各自 SHA-256。DMG 通过 `hdiutil verify`，只读挂载后其中的 `Swoop.app` 与 zip 内完全一致，并有「应用程序」快捷方式。Info.plist 版本为 `0.1.0`，标识为 `com.muffin.swoop`，包内 `swoop` 与新构建的二进制哈希相同。 |
+| 更新包兼容 | 用临时 seed 运行 `sign_feed` 对新 zip 签名，包内 `build-info.txt` 的版本、平台、GUI/CLI 哈希检查通过。签名后已删除临时 seed，没有生成生产密钥。 |
+| Windows NSIS | 本机只用假二进制验证了 cargo-packager 生成的 `installer.nsi`：按用户安装，带三件套、`FONT-NOTICE.md`、简体中文/英文界面，应用数据仅在勾选后删除。Homebrew 的 makensis 3.13 在 macOS 上编译任意包含 `StrFunc.nsh` 的脚本都会 `bad_alloc` 崩溃，所以本机没有编出 setup.exe。真实安装包、静默安装/卸载烟测和界面检查都要等 Windows CI 或实机。 |
+| 未执行 | 未在本机做 Finder 窗口排版（`CI=true` 时跳过）；未签名、公证，也未上传。 |
