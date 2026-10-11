@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use egui::{Key, Modifiers};
+use egui::{Key, Modifiers, ViewportCommand};
 use swoop_core::{Engine, Event, Store, TaskId, TaskSnapshot};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -11,6 +11,7 @@ use crate::bridge::{Bridge, BridgeEvent, BridgeMode};
 use crate::clipboard::ClipboardWatcher;
 use crate::settings::AppSettings;
 use crate::theme::{Mode, Palette};
+use crate::tray::{Tray, TrayCommand, TrayStatus};
 use crate::ui::Filter;
 use crate::ui::add_dialog::AddDialog;
 use crate::ui::progress::ProgressStyle;
@@ -43,6 +44,14 @@ pub struct SwoopApp {
     /// 最近一次启动桥接失败的原因（端口被占用等），设置页展示
     pub bridge_error: Option<String>,
     pub toasts: Toasts,
+    /// 菜单栏图标；创建失败或平台不支持时为 None，此时关窗即退出
+    pub tray: Option<Tray>,
+    pub close_to_tray: bool,
+    pub tray_speed: bool,
+    /// 窗口已隐藏到菜单栏
+    hidden: bool,
+    /// 用户从菜单选了退出：放行这一次关窗请求
+    quitting: bool,
     clipboard: ClipboardWatcher,
     events: broadcast::Receiver<Event>,
 }
@@ -98,6 +107,11 @@ impl SwoopApp {
             bridge,
             bridge_error: None,
             toasts,
+            tray: Tray::new(&cc.egui_ctx),
+            close_to_tray: settings.close_to_tray,
+            tray_speed: settings.tray_speed,
+            hidden: false,
+            quitting: false,
             clipboard: ClipboardWatcher::new(),
             events,
         };
@@ -138,6 +152,8 @@ impl SwoopApp {
             bridge_enabled: self.bridge_enabled,
             bridge_port: self.bridge_port,
             bridge_mode: self.bridge_mode,
+            close_to_tray: self.close_to_tray,
+            tray_speed: self.tray_speed,
         }
         .save(&self.store);
         self.bridge.set_mode(self.bridge_mode);
@@ -243,9 +259,73 @@ impl SwoopApp {
         }
     }
 
+    /// 菜单栏菜单的命令；窗口隐藏时也在 logic 里执行
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        let Some(tray) = &self.tray else { return };
+        let mut cmds = Vec::new();
+        while let Some(cmd) = tray.try_recv() {
+            cmds.push(cmd);
+        }
+        for cmd in cmds {
+            match cmd {
+                TrayCommand::Show => self.show_window(ctx),
+                TrayCommand::NewTask => {
+                    self.show_window(ctx);
+                    self.add_dialog.open_with(None);
+                }
+                TrayCommand::ResumeAll => self.engine.resume_all(),
+                TrayCommand::PauseAll => self.engine.pause_all(),
+                TrayCommand::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(ViewportCommand::Close);
+                    // 关窗请求要到下一次 logic 才被处理，立即唤醒，别等隐藏时 1 秒的节拍
+                    ctx.request_repaint();
+                }
+            }
+        }
+    }
+
+    /// 点关闭按钮：开了驻留且有菜单栏图标时只隐藏窗口，下载继续
+    fn handle_close(&mut self, ctx: &egui::Context) {
+        if !ctx.input(|i| i.viewport().close_requested()) {
+            return;
+        }
+        if self.quitting || !self.close_to_tray || self.tray.is_none() {
+            return;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+        ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        crate::tray::set_dock_visible(false);
+        self.hidden = true;
+    }
+
+    fn show_window(&mut self, ctx: &egui::Context) {
+        if self.hidden {
+            crate::tray::set_dock_visible(true);
+            ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+            self.hidden = false;
+        }
+        ctx.send_viewport_cmd(ViewportCommand::Focus);
+        ctx.request_repaint();
+    }
+
+    fn update_tray(&mut self) {
+        let Some(tray) = &mut self.tray else { return };
+        let mut s = TrayStatus { speed: self.engine.global_speed(), ..Default::default() };
+        for t in &self.tasks {
+            match t.status {
+                swoop_core::TaskStatus::Paused | swoop_core::TaskStatus::Failed(_) => s.resumable += 1,
+                ref st if st.is_active() => s.active += 1,
+                _ => {}
+            }
+        }
+        tray.update(s, self.tray_speed);
+    }
+
     /// 剪贴板里出现新链接 → 吐司询问；新建对话框打开时不打扰
     fn poll_clipboard(&mut self) {
-        if !self.clipboard_watch {
+        // 隐藏时不读：等窗口回来再提示最新复制的链接
+        if !self.clipboard_watch || self.hidden {
             return;
         }
         let urls = self.clipboard.poll();
@@ -264,15 +344,31 @@ pub fn looks_like_url(s: &str) -> bool {
 }
 
 impl eframe::App for SwoopApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+    /// 每帧 ui 之前调用；窗口隐藏到菜单栏时 eframe 不跑 ui，只要有 repaint 请求就还会调这里
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.tasks = self.engine.snapshot();
         if crate::demo::enabled() {
             self.tasks.extend(crate::demo::tasks(&self.default_dir));
         }
+        self.poll_tray(ctx);
+        self.handle_close(ctx);
         self.poll_events();
         self.poll_clipboard();
         self.poll_bridge();
+        self.update_tray();
+
+        // 有任务在跑就 10fps 刷新进度，否则低频；隐藏时只需维持菜单栏速度。剪贴板轮询也靠这个节拍
+        let any_active = self.tasks.iter().any(|t| t.status.is_active());
+        let every = match (self.hidden, any_active) {
+            (true, _) => Duration::from_secs(1),
+            (false, true) => Duration::from_millis(100),
+            (false, false) => Duration::from_millis(500),
+        };
+        ctx.request_repaint_after(every);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
 
         // 面板顺序决定布局：侧栏占满左侧，状态栏横跨右侧，详情面板在状态栏之上贴右，顶栏只占列表宽度
@@ -284,9 +380,5 @@ impl eframe::App for SwoopApp {
         self.add_dialog_ui(&ctx);
         self.settings_ui(&ctx);
         self.toasts_ui(&ctx);
-
-        // 有任务在跑就 10fps 刷新进度，否则低频；剪贴板轮询也靠这个节拍
-        let any_active = self.tasks.iter().any(|t| t.status.is_active());
-        ctx.request_repaint_after(if any_active { Duration::from_millis(100) } else { Duration::from_millis(500) });
     }
 }

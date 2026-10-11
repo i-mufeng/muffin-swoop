@@ -22,6 +22,8 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 - 吐司在 `ui/toast.rs`，右下角 `Area`；引擎事件（完成/失败）和剪贴板链接都走它，不要再加第二套提示机制。
 - 自动截图（`--features screenshot`）抓的是首帧，看不到任何 `Area`（吐司、Modal），验证它们要实际运行。
 - `SWOOP_DEMO=1` 混入假任务与假吐司，只在 UI 层拼 `TaskSnapshot`，不经过引擎。
+- 非绘制的每帧逻辑（刷新快照、轮询引擎/剪贴板/桥接/托盘事件、关窗拦截）放 `App::logic`，不放 `ui`：窗口隐藏到菜单栏（`tray.rs`）时 eframe 不跑 `ui`，只在有 repaint 请求时调 `logic`。后台线程要唤醒界面就 `ctx.request_repaint()`。
+- 自动截图的窗口尺寸固定 1080×700（改 `with_inner_size` / `persist_window` 都无效）；要看面板下半部分只能临时调整内容顺序。
 
 ## 常用命令
 

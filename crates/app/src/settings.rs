@@ -23,6 +23,10 @@ pub struct AppSettings {
     pub bridge_enabled: bool,
     pub bridge_port: u16,
     pub bridge_mode: BridgeMode,
+    /// 关闭窗口后驻留菜单栏继续下载（无托盘的平台上忽略）
+    pub close_to_tray: bool,
+    /// 菜单栏图标旁显示总速度（仅 macOS）
+    pub tray_speed: bool,
 }
 
 pub fn default_download_dir() -> PathBuf {
@@ -46,11 +50,13 @@ impl AppSettings {
             bridge_enabled: flag("bridge_enabled", true),
             bridge_port: get("bridge_port").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_PORT),
             bridge_mode: get("bridge_mode").and_then(|v| BridgeMode::parse(&v)).unwrap_or_default(),
+            close_to_tray: flag("close_to_tray", true),
+            tray_speed: flag("tray_speed", true),
         }
     }
 
     pub fn save(&self, store: &Store) {
-        let pairs: [(&str, String); 10] = [
+        let pairs: [(&str, String); 12] = [
             ("theme", self.theme.as_str().into()),
             ("default_dir", self.default_dir.display().to_string()),
             ("progress_style", self.progress_style.as_str().into()),
@@ -61,6 +67,8 @@ impl AppSettings {
             ("bridge_enabled", flag_str(self.bridge_enabled)),
             ("bridge_port", self.bridge_port.to_string()),
             ("bridge_mode", self.bridge_mode.as_str().into()),
+            ("close_to_tray", flag_str(self.close_to_tray)),
+            ("tray_speed", flag_str(self.tray_speed)),
         ];
         for (k, v) in pairs {
             if let Err(e) = store.set_setting(k, &v) {

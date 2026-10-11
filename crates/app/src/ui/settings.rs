@@ -79,6 +79,28 @@ impl SwoopApp {
                     });
                     ui.end_row();
 
+                    if self.tray.is_some() {
+                        ui.label(RichText::new("关闭窗口后").color(p.text_muted));
+                        ui.horizontal(|ui| {
+                            if toggle(ui, &p, &mut self.close_to_tray).changed() {
+                                dirty = true;
+                            }
+                            ui.label(RichText::new("保留在菜单栏，继续下载").size(12.0).color(p.text_muted));
+                        });
+                        ui.end_row();
+
+                        if cfg!(target_os = "macos") {
+                            ui.label(RichText::new("菜单栏显示速度").color(p.text_muted));
+                            ui.horizontal(|ui| {
+                                if toggle(ui, &p, &mut self.tray_speed).changed() {
+                                    dirty = true;
+                                }
+                                ui.label(RichText::new("下载时在图标旁显示总速度").size(12.0).color(p.text_muted));
+                            });
+                            ui.end_row();
+                        }
+                    }
+
                     ui.label(RichText::new("浏览器集成").color(p.text_muted));
                     ui.horizontal(|ui| {
                         if toggle(ui, &p, &mut self.bridge_enabled).changed() {

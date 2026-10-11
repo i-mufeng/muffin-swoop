@@ -762,6 +762,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98b0cc327b5bc766e7fda9c9260cc0fa81b43a8e240440422dff70788e3f9ef1"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1955,6 +1964,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyboard-types"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
+dependencies = [
+ "bitflags 2.13.2",
+ "serde",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2175,6 +2194,24 @@ checksum = "ac9557c559cd6fc9867e122e20d2cbefc9ca29d80d027a8e39310920ed2f0a97"
 dependencies = [
  "num-traits",
  "pxfm",
+]
+
+[[package]]
+name = "muda"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4340e89c178916e62879c5c36b7f699019369be413e496178a6983ce91b8bc03"
+dependencies = [
+ "crossbeam-channel",
+ "dpi",
+ "keyboard-types",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "png",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3737,6 +3774,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
  "reqwest",
  "serde",
  "serde_json",
@@ -3746,6 +3785,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "tray-icon",
 ]
 
 [[package]]
@@ -4116,6 +4156,25 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "tray-icon"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f5cc5858ecf9574ddd8f0032a2ff7ffd6f7724d2b81e48b9374984b3fd6ddc9"
+dependencies = [
+ "crossbeam-channel",
+ "muda",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "once_cell",
+ "png",
+ "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

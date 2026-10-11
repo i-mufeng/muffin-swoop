@@ -7,6 +7,7 @@ mod demo;
 mod fonts;
 mod settings;
 mod theme;
+mod tray;
 mod ui;
 
 use std::path::PathBuf;
