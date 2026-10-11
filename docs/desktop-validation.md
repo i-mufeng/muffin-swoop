@@ -92,6 +92,8 @@ Swoop-0.1.0-windows-x86_64-release-setup.exe.sha256
 
 `-setup.exe` 是按当前用户安装的 NSIS 安装包：默认装到 `%LOCALAPPDATA%\Swoop\`，不需要管理员权限，写入的是当前用户的「已安装应用」卸载项。安装目录与 zip 一样把 `swoop.exe`、`swoop-cli.exe`、`build-info.txt` 放在一起，签名更新可以原地替换。安装界面按系统语言显示简体中文或英文。卸载时可勾选删除应用数据 `%APPDATA%\com.muffin.swoop`，默认不勾选；已下载的文件不会被删除。静默安装用 `setup.exe /S /NS`，`/NS` 表示不建快捷方式，`/D=路径` 可改安装目录（必须放在最后且不加引号）。CI 会做一次静默安装、校验文件哈希、运行已安装的 CLI，然后静默卸载。
 
+安装界面用的是自定义模板 `scripts/windows-installer/installer.nsi`，在 cargo-packager 0.11.8 默认模板的基础上修改，改动处都标了 `Swoop:`；升级 cargo-packager 时要对照上游模板合并。主要改动：声明 DPI 感知，高分屏上不再被系统按位图拉伸；中文界面用 Microsoft YaHei UI，英文用 Segoe UI，替换语言文件里默认的宋体 / MS Shell Dlg 点阵字体；页面精简为欢迎 → 目录 → 安装 → 完成，开始菜单快捷方式直接放进「开始」的应用列表，完成页可勾选创建桌面快捷方式、安装后启动。侧栏和页眉的品牌图由 `python3 scripts/make_installer_art.py` 生成 100%–250% 共六档 PNG（`assets/brand/swoop/installer/`），打包脚本再转成 24 位 BMP；安装器运行时按控件的实际像素尺寸挑选一档，避免小图被放大。
+
 已知限制：自更新只替换文件，「已安装应用」里显示的版本号停留在安装时的版本；卸载不会清除应用自己写入的开机启动项，也不会删除更新器留在安装目录中的 `.swoop-backup-*` 备份，这时目录会被保留。
 
 把 zip 解压到当前用户可写目录，例如 `%LOCALAPPDATA%\Programs\Swoop\` 或 `%USERPROFILE%\Downloads\Swoop 验收\`，直接双击 `swoop.exe`。不使用“以管理员身份运行”，不注册服务、不改系统 PATH。哈希用 `Get-FileHash <zip> -Algorithm SHA256` 与 `.sha256` 比较。debug 版本出现控制台是预期行为，release 版本使用 Windows GUI 子系统。
@@ -325,3 +327,11 @@ FTP 报告：`target/iteration-validation/idm-completion-ftp-release-smoke/ftp-d
 | 更新包兼容 | 用临时 seed 运行 `sign_feed` 对新 zip 签名，包内 `build-info.txt` 的版本、平台、GUI/CLI 哈希检查通过。签名后已删除临时 seed，没有生成生产密钥。 |
 | Windows NSIS | 本机只用假二进制验证了 cargo-packager 生成的 `installer.nsi`：按用户安装，带三件套、`FONT-NOTICE.md`、简体中文/英文界面，应用数据仅在勾选后删除。Homebrew 的 makensis 3.13 在 macOS 上编译任意包含 `StrFunc.nsh` 的脚本都会 `bad_alloc` 崩溃，所以本机没有编出 setup.exe。真实安装包、静默安装/卸载烟测和界面检查都要等 Windows CI 或实机。 |
 | 未执行 | 未在本机做 Finder 窗口排版（`CI=true` 时跳过）；未签名、公证，也未上传。 |
+
+### 2026-10-12 Windows 安装界面验证记录
+
+| 项目 | 结果 |
+| --- | --- |
+| 本机编译 | 用假二进制和 PIL 转出的 BMP 跑 `cargo packager --formats nsis`，自定义模板经 makensis 3.13 编译通过，只有非 Windows 主机上 `File /a` 的 3 条警告，原版模板也有这 3 条。生成的 setup.exe 中 manifest 含 `dpiAware true`（原版没有）；`SetFont` 对 2052 / 1033 分别生效；六档侧栏和页眉 BMP 都已打进安装器与卸载器。 |
+| 更正 | 上一节「makensis 3.13 遇到 `StrFunc.nsh` 就 `bad_alloc`」的结论不准确：在 `C` locale 下连空脚本也会崩溃，设置 `LC_ALL=en_US.UTF-8` 后可正常编出完整的 setup.exe。 |
+| 未执行 | 未在 Windows 上实际查看界面（字体渲染、各档 DPI 下的选图、卸载页复选框位置），也未跑静默安装烟测，这些要等 Windows CI 或实机验证。 |

@@ -12,6 +12,7 @@
 - `swoop.ico`：16 / 24 / 32 / 48 / 64 / 128 / 256 px 七帧。
 - `swoop.icns`：macOS 应用图标。
 - `index.html`：正式预览，可切换明暗背景与下载资源。
+- `installer/`：Windows 安装器侧栏（164×314）与页眉（150×57）的 100%–250% 六档 PNG，由 `python3 scripts/make_installer_art.py` 生成，打包时转为 BMP。
 
 重新生成：在仓库根目录运行 `node assets/brand/swoop/build-assets.mjs`。需要 `rsvg-convert`；macOS 使用系统 `iconutil` 生成 ICNS。脚本也同步扩展现有 SVG / PNG；正式母版不依赖历史演示目录。
 

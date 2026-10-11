@@ -145,6 +145,28 @@ authenticode_signature=none
     $packagerDir = Join-Path $stageDir 'packager'
     $packagerOut = Join-Path $packagerDir 'out'
     $null = New-Item -ItemType Directory -Path $packagerOut
+    # NSIS only loads BMP. The brand art is kept as PNG (scripts/make_installer_art.py) and
+    # flattened to 24-bit BMP here; the template picks a variant by the dialog's real size.
+    $artDir = Join-Path $packagerDir 'installer-art'
+    $null = New-Item -ItemType Directory -Path $artDir
+    Add-Type -AssemblyName System.Drawing
+    Get-ChildItem -LiteralPath (Join-Path $repoRoot 'assets/brand/swoop/installer') -Filter '*.png' -File | ForEach-Object {
+        $png = [System.Drawing.Bitmap]::new($_.FullName)
+        try {
+            $rect = [System.Drawing.Rectangle]::new(0, 0, $png.Width, $png.Height)
+            $bmp = $png.Clone($rect, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+            try { $bmp.Save((Join-Path $artDir "$($_.BaseName).bmp"), [System.Drawing.Imaging.ImageFormat]::Bmp) }
+            finally { $bmp.Dispose() }
+        }
+        finally { $png.Dispose() }
+    }
+    foreach ($kind in 'sidebar', 'header') {
+        foreach ($scale in '100', '125', '150', '175', '200', '250') {
+            if (-not (Test-Path -LiteralPath (Join-Path $artDir "$kind-$scale.bmp") -PathType Leaf)) {
+                throw "Installer art missing: $kind-$scale.png"
+            }
+        }
+    }
     # An explicit name keeps cargo-packager 0.11 from probing the config file path as a directory.
     $packagerConfig = [ordered]@{
         name         = 'swoop-app'
@@ -152,6 +174,7 @@ authenticode_signature=none
         version      = $version
         identifier   = 'com.muffin.swoop'
         publisher    = 'mufeng'
+        copyright    = 'Copyright (c) mufeng'
         category     = 'Utility'
         targetTriple = $target
         binariesDir  = $stagedPackage
@@ -167,7 +190,10 @@ authenticode_signature=none
         )
         nsis         = [ordered]@{
             installMode   = 'currentUser'
+            template      = (Join-Path $repoRoot 'scripts/windows-installer/installer.nsi')
             installerIcon = (Join-Path $repoRoot 'assets/brand/swoop/swoop.ico')
+            sidebarImage  = (Join-Path $artDir 'sidebar-100.bmp')
+            headerImage   = (Join-Path $artDir 'header-100.bmp')
             languages     = @('SimpChinese', 'English')
             # Offered as an unchecked option in the uninstaller; downloaded files are never touched.
             appdataPaths  = @('$APPDATA\com.muffin.swoop')
