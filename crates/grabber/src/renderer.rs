@@ -143,7 +143,7 @@ fn failed(error: impl std::fmt::Display) -> FetchError {
 fn charge(context: &Context, count: usize, stop: &CancellationToken) -> std::io::Result<()> {
     if context
         .rendered_used
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
             used.checked_add(count as u64).filter(|used| *used <= context.config.render.max_network_bytes)
         })
         .is_err()

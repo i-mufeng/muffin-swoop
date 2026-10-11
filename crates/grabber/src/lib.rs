@@ -965,7 +965,7 @@ async fn body(
         };
         if context
             .used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(chunk.len() as u64).filter(|total| *total <= context.config.max_total_bytes)
             })
             .is_err()
@@ -1055,7 +1055,7 @@ async fn fetch(context: &Arc<Context>, raw: &str) -> std::result::Result<Fetched
             let rendered = renderer::render(context, &url).await?;
             if context
                 .used
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                     used.checked_add(rendered.len() as u64).filter(|bytes| *bytes <= context.config.max_total_bytes)
                 })
                 .is_err()
