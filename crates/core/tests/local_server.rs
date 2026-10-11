@@ -2,7 +2,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -24,42 +24,57 @@ fn make_body(len: usize) -> Vec<u8> {
 struct Server {
     url: String,
     range_requests: Arc<AtomicUsize>,
+    /// 收到的每个请求的全部头部行（小写、去掉行尾）
+    requests: Arc<Mutex<Vec<Vec<String>>>>,
+}
+
+#[derive(Clone)]
+struct ServerOpts {
+    support_range: bool,
+    file_name: String,
+    /// 每发 64 KB 停顿多久，用来控制单连接的速度
+    chunk_delay: Duration,
+    /// 设置后，请求必须带这一行头（小写，如 `cookie: token=1`），否则 403
+    require: Option<String>,
 }
 
 fn start_server(body: Arc<Vec<u8>>, support_range: bool, file_name: &str) -> Server {
     start_paced_server(body, support_range, file_name, Duration::from_millis(2))
 }
 
-/// `chunk_delay`：每发 64 KB 停顿多久，用来控制单连接的速度
 fn start_paced_server(body: Arc<Vec<u8>>, support_range: bool, file_name: &str, chunk_delay: Duration) -> Server {
+    start_server_with(body, ServerOpts { support_range, file_name: file_name.to_string(), chunk_delay, require: None })
+}
+
+fn start_server_with(body: Arc<Vec<u8>>, opts: ServerOpts) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let counter = Arc::new(AtomicUsize::new(0));
-    let counter2 = counter.clone();
-    let url = format!("http://{addr}/files/{file_name}");
-    let file_name = file_name.to_string();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let url = format!("http://{addr}/files/{}", opts.file_name);
+    let (counter2, requests2) = (counter.clone(), requests.clone());
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { break };
-            let body = body.clone();
-            let counter = counter2.clone();
-            let file_name = file_name.clone();
-            std::thread::spawn(move || handle(stream, body, support_range, &counter, &file_name, chunk_delay));
+            let (body, opts) = (body.clone(), opts.clone());
+            let (counter, requests) = (counter2.clone(), requests2.clone());
+            std::thread::spawn(move || handle(stream, body, &opts, &counter, &requests));
         }
     });
-    Server { url, range_requests: counter }
+    Server { url, range_requests: counter, requests }
 }
 
 fn handle(
     mut stream: TcpStream,
     body: Arc<Vec<u8>>,
-    support_range: bool,
+    opts: &ServerOpts,
     counter: &AtomicUsize,
-    file_name: &str,
-    chunk_delay: Duration,
+    requests: &Mutex<Vec<Vec<String>>>,
 ) {
+    let (support_range, file_name, chunk_delay) = (opts.support_range, opts.file_name.as_str(), opts.chunk_delay);
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut range: Option<(u64, u64)> = None;
+    let mut lines = Vec::new();
     let mut line = String::new();
     loop {
         line.clear();
@@ -67,6 +82,7 @@ fn handle(
             break;
         }
         let lower = line.to_ascii_lowercase();
+        lines.push(lower.trim_end().to_string());
         if let Some(v) = lower.strip_prefix("range: bytes=") {
             let v = v.trim();
             let (a, b) = v.split_once('-').unwrap();
@@ -74,6 +90,12 @@ fn handle(
             let end: u64 = if b.is_empty() { body.len() as u64 - 1 } else { b.parse().unwrap() };
             range = Some((start, end));
         }
+    }
+    let authorized = opts.require.as_ref().is_none_or(|r| lines.contains(r));
+    requests.lock().unwrap().push(lines);
+    if !authorized {
+        let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
     }
     let total = body.len() as u64;
     let (status, start, end) = match (range, support_range) {
@@ -131,7 +153,7 @@ fn multi_connection_download_matches_source() {
         Config { connections: 6, min_segment: 128 * 1024, ..Config::default() },
     );
     let id = engine
-        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
         .unwrap();
 
     let status = wait_done(&engine, id, Duration::from_secs(30));
@@ -160,7 +182,7 @@ fn falls_back_to_single_connection_without_range() {
 
     let engine = Engine::new(rt.handle().clone(), Config { connections: 4, min_segment: 64 * 1024, ..Config::default() });
     let id = engine
-        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
         .unwrap();
     assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
 
@@ -188,7 +210,7 @@ fn persisted_tasks_survive_restart() {
             store,
         );
         let id = engine
-            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
             .unwrap();
         assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
     }
@@ -208,7 +230,7 @@ fn persisted_tasks_survive_restart() {
 
     // 再添加一个任务，id 必须延续而不是和旧任务冲突
     let id2 = engine
-        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
         .unwrap();
     assert_ne!(id2, t.id);
     assert_eq!(wait_done(&engine, id2, Duration::from_secs(30)), TaskStatus::Completed);
@@ -233,7 +255,7 @@ fn interrupted_download_resumes_after_restart() {
             store,
         );
         let id = engine
-            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
             .unwrap();
         let t0 = Instant::now();
         loop {
@@ -277,7 +299,7 @@ fn pause_and_resume_completes() {
 
     let engine = Engine::new(rt.handle().clone(), Config { connections: 4, min_segment: 128 * 1024, ..Config::default() });
     let id = engine
-        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
         .unwrap();
 
     // 等它下一点再暂停
@@ -313,7 +335,7 @@ fn speed_history_samples_each_second() {
 
     let engine = Engine::new(rt.handle().clone(), Config { connections: 1, ..Config::default() });
     let id = engine
-        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
         .unwrap();
     assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
 
@@ -328,4 +350,76 @@ fn speed_history_samples_each_second() {
     assert!(peak < pace * 1.5, "峰值 {peak} 不应超过服务器发送速度");
 
     assert!(engine.speed_history(swoop_core::TaskId(9999)).is_empty());
+}
+
+/// 浏览器带来的 Cookie / User-Agent：探测和所有区段请求都要带上，否则受保护的链接会 403
+#[test]
+fn custom_headers_reach_every_request() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = Arc::new(make_body(900 * 1024));
+    let server = start_server_with(
+        body.clone(),
+        ServerOpts {
+            support_range: true,
+            file_name: "secret.bin".into(),
+            chunk_delay: Duration::from_millis(2),
+            require: Some("cookie: token=1".into()),
+        },
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::new(rt.handle().clone(), Config { connections: 3, min_segment: 64 * 1024, ..Config::default() });
+
+    // 不带 Cookie：探测就 403，任务失败
+    let denied = engine
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), ..Default::default() })
+        .unwrap();
+    match wait_done(&engine, denied, Duration::from_secs(30)) {
+        TaskStatus::Failed(e) => assert!(e.contains("403"), "{e}"),
+        s => panic!("应失败，实际 {s:?}"),
+    }
+
+    let headers = vec![
+        ("Cookie".to_string(), "token=1".to_string()),
+        ("User-Agent".to_string(), "TestBrowser/1.0".to_string()),
+        // 调用方传的 Range 必须被忽略，否则会和区段请求冲突
+        ("Range".to_string(), "bytes=10-".to_string()),
+    ];
+    let info = rt.block_on(engine.probe_url(&server.url, &headers)).unwrap();
+    assert_eq!(info.file_name, "secret.bin");
+    assert_eq!(info.size, Some(body.len() as u64));
+    assert!(info.resumable);
+    assert!(rt.block_on(engine.probe_url(&server.url, &[])).is_err());
+
+    let before = server.requests.lock().unwrap().len();
+    let id = engine
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().join("ok"), headers, ..Default::default() })
+        .unwrap();
+    assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+    assert!(std::fs::read(dir.path().join("ok/secret.bin")).unwrap() == *body);
+
+    let reqs = server.requests.lock().unwrap();
+    let ours = &reqs[before..];
+    assert!(ours.len() >= 2, "探测 + 至少一个区段请求");
+    for lines in ours {
+        assert!(lines.iter().any(|l| l == "user-agent: testbrowser/1.0"), "UA 应被覆盖: {lines:?}");
+        assert_eq!(lines.iter().filter(|l| l.starts_with("user-agent:")).count(), 1);
+        assert_eq!(lines.iter().filter(|l| l.starts_with("range:")).count(), 1);
+        assert!(!lines.iter().any(|l| l == "range: bytes=10-"));
+    }
+}
+
+#[test]
+fn rejects_bad_headers_and_schemes() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let engine = Engine::new(rt.handle().clone(), Config::default());
+    let bad = AddOptions {
+        url: "http://127.0.0.1:1/x".into(),
+        headers: vec![("Bad Name".into(), "1".into())],
+        ..Default::default()
+    };
+    assert!(matches!(engine.add(bad), Err(swoop_core::Error::InvalidHeader(_))));
+    assert!(matches!(
+        rt.block_on(engine.probe_url("ftp://example.com/a", &[])),
+        Err(swoop_core::Error::UnsupportedScheme(_))
+    ));
 }

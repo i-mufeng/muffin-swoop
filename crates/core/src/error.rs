@@ -10,6 +10,10 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("无效的 URL: {0}")]
     InvalidUrl(#[from] url::ParseError),
+    #[error("无效的请求头: {0}")]
+    InvalidHeader(String),
+    #[error("暂不支持的协议: {0}")]
+    UnsupportedScheme(String),
     #[error("服务器不支持断点续传（Range 请求返回了 200）")]
     RangeNotSupported,
     #[error("服务器提前关闭了连接")]

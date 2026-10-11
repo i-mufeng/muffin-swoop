@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use reqwest::header;
+use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, StatusCode};
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
@@ -17,7 +17,7 @@ use url::Url;
 
 use crate::error::{Error, Result};
 use crate::limiter::Limiter;
-use crate::probe::probe;
+use crate::probe::{ProbeInfo, build_headers, probe};
 use crate::segment::{SegmentMap, SegmentState};
 use crate::store::{Store, TaskRecord};
 use crate::task::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};
@@ -53,12 +53,15 @@ impl Default for Config {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct AddOptions {
     pub url: String,
     pub dir: PathBuf,
     /// 不填则由探测结果决定
     pub file_name: Option<String>,
+    /// 探测和每个区段请求都附加的头（如浏览器带来的 Cookie / Referer / User-Agent）；
+    /// 其中的 User-Agent 覆盖 [`Config::user_agent`]，Range 等引擎自管的头会被忽略
+    pub headers: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +96,9 @@ struct Entry {
 struct TaskShared {
     id: TaskId,
     url: Url,
+    /// 原样保留用于持久化；请求时用解析好的 `header_map`
+    headers: Vec<(String, String)>,
+    header_map: HeaderMap,
     dir: PathBuf,
     file_name: Mutex<String>,
     user_named: bool,
@@ -197,6 +203,10 @@ impl Engine {
                 tracing::warn!(id = rec.id.0, "跳过无效 URL 的任务: {}", rec.url);
                 continue;
             };
+            let header_map = build_headers(&rec.headers).unwrap_or_else(|e| {
+                tracing::warn!(id = rec.id.0, "忽略无效的请求头: {e}");
+                HeaderMap::new()
+            });
             let was_active = rec.status.is_active();
             let status = match rec.status {
                 TaskStatus::Completed => TaskStatus::Completed,
@@ -213,6 +223,8 @@ impl Engine {
             let shared = Arc::new(TaskShared {
                 id: rec.id,
                 url,
+                headers: rec.headers,
+                header_map,
                 dir: rec.dir,
                 file_name: Mutex::new(rec.file_name),
                 user_named: rec.user_named,
@@ -261,10 +273,8 @@ impl Engine {
     }
 
     pub fn add(&self, opts: AddOptions) -> Result<TaskId> {
-        let url = Url::parse(opts.url.trim())?;
-        if !matches!(url.scheme(), "http" | "https") {
-            return Err(Error::Internal(format!("暂不支持的协议: {}", url.scheme())));
-        }
+        let url = parse_http_url(&opts.url)?;
+        let header_map = build_headers(&opts.headers)?;
         let created_at = SystemTime::now();
         let user_named = opts.file_name.is_some();
         let file_name = opts.file_name.unwrap_or_default();
@@ -284,6 +294,7 @@ impl Engine {
                 downloaded: 0,
                 created_at: unix_secs(created_at),
                 completed_at: None,
+                headers: opts.headers.clone(),
             })?,
             None => TaskId(self.inner.next_id.fetch_add(1, Ordering::Relaxed)),
         };
@@ -291,6 +302,8 @@ impl Engine {
         let shared = Arc::new(TaskShared {
             id,
             url,
+            headers: opts.headers,
+            header_map,
             dir: opts.dir,
             user_named,
             file_name: Mutex::new(file_name),
@@ -313,6 +326,12 @@ impl Engine {
             .insert(id, Entry { shared: shared.clone(), cancel: cancel.clone() });
         spawn_run(self.inner.clone(), shared, cancel);
         Ok(id)
+    }
+
+    /// 不建任务，只探测一次（文件名、大小、是否可续传）。供浏览器桥接在接管下载前确认链接可用。
+    pub async fn probe_url(&self, url: &str, headers: &[(String, String)]) -> Result<ProbeInfo> {
+        let url = parse_http_url(url)?;
+        probe(&self.inner.client, &url, &build_headers(headers)?).await
     }
 
     pub fn pause(&self, id: TaskId) -> Result<()> {
@@ -400,6 +419,14 @@ impl Engine {
     }
 }
 
+fn parse_http_url(s: &str) -> Result<Url> {
+    let url = Url::parse(s.trim())?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(Error::UnsupportedScheme(url.scheme().to_string()));
+    }
+    Ok(url)
+}
+
 fn snapshot_of(s: &TaskShared) -> TaskSnapshot {
     // 注意：不要在结构体字面量里直接 lock()，临时守卫会活到整个表达式结束，
     // 再调用 path() 去锁同一把锁就会自锁死。先取出来再组装。
@@ -447,6 +474,7 @@ fn record_of(s: &TaskShared) -> TaskRecord {
         downloaded: s.downloaded.load(Ordering::Relaxed),
         created_at: unix_secs(s.created_at),
         completed_at: completed_at.map(unix_secs),
+        headers: s.headers.clone(),
     }
 }
 
@@ -495,7 +523,7 @@ async fn run_task(inner: &Arc<Inner>, shared: &Arc<TaskShared>, cancel: Cancella
     let _ = inner.events.send(Event::Changed(id));
 
     let info = tokio::select! {
-        r = probe(&inner.client, &shared.url) => r?,
+        r = probe(&inner.client, &shared.url, &shared.header_map) => r?,
         _ = cancel.cancelled() => return Err(Error::Cancelled),
     };
     tracing::info!(task = id.0, size = ?info.size, resumable = info.resumable, name = %info.file_name, "探测完成");
@@ -639,7 +667,7 @@ async fn download_segment(
     }
 
     let resumable = shared.resumable.load(Ordering::Relaxed);
-    let mut req = inner.client.get(shared.url.clone());
+    let mut req = inner.client.get(shared.url.clone()).headers(shared.header_map.clone());
     if resumable {
         let range = if end == u64::MAX { format!("bytes={start}-") } else { format!("bytes={start}-{}", end - 1) };
         req = req.header(header::RANGE, range);

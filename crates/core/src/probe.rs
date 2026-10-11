@@ -18,9 +18,31 @@ pub struct ProbeInfo {
     pub last_modified: Option<String>,
 }
 
-pub async fn probe(client: &Client, url: &Url) -> Result<ProbeInfo> {
+/// 任务级请求头里由引擎自己管理、调用方传了也忽略的头
+const MANAGED_HEADERS: [header::HeaderName; 5] =
+    [header::RANGE, header::HOST, header::CONTENT_LENGTH, header::CONNECTION, header::TRANSFER_ENCODING];
+
+/// 把调用方给的请求头（如浏览器带来的 Cookie / Referer / User-Agent）转成 [`HeaderMap`]。
+/// 名称或值不合法时报错；引擎自己管理的头（Range 等）直接丢弃。
+pub fn build_headers(pairs: &[(String, String)]) -> Result<HeaderMap> {
+    let mut map = HeaderMap::new();
+    for (name, value) in pairs {
+        let name = header::HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|_| Error::InvalidHeader(name.clone()))?;
+        if MANAGED_HEADERS.contains(&name) {
+            continue;
+        }
+        let value = header::HeaderValue::from_str(value.trim()).map_err(|_| Error::InvalidHeader(name.to_string()))?;
+        map.append(name, value);
+    }
+    Ok(map)
+}
+
+/// `headers` 会附加到请求上，其中的 User-Agent 覆盖 client 默认值
+pub async fn probe(client: &Client, url: &Url, headers: &HeaderMap) -> Result<ProbeInfo> {
     let resp = client
         .get(url.clone())
+        .headers(headers.clone())
         .header(header::RANGE, "bytes=0-0")
         .send()
         .await?;
@@ -137,6 +159,23 @@ mod tests {
         assert_eq!(file_name_from_url(&u).unwrap(), "文件.iso");
         let u = Url::parse("https://example.com/").unwrap();
         assert!(file_name_from_url(&u).is_none());
+    }
+
+    #[test]
+    fn build_headers_validates_and_drops_managed() {
+        let pairs = vec![
+            ("Cookie".to_string(), "a=1; b=2".to_string()),
+            ("range".to_string(), "bytes=5-".to_string()),
+            ("User-Agent".to_string(), " Mozilla/5.0 ".to_string()),
+        ];
+        let h = build_headers(&pairs).unwrap();
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[header::COOKIE], "a=1; b=2");
+        assert_eq!(h[header::USER_AGENT], "Mozilla/5.0");
+        assert!(h.get(header::RANGE).is_none());
+
+        assert!(build_headers(&[("Bad Name".into(), "x".into())]).is_err());
+        assert!(build_headers(&[("X-A".into(), "line\nbreak".into())]).is_err());
     }
 
     #[test]

@@ -186,7 +186,7 @@ impl SwoopApp {
     pub fn add_urls(&mut self, urls: Vec<String>) {
         let mut failed = Vec::new();
         for url in urls {
-            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: self.default_dir.clone(), file_name: None }) {
+            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: self.default_dir.clone(), file_name: None, headers: Vec::new() }) {
                 failed.push(format!("{url}: {e}"));
             }
         }

@@ -17,5 +17,6 @@ mod util;
 
 pub use engine::{AddOptions, Config, Engine, Event, SPEED_HISTORY_LEN};
 pub use error::{Error, Result};
+pub use probe::ProbeInfo;
 pub use store::{Store, TaskRecord};
 pub use task::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};

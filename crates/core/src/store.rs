@@ -29,13 +29,31 @@ CREATE TABLE IF NOT EXISTS tasks (
     segments     TEXT    NOT NULL DEFAULT '',
     downloaded   INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
-    completed_at INTEGER
+    completed_at INTEGER,
+    headers      TEXT    NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
 "#;
+
+/// 建表之后追加的列：旧库启动时按需 `ALTER TABLE` 补上（幂等）
+const ADDED_TASK_COLUMNS: [(&str, &str); 1] = [("headers", "TEXT NOT NULL DEFAULT '[]'")];
+
+fn init(conn: &Connection) -> Result<()> {
+    conn.execute_batch(SCHEMA)?;
+    let existing: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('tasks')")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (name, decl) in ADDED_TASK_COLUMNS {
+        if !existing.iter().any(|c| c == name) {
+            conn.execute_batch(&format!("ALTER TABLE tasks ADD COLUMN {name} {decl}"))?;
+        }
+    }
+    Ok(())
+}
 
 /// 任务在数据库里的完整形态
 #[derive(Clone, Debug)]
@@ -55,6 +73,8 @@ pub struct TaskRecord {
     /// unix 秒
     pub created_at: i64,
     pub completed_at: Option<i64>,
+    /// 每个请求附加的头（浏览器带来的 Cookie / Referer / User-Agent），明文存储
+    pub headers: Vec<(String, String)>,
 }
 
 pub struct Store {
@@ -67,22 +87,22 @@ impl Store {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
+        init(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
     /// 测试用：内存数据库
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
+        init(&conn)?;
         Ok(Self { conn: Mutex::new(conn) })
     }
 
     pub fn insert_task(&self, rec: &TaskRecord) -> Result<TaskId> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO tasks (url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO tasks (url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 rec.url,
                 rec.dir.to_string_lossy(),
@@ -97,6 +117,7 @@ impl Store {
                 rec.downloaded as i64,
                 rec.created_at,
                 rec.completed_at,
+                serde_json::to_string(&rec.headers)?,
             ],
         )?;
         Ok(TaskId(conn.last_insert_rowid() as u64))
@@ -107,7 +128,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE tasks SET url=?2, dir=?3, file_name=?4, user_named=?5, total=?6, resumable=?7, etag=?8,
-                              status=?9, error=?10, segments=?11, downloaded=?12, completed_at=?13
+                              status=?9, error=?10, segments=?11, downloaded=?12, completed_at=?13, headers=?14
              WHERE id=?1",
             params![
                 rec.id.0 as i64,
@@ -123,6 +144,7 @@ impl Store {
                 serde_json::to_string(&rec.segments)?,
                 rec.downloaded as i64,
                 rec.completed_at,
+                serde_json::to_string(&rec.headers)?,
             ],
         )?;
         Ok(())
@@ -147,7 +169,7 @@ impl Store {
     pub fn load_tasks(&self) -> Result<Vec<TaskRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at
+            "SELECT id, url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers
              FROM tasks ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -168,6 +190,7 @@ impl Store {
                 downloaded: row.get::<_, i64>(11)? as u64,
                 created_at: row.get(12)?,
                 completed_at: row.get(13)?,
+                headers: serde_json::from_str(&row.get::<_, String>(14)?).unwrap_or_default(),
             })
         })?;
         let mut out = Vec::new();
@@ -239,6 +262,7 @@ mod tests {
             downloaded: 0,
             created_at: 1_700_000_000,
             completed_at: None,
+            headers: vec![("Cookie".into(), "token=1".into())],
         }
     }
 
@@ -265,9 +289,35 @@ mod tests {
         assert_eq!(tasks[0].segments.segments[0].pos, 500);
         assert_eq!(tasks[0].etag.as_deref(), Some("\"abc\""));
         assert_eq!(tasks[1].status, TaskStatus::Failed("HTTP 状态码 403".into()));
+        assert_eq!(tasks[0].headers, vec![("Cookie".to_string(), "token=1".to_string())]);
 
         store.delete_task(id).unwrap();
         assert_eq!(store.load_tasks().unwrap().len(), 1);
+    }
+
+    /// v0.2 的库没有 headers 列：打开时应自动补列，旧任务读出来 headers 为空
+    #[test]
+    fn migrates_old_schema() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("old.db");
+        {
+            let old_schema = SCHEMA.replace(",\n    headers      TEXT    NOT NULL DEFAULT '[]'", "");
+            assert!(!old_schema.contains("headers"));
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(&old_schema).unwrap();
+            conn.execute(
+                "INSERT INTO tasks (url, dir, status, created_at) VALUES ('https://a/x', '/tmp', 'paused', 1)",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&db).unwrap();
+        let tasks = store.load_tasks().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].headers.is_empty());
+        // 再开一次不应重复补列
+        drop(store);
+        Store::open(&db).unwrap();
     }
 
     #[test]

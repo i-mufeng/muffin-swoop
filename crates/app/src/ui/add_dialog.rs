@@ -130,7 +130,7 @@ impl SwoopApp {
 
         let mut failed = Vec::new();
         for url in urls {
-            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: dir.clone(), file_name: None }) {
+            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: dir.clone(), file_name: None, headers: Vec::new() }) {
                 failed.push(format!("{url}\n  {e}"));
             }
         }
