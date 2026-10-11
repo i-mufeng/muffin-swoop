@@ -1,6 +1,6 @@
 # 浏览器扩展方案（v0.3）
 
-状态：已确认方向，待实现。决策记录（2026-10-11）：
+状态：阶段 1–3 已实现（2026-10-11），阶段 4（Firefox）未做。决策记录（2026-10-11）：
 
 | 决策点 | 结论 |
 | --- | --- |
@@ -65,16 +65,21 @@ onCreated(item)
 {
   "url": "https://example.com/file.zip",
   "referrer": "https://example.com/page",
-  "suggested_name": "file.zip",
-  "headers": [["Cookie", "a=1; b=2"], ["User-Agent", "Mozilla/5.0 ..."]]
+  "headers": [["Cookie", "a=1; b=2"], ["User-Agent", "Mozilla/5.0 ..."]],
+  "mime": "application/zip",
+  "size": 1234
 }
 ```
+
+- `mime` / `size` 可选，来自 `DownloadItem`。Swoop 用 GET 重探后核对：浏览器下的不是网页、Swoop 却拿到 `text/html`（POST 表单、未登录跳转页），或两边大小都已知但不相等，就返回 422，浏览器继续下。右键菜单不传这两个字段。
+- `suggested_name` 已从协议中去掉：`onCreated` 时浏览器通常还没确定文件名，文件名以 Swoop 探测结果（Content-Disposition / URL）为准。
 
 **安全边界**
 
 - 只绑定回环地址。
 - `Host` 必须是 `127.0.0.1` / `localhost`（防 DNS rebinding）。
-- `Origin` 若存在且为 `http(s)://` 一律拒绝；允许 `chrome-extension://` / `moz-extension://` 和无 Origin（本机脚本）。网页无法伪造 Origin，Chrome 的 Private Network Access 也会拦网页访问 localhost。
+- `Origin` 只允许缺省（本机脚本）和 `chrome-extension://` / `moz-extension://`；`http(s)://` 与 `null`（沙箱 iframe、file 页面）一律拒绝。网页无法伪造 Origin，Chrome 的 Private Network Access 也会拦网页访问 localhost。
+- `POST /tasks` 要求 `Content-Type: application/json`，网页的"简单请求"表单带不了这个类型。
 - 不校验具体扩展 ID：开发者模式下 ID 随路径变化，且本机其它扩展已属可信代码。
 - 请求体上限 64 KB，单连接超时 15s。
 
@@ -118,7 +123,10 @@ extension/
     └── rules.test.ts
 ```
 
-- `manifest.json` 权限：`downloads`、`cookies`、`contextMenus`、`storage`；`host_permissions`：`<all_urls>`（取 Cookie）、`http://127.0.0.1/*`。
+- `manifest.json` 权限：`downloads`、`cookies`、`contextMenus`、`storage`、`alarms`；`host_permissions`：`<all_urls>`（取 Cookie）、`http://127.0.0.1/*`。`alarms` 是实现时加的：MV3 service worker 空闲会被回收，30 秒心跳只能靠 `chrome.alarms`。
+- 每次接管前都现 ping 一次（800ms 超时）再决定是否 `pause`，不依赖可能过期的心跳缓存；本机端口未监听时连接被拒是瞬时的。
+- 交给 Swoop 的是 `item.url`（原始链接）而不是 `finalUrl`：重定向后的签名链接常常几分钟就过期，续传时需要从原始链接重新走一遍。
+- 隐身窗口的下载不接管；右键菜单在隐身窗口里可用但不带 Cookie，避免把隐身会话写进 `swoop.db`。
 - 右键菜单"用 Swoop 下载"：`contexts: ["link", "image", "video", "audio"]`，直接 POST，不经过 `downloads`。
 - 徽标：已连接无标；断开显示灰点；上一次交接失败显示 `!`，popup 里给出原因。
 - 排除域名默认空；大小阈值默认关闭，规则保持可预期。
@@ -134,7 +142,9 @@ extension/
 | `blob:` / `data:` | 放行 |
 | `pause` 报错（已完成） | 放行 |
 | 同一 URL 已在 Swoop 队列 | v0.3 不去重，照常新建；后续可加 |
-| 端口被其它程序占用 | 启动吐司报错，设置页可改端口 |
+| 端口被其它程序占用 | 启动吐司报错，设置页显示原因并可改端口；不把开关写成关闭，下次启动端口空出来会自动恢复 |
+| GET 重探拿到网页 / 大小不符 | 422 → 浏览器 `resume` |
+| 下载在 `pause` 前已完成（本机/极快的小文件） | `pause` 报错 → 放行 |
 
 ## 7. 分阶段与验收
 
@@ -150,7 +160,17 @@ extension/
 
 实施顺序上，阶段 2 会改 `app.rs` / `main.rs` / `settings.rs`，这些文件当前有未提交的详情面板改动，先等那部分提交再动。
 
-## 8. 待定项
+## 8. 验证记录（2026-10-11）
+
+- `cargo test --workspace`：含带 Cookie 的端到端下载、`probe_url`、旧库补列、桥接的 Origin/Host/请求体/端口占用等用例。
+- 实机：Swoop（隔离 HOME）+ curl：建任务、文件一致、恶意 Origin/Host 403、探测 404 → 422、端口被占用只报错不崩。
+- 扩展：Chrome for Testing 无头加载 `extension/dist/`，限速本地服务器上点 `download` 链接：
+  - Swoop 在线 → 浏览器下载被取消并清除，Swoop 下完与源文件逐字节一致，UA / Referer 已透传；
+  - Swoop 未运行 → 浏览器正常下载，徽标灰点；
+  - Swoop 在线但探测 403 → 浏览器下载恢复（`paused: false`），徽标 `!`，popup 显示原因。
+- 尚未实测：真实登录站点（如 GitHub 私有 release）、页内 PDF 阅读器点保存、右键菜单、Chrome「下载前询问保存位置」开启时的行为、询问模式下的对话框（需要实际看界面）。
+
+## 9. 待定项
 
 - 是否把探测结果（文件名、大小、ETag）顺手传进 `AddOptions`，避免 `add` 再探测一次。优化项，不影响协议。
 - 默认端口号 `51230` 只是占位，没有和已知软件冲突即可。
