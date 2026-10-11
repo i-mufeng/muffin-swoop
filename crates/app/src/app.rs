@@ -4,8 +4,10 @@ use std::time::Duration;
 
 use egui::{Key, Modifiers};
 use swoop_core::{Engine, Event, Store, TaskId, TaskSnapshot};
+use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 
+use crate::bridge::{Bridge, BridgeEvent, BridgeMode};
 use crate::clipboard::ClipboardWatcher;
 use crate::settings::AppSettings;
 use crate::theme::{Mode, Palette};
@@ -33,13 +35,26 @@ pub struct SwoopApp {
     pub progress_style: ProgressStyle,
     pub clipboard_watch: bool,
     pub auto_resume: bool,
+    pub bridge_enabled: bool,
+    /// 设置里保存的端口；实际在跑的端口看 `bridge.port()`
+    pub bridge_port: u16,
+    pub bridge_mode: BridgeMode,
+    pub bridge: Bridge,
+    /// 最近一次启动桥接失败的原因（端口被占用等），设置页展示
+    pub bridge_error: Option<String>,
     pub toasts: Toasts,
     clipboard: ClipboardWatcher,
     events: broadcast::Receiver<Event>,
 }
 
 impl SwoopApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>, store: Arc<Store>, settings: AppSettings) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        handle: Handle,
+        engine: Arc<Engine>,
+        store: Arc<Store>,
+        settings: AppSettings,
+    ) -> Self {
         // 环境变量只影响本次运行，不写回设置
         let mode = std::env::var("SWOOP_THEME").ok().and_then(|v| Mode::parse(&v)).unwrap_or(settings.theme);
         let progress_style =
@@ -55,7 +70,11 @@ impl SwoopApp {
             toasts.push_info("下载完成", "rustup-init");
             toasts.push_links(vec!["https://releases.ubuntu.com/24.04/ubuntu-24.04.3-desktop-amd64.iso".into()]);
         }
-        Self {
+        let ctx = cc.egui_ctx.clone();
+        let bridge = Bridge::new(handle, engine.clone(), settings.bridge_mode, settings.default_dir.clone(), move || {
+            ctx.request_repaint()
+        });
+        let mut app = Self {
             engine,
             store,
             palette,
@@ -73,9 +92,36 @@ impl SwoopApp {
             progress_style,
             clipboard_watch: settings.clipboard_watch,
             auto_resume: settings.auto_resume,
+            bridge_enabled: settings.bridge_enabled,
+            bridge_port: settings.bridge_port,
+            bridge_mode: settings.bridge_mode,
+            bridge,
+            bridge_error: None,
             toasts,
             clipboard: ClipboardWatcher::new(),
             events,
+        };
+        app.apply_bridge();
+        app
+    }
+
+    /// 按当前设置启动/重启/停止浏览器桥接。端口被占用只报错，不影响其它功能。
+    pub fn apply_bridge(&mut self) {
+        if !self.bridge_enabled {
+            self.bridge.stop();
+            self.bridge_error = None;
+            return;
+        }
+        if self.bridge.port() == Some(self.bridge_port) {
+            return;
+        }
+        match self.bridge.start(self.bridge_port) {
+            Ok(_) => self.bridge_error = None,
+            Err(e) => {
+                tracing::warn!("浏览器桥接启动失败: {e}");
+                self.toasts.push_error("浏览器集成未启动", format!("{e}，可在设置里换一个端口"));
+                self.bridge_error = Some(e);
+            }
         }
     }
 
@@ -89,8 +135,13 @@ impl SwoopApp {
             auto_resume: self.auto_resume,
             speed_limit_on: self.limit_enabled,
             speed_limit_mbps: self.limit_mbps,
+            bridge_enabled: self.bridge_enabled,
+            bridge_port: self.bridge_port,
+            bridge_mode: self.bridge_mode,
         }
         .save(&self.store);
+        self.bridge.set_mode(self.bridge_mode);
+        self.bridge.set_dir(self.default_dir.clone());
     }
 
     pub fn set_theme(&mut self, ctx: &egui::Context, mode: Mode) {
@@ -180,6 +231,18 @@ impl SwoopApp {
         }
     }
 
+    /// 浏览器扩展交来的下载：静默模式已入队，只提示；询问模式弹预填好的新建对话框
+    fn poll_bridge(&mut self) {
+        while let Some(ev) = self.bridge.try_recv() {
+            match ev {
+                BridgeEvent::Added { file_name } => self.toasts.push_info("已接收浏览器下载", file_name),
+                BridgeEvent::Ask { url, file_name, size, headers } => {
+                    self.add_dialog.open_from_browser(url, &file_name, size, headers)
+                }
+            }
+        }
+    }
+
     /// 剪贴板里出现新链接 → 吐司询问；新建对话框打开时不打扰
     fn poll_clipboard(&mut self) {
         if !self.clipboard_watch {
@@ -209,6 +272,7 @@ impl eframe::App for SwoopApp {
         }
         self.poll_events();
         self.poll_clipboard();
+        self.poll_bridge();
         self.handle_shortcuts(&ctx);
 
         // 面板顺序决定布局：侧栏占满左侧，状态栏横跨右侧，详情面板在状态栏之上贴右，顶栏只占列表宽度

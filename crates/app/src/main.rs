@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod bridge;
 mod clipboard;
 mod demo;
 mod fonts;
@@ -78,12 +79,14 @@ fn main() -> eframe::Result {
         options.renderer = eframe::Renderer::Glow;
     }
 
+    // 只把 handle 交给界面；rt 本身留在 main 栈上，活到窗口关闭
+    let handle = rt.handle().clone();
     eframe::run_native(
         "Swoop",
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx);
-            Ok(Box::new(app::SwoopApp::new(cc, engine, store, settings)))
+            Ok(Box::new(app::SwoopApp::new(cc, handle, engine, store, settings)))
         }),
     )
 }

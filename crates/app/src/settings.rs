@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use swoop_core::Store;
 
+use crate::bridge::{BridgeMode, DEFAULT_PORT};
 use crate::theme::Mode;
 use crate::ui::progress::ProgressStyle;
 
@@ -18,6 +19,10 @@ pub struct AppSettings {
     pub auto_resume: bool,
     pub speed_limit_on: bool,
     pub speed_limit_mbps: f64,
+    /// 浏览器集成：本地 HTTP 服务开关、端口、接收方式
+    pub bridge_enabled: bool,
+    pub bridge_port: u16,
+    pub bridge_mode: BridgeMode,
 }
 
 pub fn default_download_dir() -> PathBuf {
@@ -38,11 +43,14 @@ impl AppSettings {
             auto_resume: flag("auto_resume", true),
             speed_limit_on: flag("speed_limit_on", false),
             speed_limit_mbps: get("speed_limit_mbps").and_then(|v| v.parse().ok()).unwrap_or(5.0),
+            bridge_enabled: flag("bridge_enabled", true),
+            bridge_port: get("bridge_port").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_PORT),
+            bridge_mode: get("bridge_mode").and_then(|v| BridgeMode::parse(&v)).unwrap_or_default(),
         }
     }
 
     pub fn save(&self, store: &Store) {
-        let pairs: [(&str, String); 7] = [
+        let pairs: [(&str, String); 10] = [
             ("theme", self.theme.as_str().into()),
             ("default_dir", self.default_dir.display().to_string()),
             ("progress_style", self.progress_style.as_str().into()),
@@ -50,6 +58,9 @@ impl AppSettings {
             ("auto_resume", flag_str(self.auto_resume)),
             ("speed_limit_on", flag_str(self.speed_limit_on)),
             ("speed_limit_mbps", format!("{:.2}", self.speed_limit_mbps)),
+            ("bridge_enabled", flag_str(self.bridge_enabled)),
+            ("bridge_port", self.bridge_port.to_string()),
+            ("bridge_mode", self.bridge_mode.as_str().into()),
         ];
         for (k, v) in pairs {
             if let Err(e) = store.set_setting(k, &v) {

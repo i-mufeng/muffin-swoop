@@ -21,9 +21,20 @@ eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
 egui-phosphor = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+tokio-util = { workspace = true }
+# 浏览器桥接的本地 HTTP 服务；reqwest 已依赖 hyper 1，编译成本很小
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+serde = { workspace = true }
+serde_json = { workspace = true }
 dirs = { workspace = true }
 arboard = { version = "3.6", default-features = false }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tempfile = "3"

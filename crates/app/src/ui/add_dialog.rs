@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use egui::{Align, Frame, Key, Layout, Margin, Modifiers, RichText};
@@ -12,11 +13,38 @@ pub struct AddDialog {
     pub dir: String,
     pub error: Option<String>,
     want_focus: bool,
+    /// 浏览器交来的链接各自携带的请求头（Cookie 等），只对完全相同的 URL 生效，不会带给手输的其它链接
+    browser_headers: HashMap<String, Vec<(String, String)>>,
+    /// 来自浏览器时在标题下显示的一行说明
+    browser_note: Option<String>,
 }
 
 impl AddDialog {
     pub fn new(dir: &Path) -> Self {
-        Self { open: false, text: String::new(), dir: dir.display().to_string(), error: None, want_focus: false }
+        Self {
+            open: false,
+            text: String::new(),
+            dir: dir.display().to_string(),
+            error: None,
+            want_focus: false,
+            browser_headers: HashMap::new(),
+            browser_note: None,
+        }
+    }
+
+    /// 询问模式：浏览器交来的下载，预填链接并记住它的请求头
+    pub fn open_from_browser(&mut self, url: String, file_name: &str, size: Option<u64>, headers: Vec<(String, String)>) {
+        let size = size.map(|s| format!(" · {}", super::format::bytes(s))).unwrap_or_default();
+        self.browser_note = Some(format!("来自浏览器：{file_name}{size}"));
+        self.browser_headers.insert(url.clone(), headers);
+        self.open_with(Some(url));
+    }
+
+    fn close(&mut self) {
+        self.open = false;
+        self.error = None;
+        self.browser_headers.clear();
+        self.browser_note = None;
     }
 
     pub fn open_with(&mut self, prefill: Option<String>) {
@@ -60,6 +88,10 @@ impl SwoopApp {
                 ui.set_width(520.0);
                 ui.label(RichText::new("新建下载").size(18.0).strong().color(p.text));
                 ui.label(RichText::new("支持一次添加多个链接，每行一个").size(12.5).color(p.text_muted));
+                if let Some(note) = &self.add_dialog.browser_note {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(note).size(12.5).color(p.accent));
+                }
                 ui.add_space(12.0);
 
                 let resp = ui.add(
@@ -112,8 +144,7 @@ impl SwoopApp {
         }
 
         if cancel {
-            self.add_dialog.open = false;
-            self.add_dialog.error = None;
+            self.add_dialog.close();
         } else if submit {
             self.submit_add();
         }
@@ -130,7 +161,8 @@ impl SwoopApp {
 
         let mut failed = Vec::new();
         for url in urls {
-            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: dir.clone(), file_name: None, headers: Vec::new() }) {
+            let headers = self.add_dialog.browser_headers.get(&url).cloned().unwrap_or_default();
+            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: dir.clone(), file_name: None, headers }) {
                 failed.push(format!("{url}\n  {e}"));
             }
         }
@@ -140,9 +172,8 @@ impl SwoopApp {
         }
 
         if failed.is_empty() {
-            self.add_dialog.open = false;
+            self.add_dialog.close();
             self.add_dialog.text.clear();
-            self.add_dialog.error = None;
         } else {
             self.add_dialog.error = Some(format!("以下链接未能添加：\n{}", failed.join("\n")));
         }
