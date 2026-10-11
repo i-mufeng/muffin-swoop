@@ -423,3 +423,27 @@ fn rejects_bad_headers_and_schemes() {
         Err(swoop_core::Error::UnsupportedScheme(_))
     ));
 }
+
+/// 全局限速：多连接并发时总速率仍守在限速值附近（之前会随连接数放大）
+#[test]
+fn speed_limit_holds_across_connections() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = Arc::new(make_body(2 * 1024 * 1024));
+    let server = start_server(body.clone(), true, "limited.bin");
+    let dir = tempfile::tempdir().unwrap();
+
+    // 1 MB/s、4 连接下 2 MB：令牌从 0 起算，理论约 2 秒
+    let engine = Engine::new(
+        rt.handle().clone(),
+        Config { connections: 4, min_segment: 128 * 1024, speed_limit: 1024 * 1024, ..Config::default() },
+    );
+    let t0 = Instant::now();
+    let id = engine
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None, ..Default::default() })
+        .unwrap();
+    assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+    let secs = t0.elapsed().as_secs_f64();
+    assert!(secs > 1.7, "2 MB 在 1 MB/s 限速下只用了 {secs:.2} 秒");
+    assert!(secs < 5.0, "限速过严：用了 {secs:.2} 秒");
+    assert!(std::fs::read(dir.path().join("limited.bin")).unwrap() == *body);
+}
