@@ -2,13 +2,45 @@
 //! 只在 UI 层拼 `TaskSnapshot`，不经过引擎；对假任务的操作会被引擎以 TaskNotFound 忽略。
 
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use swoop_core::segment::SegmentState;
-use swoop_core::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};
+use swoop_core::{SPEED_HISTORY_LEN, SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};
 
 pub fn enabled() -> bool {
     std::env::var_os("SWOOP_DEMO").is_some()
+}
+
+/// 演示模式启动时默认选中的任务（打开详情面板）
+pub const SELECTED: TaskId = TaskId(9001);
+
+/// 假任务的速度曲线：围绕当前速度起伏，下载中的按秒向左滚动；非演示任务返回 None
+pub fn speed_history(t: &TaskSnapshot) -> Option<Vec<f64>> {
+    if !enabled() || !(9001..=9008).contains(&t.id.0) {
+        return None;
+    }
+    let (len, base) = match t.id.0 {
+        9001 => (SPEED_HISTORY_LEN, t.speed_bps),
+        // 刚开始不久，曲线只铺了一段
+        9002 => (48, t.speed_bps),
+        // 已暂停：保留暂停前那段
+        9003 => (75, 9.0 * MB as f64),
+        9005 => (SPEED_HISTORY_LEN, t.speed_bps),
+        _ => (0, 0.0),
+    };
+    let rolling = t.status == TaskStatus::Downloading;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) as f64;
+    let seed = t.id.0 as f64;
+    Some(
+        (0..len)
+            .map(|i| {
+                let k = if rolling { now - (len - 1 - i) as f64 } else { i as f64 };
+                let wave = 0.82 + 0.12 * (k * 0.19 + seed).sin() + 0.06 * (k * 0.71 + seed * 2.0).sin();
+                let ramp = if len < SPEED_HISTORY_LEN { ((i + 1) as f64 / 5.0).min(1.0) } else { 1.0 };
+                base * wave * ramp
+            })
+            .collect(),
+    )
 }
 
 const MB: u64 = 1024 * 1024;
@@ -146,6 +178,7 @@ fn task(
         downloaded,
         speed_bps: speed,
         status,
+        resumable: total.is_some(),
         segments,
         active_connections,
         created_at: SystemTime::now(),

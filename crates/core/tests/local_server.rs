@@ -27,6 +27,11 @@ struct Server {
 }
 
 fn start_server(body: Arc<Vec<u8>>, support_range: bool, file_name: &str) -> Server {
+    start_paced_server(body, support_range, file_name, Duration::from_millis(2))
+}
+
+/// `chunk_delay`：每发 64 KB 停顿多久，用来控制单连接的速度
+fn start_paced_server(body: Arc<Vec<u8>>, support_range: bool, file_name: &str, chunk_delay: Duration) -> Server {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let counter = Arc::new(AtomicUsize::new(0));
@@ -39,13 +44,20 @@ fn start_server(body: Arc<Vec<u8>>, support_range: bool, file_name: &str) -> Ser
             let body = body.clone();
             let counter = counter2.clone();
             let file_name = file_name.clone();
-            std::thread::spawn(move || handle(stream, body, support_range, &counter, &file_name));
+            std::thread::spawn(move || handle(stream, body, support_range, &counter, &file_name, chunk_delay));
         }
     });
     Server { url, range_requests: counter }
 }
 
-fn handle(mut stream: TcpStream, body: Arc<Vec<u8>>, support_range: bool, counter: &AtomicUsize, file_name: &str) {
+fn handle(
+    mut stream: TcpStream,
+    body: Arc<Vec<u8>>,
+    support_range: bool,
+    counter: &AtomicUsize,
+    file_name: &str,
+    chunk_delay: Duration,
+) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut range: Option<(u64, u64)> = None;
     let mut line = String::new();
@@ -89,7 +101,7 @@ fn handle(mut stream: TcpStream, body: Arc<Vec<u8>>, support_range: bool, counte
         if stream.write_all(piece).is_err() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(2));
+        std::thread::sleep(chunk_delay);
     }
     let _ = stream.flush();
 }
@@ -287,4 +299,33 @@ fn pause_and_resume_completes() {
     assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
     let got = std::fs::read(dir.path().join("resume.bin")).unwrap();
     assert!(got == *body);
+}
+
+/// 速度曲线：下载中每秒记一个吞吐采样，完成后历史仍可读
+#[test]
+fn speed_history_samples_each_second() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    // 单连接、每 64 KB 停 40ms（约 1.6 MB/s），4 MB 大约下 2.6 秒，能采到 2 个整秒点
+    let body = Arc::new(make_body(4 * 1024 * 1024));
+    let server = start_paced_server(body.clone(), true, "curve.bin", Duration::from_millis(40));
+    let dir = tempfile::tempdir().unwrap();
+    let pace = 64.0 * 1024.0 / 0.040;
+
+    let engine = Engine::new(rt.handle().clone(), Config { connections: 1, ..Config::default() });
+    let id = engine
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .unwrap();
+    assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+
+    let snap = engine.snapshot_one(id).unwrap();
+    assert!(snap.resumable);
+    let history = engine.speed_history(id);
+    assert!(history.len() >= 2, "应至少有 2 个采样，实际 {history:?}");
+    assert!(history.len() <= swoop_core::SPEED_HISTORY_LEN);
+    assert!(history.iter().all(|v| v.is_finite() && *v >= 0.0));
+    let peak = history.iter().copied().fold(0.0, f64::max);
+    assert!(peak > 0.0);
+    assert!(peak < pace * 1.5, "峰值 {peak} 不应超过服务器发送速度");
+
+    assert!(engine.speed_history(swoop_core::TaskId(9999)).is_empty());
 }

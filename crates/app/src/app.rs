@@ -23,6 +23,8 @@ pub struct SwoopApp {
     pub filter: Filter,
     pub search: String,
     pub selected: Option<TaskId>,
+    /// 详情面板最后展示的任务；收起动画期间 selected 已为 None，靠它继续画
+    pub detail_last: Option<TaskId>,
     pub add_dialog: AddDialog,
     pub show_settings: bool,
     pub default_dir: PathBuf,
@@ -60,7 +62,9 @@ impl SwoopApp {
             tasks: Vec::new(),
             filter: Filter::All,
             search: String::new(),
-            selected: None,
+            // 演示模式默认选中第一条，方便截图看到详情面板
+            selected: crate::demo::enabled().then_some(crate::demo::SELECTED),
+            detail_last: None,
             add_dialog: AddDialog::new(&settings.default_dir),
             show_settings: false,
             default_dir: settings.default_dir,
@@ -106,6 +110,13 @@ impl SwoopApp {
         self.set_theme(ctx, next);
     }
 
+    /// 复制到系统剪贴板并提示；自己复制的链接不触发剪贴板监听
+    pub fn copy_link(&mut self, ctx: &egui::Context, url: String) {
+        self.clipboard.ignore(&url);
+        ctx.copy_text(url.clone());
+        self.toasts.push_info("已复制链接", url);
+    }
+
     /// 当前过滤器 + 搜索词下可见的任务
     pub fn visible_tasks(&self) -> Vec<TaskSnapshot> {
         let q = self.search.trim().to_lowercase();
@@ -120,6 +131,15 @@ impl SwoopApp {
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::N)) {
             self.add_dialog.open_with(None);
+        }
+        // Esc 收起详情面板；弹窗打开或输入框聚焦时 Esc 归它们
+        if self.selected.is_some()
+            && !self.add_dialog.open
+            && !self.show_settings
+            && !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape))
+        {
+            self.selected = None;
         }
         // 没有输入框聚焦时，⌘V 粘贴链接直接打开新建对话框
         if !ctx.egui_wants_keyboard_input() && !self.add_dialog.open {
@@ -191,9 +211,10 @@ impl eframe::App for SwoopApp {
         self.poll_clipboard();
         self.handle_shortcuts(&ctx);
 
-        // 面板顺序决定布局：侧栏占满左侧，状态栏/顶栏只占右侧剩余宽度
+        // 面板顺序决定布局：侧栏占满左侧，状态栏横跨右侧，详情面板在状态栏之上贴右，顶栏只占列表宽度
         self.sidebar(ui);
         self.statusbar(ui);
+        self.detail_panel(ui);
         self.topbar(ui);
         self.task_list(ui);
         self.add_dialog_ui(&ctx);

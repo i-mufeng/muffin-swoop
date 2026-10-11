@@ -2,6 +2,7 @@
 //! 全部走 `Palette` 令牌，带 120–150ms 的悬停过渡。
 
 pub mod add_dialog;
+pub mod detail;
 pub mod filekind;
 pub mod format;
 pub mod progress;

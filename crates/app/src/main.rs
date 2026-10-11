@@ -58,7 +58,8 @@ fn main() -> eframe::Result {
         .with_title("Swoop")
         .with_app_id("com.muffin.swoop")
         .with_inner_size([1080.0, 700.0])
-        .with_min_inner_size([760.0, 480.0]);
+        // 侧栏 208 + 列表行最窄约 500 + 详情面板 300
+        .with_min_inner_size([1010.0, 480.0]);
     if cfg!(target_os = "macos") {
         // 透明标题栏 + 内容延伸到顶部，红绿灯按钮浮在侧栏上方
         viewport = viewport

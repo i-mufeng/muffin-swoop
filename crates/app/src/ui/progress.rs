@@ -43,7 +43,7 @@ const CELL_GAP: f32 = 2.0;
 /// 彗星尾长度（格）
 const TAIL: usize = 7;
 
-fn status_color(p: &Palette, status: &TaskStatus) -> Color32 {
+pub fn status_color(p: &Palette, status: &TaskStatus) -> Color32 {
     match status {
         TaskStatus::Queued | TaskStatus::Probing | TaskStatus::Downloading => p.accent,
         TaskStatus::Paused => p.text_muted,

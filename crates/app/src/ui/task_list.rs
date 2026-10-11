@@ -52,7 +52,8 @@ impl SwoopApp {
 
     fn apply(&mut self, action: RowAction) {
         match action {
-            RowAction::Select(id) => self.selected = Some(id),
+            // 再点一次已选中的行收起详情面板
+            RowAction::Select(id) => self.selected = if self.selected == Some(id) { None } else { Some(id) },
             RowAction::Pause(id) => {
                 let _ = self.engine.pause(id);
             }
@@ -255,7 +256,7 @@ fn meta_text(t: &TaskSnapshot) -> String {
     parts.join("  ·  ")
 }
 
-fn reveal_in_file_manager(path: &Path) {
+pub fn reveal_in_file_manager(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();

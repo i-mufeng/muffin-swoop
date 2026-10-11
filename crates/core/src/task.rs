@@ -44,6 +44,8 @@ pub struct TaskSnapshot {
     pub downloaded: u64,
     pub speed_bps: f64,
     pub status: TaskStatus,
+    /// 服务器是否支持 Range（断点续传/多连接）；探测前为 false
+    pub resumable: bool,
     pub segments: Vec<SegmentSnapshot>,
     pub active_connections: usize,
     pub created_at: SystemTime,

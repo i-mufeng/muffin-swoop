@@ -1,6 +1,6 @@
 //! 任务调度与分段下载 worker。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -22,6 +22,9 @@ use crate::segment::{SegmentMap, SegmentState};
 use crate::store::{Store, TaskRecord};
 use crate::task::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};
 use crate::util::{unique_file_name, write_at};
+
+/// 每个任务保留的速度采样数（每秒一个），即速度曲线覆盖的秒数
+pub const SPEED_HISTORY_LEN: usize = 120;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -104,6 +107,8 @@ struct TaskShared {
     segments: Mutex<SegmentMap>,
     created_at: SystemTime,
     completed_at: Mutex<Option<SystemTime>>,
+    /// 最近的每秒吞吐（字节/秒），旧的在前；只在内存里，不落盘
+    history: Mutex<VecDeque<f64>>,
 }
 
 impl TaskShared {
@@ -125,6 +130,13 @@ impl TaskShared {
     }
     fn path(&self) -> PathBuf {
         self.dir.join(&*self.file_name.lock().unwrap())
+    }
+    fn push_history(&self, bps: f64) {
+        let mut h = self.history.lock().unwrap();
+        if h.len() == SPEED_HISTORY_LEN {
+            h.pop_front();
+        }
+        h.push_back(bps);
     }
 }
 
@@ -213,6 +225,7 @@ impl Engine {
                 segments: Mutex::new(segments),
                 created_at: from_unix(rec.created_at),
                 completed_at: Mutex::new(rec.completed_at.map(from_unix)),
+                history: Mutex::default(),
             });
             self.inner
                 .tasks
@@ -290,6 +303,7 @@ impl Engine {
             segments: Mutex::new(SegmentMap::default()),
             created_at,
             completed_at: Mutex::new(None),
+            history: Mutex::default(),
         });
         let cancel = CancellationToken::new();
         self.inner
@@ -372,6 +386,13 @@ impl Engine {
         tasks.get(&id).map(|e| snapshot_of(&e.shared))
     }
 
+    /// 任务最近的每秒吞吐（字节/秒），旧的在前，最多 [`SPEED_HISTORY_LEN`] 个。
+    /// 只记录下载中的时段；任务不存在时返回空。
+    pub fn speed_history(&self, id: TaskId) -> Vec<f64> {
+        let tasks = self.inner.tasks.lock().unwrap();
+        tasks.get(&id).map(|e| e.shared.history.lock().unwrap().iter().copied().collect()).unwrap_or_default()
+    }
+
     /// 所有活动任务速度之和（字节/秒）
     pub fn global_speed(&self) -> f64 {
         let tasks = self.inner.tasks.lock().unwrap();
@@ -395,6 +416,7 @@ fn snapshot_of(s: &TaskShared) -> TaskSnapshot {
         downloaded: s.downloaded.load(Ordering::Relaxed),
         speed_bps: s.speed(),
         status: s.status(),
+        resumable: s.resumable.load(Ordering::Relaxed),
         segments: map
             .segments
             .iter()
@@ -692,11 +714,15 @@ async fn download_segment(
     }
 }
 
-/// 每 250ms 计算一次速度；每 4 次（1 秒）把区段表刷到数据库
+/// 每 250ms 计算一次速度；每 4 次（1 秒）记一个吞吐采样，并把区段表刷到数据库
 async fn speed_ticker(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: CancellationToken) {
-    let mut interval = tokio::time::interval(Duration::from_millis(250));
+    // 首个 tick 放在 250ms 后（interval 默认立即触发），让吞吐采样落在整秒上
+    let period = Duration::from_millis(250);
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
     let mut last_bytes = shared.downloaded.load(Ordering::Relaxed);
     let mut last_t = Instant::now();
+    // 上一个整秒采样点：曲线用真实吞吐而不是平滑后的 EWMA
+    let (mut sec_bytes, mut sec_t) = (last_bytes, last_t);
     let mut ewma = 0.0f64;
     let mut tick = 0u32;
     loop {
@@ -715,9 +741,13 @@ async fn speed_ticker(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: Cancel
         let _ = inner.events.send(Event::Changed(shared.id));
 
         tick += 1;
-        if tick % 4 == 0
-            && let Some(store) = &inner.store
-        {
+        if tick % 4 != 0 {
+            continue;
+        }
+        let sec_dt = now.duration_since(sec_t).as_secs_f64().max(1e-3);
+        shared.push_history(bytes.saturating_sub(sec_bytes) as f64 / sec_dt);
+        (sec_bytes, sec_t) = (bytes, now);
+        if let Some(store) = &inner.store {
             let segments = shared.segments.lock().unwrap().clone();
             if let Err(e) = store.save_progress(shared.id, &segments, bytes) {
                 tracing::warn!(task = shared.id.0, "刷新进度失败: {e}");

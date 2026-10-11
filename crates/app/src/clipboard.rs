@@ -22,6 +22,11 @@ impl ClipboardWatcher {
         Self { cb, last, last_poll: Instant::now() }
     }
 
+    /// 应用自己写入剪贴板的内容，下次轮询时不当作新链接
+    pub fn ignore(&mut self, text: &str) {
+        self.last = Some(text.to_string());
+    }
+
     /// 返回剪贴板里新出现的链接（空表示没有变化或没有链接）
     pub fn poll(&mut self) -> Vec<String> {
         if self.last_poll.elapsed() < Duration::from_secs(1) {

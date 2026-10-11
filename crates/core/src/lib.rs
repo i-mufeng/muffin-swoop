@@ -15,7 +15,7 @@ pub mod store;
 pub mod task;
 mod util;
 
-pub use engine::{AddOptions, Config, Engine, Event};
+pub use engine::{AddOptions, Config, Engine, Event, SPEED_HISTORY_LEN};
 pub use error::{Error, Result};
 pub use store::{Store, TaskRecord};
 pub use task::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};

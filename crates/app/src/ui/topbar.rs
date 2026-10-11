@@ -32,7 +32,8 @@ impl SwoopApp {
                         }
                         ui.add_space(6.0);
 
-                        // 搜索框：自绘外框 + 无边框 TextEdit
+                        // 搜索框：自绘外框 + 无边框 TextEdit；详情面板打开、窗口又窄时让出空间给标题
+                        let search_w = (ui.available_width() - 56.0).clamp(72.0, 150.0);
                         Frame::new()
                             .fill(p.surface)
                             .stroke(Stroke::new(1.0, p.border))
@@ -46,7 +47,7 @@ impl SwoopApp {
                                         egui::TextEdit::singleline(&mut self.search)
                                             .frame(Frame::NONE)
                                             .hint_text("搜索任务")
-                                            .desired_width(150.0)
+                                            .desired_width(search_w)
                                             .margin(Margin::ZERO),
                                     );
                                 });
