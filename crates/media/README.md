@@ -100,7 +100,7 @@ let info = downloader.inspect_with_auth(&source, &auth, &cancel).await?;
 let result = downloader.download_with_auth(request, auth, cancel, on_event).await?;
 ```
 
-`new_with_network` 支持手动 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理和排除规则；代理 URL 禁止内嵌账号密码。默认 `use_system_proxy=false`；只有明确选择时才使用系统代理。可配置连接/读取超时、重定向上限、资源数和并发请求数；默认分别 15 秒 / 30 秒 / 8 跳 / 20,000 个 / 16 个。`request_retries` 默认 2（允许 0–10），`retry_delay_ms` 默认 250（0–30,000）；只对响应正文开始前的连接/超时、408、429、5xx 做指数退避（最长 30 秒），不重试 401/403 或掩盖已经中断的正文。`live_manifest_refresh_ms` 默认 250（50–30,000），限制同一直播清单的刷新频率，避免 FFmpeg 在下一片发布前空转耗尽重新加载次数。取消可中断等待。单请求总超时仍受 `MediaConfig.network_timeout` 限制。桌面媒体设置可选“直连 / 跟随全局 / 手动代理”；切换全局网络后，新任务等待现有任务结束才采用新策略，活动任务继续使用自己的原始配置。非法或损坏的设置会阻断任务，不静默回退。跟随全局时，如果全局代理声明了账号认证，媒体任务明确拒绝继承，要求选择独立网络配置；不会丢掉账号而继续访问。
+`new_with_network` 支持手动 HTTP / HTTPS / SOCKS5 / SOCKS5h 代理和排除规则；代理 URL 禁止内嵌账号密码。默认 `use_system_proxy=false`；只有明确选择时才使用系统代理。可配置连接/读取超时、重定向上限、资源数和并发请求数；默认分别 15 秒 / 30 秒 / 8 跳 / 20,000 个 / 16 个。`request_retries` 默认 2（允许 0–10），`retry_delay_ms` 默认 250（0–30,000）；只对响应正文开始前的连接/超时、408、429、5xx 做指数退避（最长 30 秒），不重试 401/403 或掩盖已经中断的正文。`live_manifest_refresh_ms` 默认 250（50–30,000），限制同一直播清单的刷新频率，避免 FFmpeg 在下一片发布前空转耗尽重新加载次数。取消可中断等待。单请求总超时仍受 `MediaConfig.network_timeout` 限制。桌面媒体设置可选“直连 / 跟随全局 / 手动代理”；切换全局网络后，新任务等待现有任务结束才采用新策略，活动任务继续使用自己的原始配置。非法或损坏的设置会阻断任务，不静默回退。上游 HLS/DASH 请求经 `swoop-core` 的代理客户端（libcurl）发送，支持代理账号认证：HTTP(S) 代理可用 Basic / Digest / NTLM / Negotiate，SOCKS5 代理用用户名密码。跟随全局时继承全局代理的账号和已保存凭据；手动代理的密码只在本次会话有效，不写入媒体设置，代理地址变更后必须重新输入。代理凭据只用于代理握手，不进入源站请求头，也不交给 FFmpeg。
 
 认证、显式网络模式及直播使用每任务受控网关：先有界抓取、检查清单，将主清单、音轨、字幕、AES-128 KEY、MAP 初始化段与媒体 URI 全部换成随机 loopback 资源 ID。点播冻结检查后的清单；直播在 FFmpeg 重新请求清单时刷新，并对新增资源执行同样检查与累计预算。相同媒体资源复用 ID，保持显式及隐式 BYTERANGE 偏移；字节范围透传上游。FFmpeg 只接触 `127.0.0.1` 的随机能力地址，不接触上游账号、URL 查询或任意 URL 代理接口。服务校验 Host、拒绝 Origin/请求体/未知路径，关闭 keep-alive 并限制头部读取时间。媒体响应由 Hyper 连接直接持有上游流，背压由消费者控制，断开时释放上游；统一取消和等待所有连接后关闭监听。
 
@@ -138,7 +138,7 @@ cargo clippy -p swoop-media --all-targets -- -D warnings
 
 集成测试使用真实本机 HTTP 服务、由 FFmpeg 生成的 3 秒 H264/AAC HLS/DASH/AES-128 素材，下载后用 FFprobe 检查音视频流与时长；同时覆盖等待并发额度的取消、传输中的取消与临时清理、定稿时目标已存在，以及检查后远程清单切换为 `file://` 的防护。可用 `FFMPEG_BINARY`、`FFPROBE_BINARY` 指定下载/探测工具位置；夹具生成默认使用 PATH 的完整 `ffmpeg`，可另设 `FFMPEG_FIXTURE_BINARY`。
 
-应用层已接入桌面/浏览器和任务历史；重启后公开媒体标记为已停止，私有媒体必须重新登录（已有失败信息和恢复路径继续保留），可从头重新下载。本库仍未实现：代理账号认证、TTML/封装 wvtt、未完成分片的任意字节续接、媒体带宽限制、FFmpeg 分发/更新、DRM 许可证内容；MMS 的代理/认证也未接入。Windows 代码路径和原生系统行为必须另外执行，macOS 结果不能替代 Windows 验收。
+应用层已接入桌面/浏览器和任务历史；重启后公开媒体标记为已停止，私有媒体必须重新登录（已有失败信息和恢复路径继续保留），可从头重新下载。本库仍未实现：TTML/封装 wvtt（转换代码在 `src/subtitle/`，尚未接入下载流程）、未完成分片的任意字节续接、FFmpeg 分发/更新、DRM 许可证内容；MMS 的代理/认证也未接入（经网关中转的 `src/mmsh_gateway.rs` 尚未挂载）。Windows 代码路径和原生系统行为必须另外执行，macOS 结果不能替代 Windows 验收。
 
 协议白名单及网络超时参数依据 [FFmpeg 官方协议说明](https://ffmpeg.org/ffmpeg-protocols.html)，no-clobber 使用 [tempfile API](https://docs.rs/tempfile/latest/tempfile/struct.TempPath.html#method.persist_noclobber)。
 
