@@ -5,7 +5,7 @@ Build a native Windows Swoop zip and per-user NSIS installer without installatio
 .DESCRIPTION
 Requires cargo-packager: cargo install cargo-packager --version 0.11.8 --locked
 .EXAMPLE
-powershell -File scripts/package-windows.ps1 -Profile release
+pwsh -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -Profile release
 .EXAMPLE
 pwsh -File scripts/package-windows.ps1 -Profile debug -OutputDir "target/desktop packages"
 #>
@@ -24,6 +24,10 @@ if ($env:OS -ne 'Windows_NT') {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $previousRustFlags = $env:RUSTFLAGS
+# Cargo prints UTF-8, but PowerShell decodes native output with the console code page
+# (GBK on Chinese Windows), which garbles crate descriptions and breaks the metadata JSON.
+$previousOutputEncoding = [Console]::OutputEncoding
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false
 $stageDir = $null
 $lockDir = $null
 Push-Location -LiteralPath $repoRoot
@@ -200,6 +204,7 @@ authenticode_signature=none
 }
 finally {
     $env:RUSTFLAGS = $previousRustFlags
+    [Console]::OutputEncoding = $previousOutputEncoding
     if ($stageDir -and (Test-Path -LiteralPath $stageDir)) {
         # This directory is created by this invocation and contains no user data.
         Remove-Item -LiteralPath $stageDir -Recurse -Force

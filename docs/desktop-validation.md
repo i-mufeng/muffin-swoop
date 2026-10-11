@@ -60,11 +60,12 @@ macOS 通知需要系统能解析应用标识。若日志明确显示 `set_appli
 
 ```powershell
 # 从仓库根目录执行。默认 release，也可 -Profile debug。
-powershell -File scripts/package-windows.ps1
-pwsh -File scripts/package-windows.ps1 -Profile debug -OutputDir "target/桌面验收 packages"
+# Windows 默认禁止运行脚本，-ExecutionPolicy Bypass 只对本次进程生效；`powershell`（5.1）同样可用。
+pwsh -ExecutionPolicy Bypass -File scripts/package-windows.ps1
+pwsh -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -Profile debug -OutputDir "target/桌面验收 packages"
 ```
 
-脚本显式按本机 MSVC target 构建，并请求静态链接 CRT，减少对系统级 VC 运行库安装的依赖；原有 `RUSTFLAGS` 会在退出时恢复。若设置了优先级更高的 `CARGO_ENCODED_RUSTFLAGS`，脚本会报错，避免静默绕过静态链接参数。目标为 x64 或 ARM64，不交叉编译，不把 macOS 构建当作 Windows 包。
+脚本运行期间把控制台输出编码切到 UTF-8，退出时恢复，避免中文 Windows 按 GBK 解码 `cargo metadata` 的 JSON 而解析失败。脚本显式按本机 MSVC target 构建，并请求静态链接 CRT，减少对系统级 VC 运行库安装的依赖；原有 `RUSTFLAGS` 会在退出时恢复。若设置了优先级更高的 `CARGO_ENCODED_RUSTFLAGS`，脚本会报错，避免静默绕过静态链接参数。目标为 x64 或 ARM64，不交叉编译，不把 macOS 构建当作 Windows 包。
 
 两个 EXE 均在 Cargo 构建时嵌入 A「折光」文件图标，唯一来源是 `assets/brand/swoop/swoop.ico`。无需随包放置 ICO，资源编译器缺失或编译失败时会报错。Windows CI 打包后使用以下检查逐帧比对七种尺寸（检查需要 Python 3，打包本身不依赖 Python）：
 
