@@ -6,6 +6,8 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 
 - `crates/core`（`swoop-core`）：下载引擎，**禁止依赖任何 UI crate**。对外 API：`Engine`、`AddOptions`、`TaskSnapshot`、`Event`。
 - `crates/app`（`swoop-app`，二进制 `swoop`）：egui 界面。每帧调用 `engine.snapshot()` 读取只读快照，不直接碰引擎内部状态。
+- `crates/app/src/bridge.rs`：浏览器桥接，只绑 127.0.0.1 的 hyper 服务（`/ping`、`/tasks`），协议见 `docs/browser-extension.md`；改协议要同步改 `extension/src/api.ts`。
+- `extension/`：Chromium MV3 扩展（TypeScript + esbuild），`npm run build` 产出 `extension/dist/`；规则类逻辑写成纯函数放 `rules.ts` 并在 `rules.test.ts` 加测试。
 - 颜色/间距只在 `crates/app/src/theme.rs` 定义（`Palette`），UI 代码不写裸色值。
 - 图标用 `egui_phosphor::regular::*`；中文字体内嵌 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.subset.otf`（GB2312 子集，`include_bytes!`），不要在运行时加载系统字体（整字体几十 MB 常驻内存）。要扩充字符集改 `scripts/make_font_subset.py` 重新生成。
 
@@ -29,6 +31,7 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 cargo run -p swoop-app
 cargo test --workspace
 cargo clippy --workspace --all-targets
+cd extension && npm test && npm run typecheck && npm run build
 ```
 
 ## 交流

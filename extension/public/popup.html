@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Swoop</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { width: 300px; padding: 14px; display: grid; gap: 10px; }
+    .result-title { font-weight: 600; }
+    .result.err .result-title { color: var(--danger); }
+    .result.ok .result-title { color: var(--success); }
+    .small { font-size: 12px; }
+    a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <img src="icons/icon-32.png" width="20" height="20" alt="">
+    <h1>Swoop</h1>
+    <span class="spacer"></span>
+    <a id="open-options" class="small">设置</a>
+  </div>
+
+  <div class="card row">
+    <span id="dot" class="dot"></span>
+    <div class="ellipsis" style="flex: 1">
+      <div id="status">检测中…</div>
+      <div id="status-sub" class="muted small"></div>
+    </div>
+  </div>
+
+  <label class="card row">
+    <div style="flex: 1">
+      <div>接管浏览器下载</div>
+      <div class="muted small">关闭后下载完全交给浏览器</div>
+    </div>
+    <span class="switch"><input id="enabled" type="checkbox"><span></span></span>
+  </label>
+
+  <div id="result" class="card result" hidden>
+    <div id="result-title" class="result-title small"></div>
+    <div id="result-name" class="ellipsis"></div>
+    <div id="result-detail" class="muted small"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

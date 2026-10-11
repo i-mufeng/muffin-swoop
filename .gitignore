@@ -2,3 +2,5 @@
 .DS_Store
 *.log
 /tmp
+/extension/node_modules
+/extension/dist
