@@ -1,6 +1,6 @@
 use crate::app::SwoopApp;
 use crate::media_tasks::{MediaNetworkMode, MediaPreferences, MediaStatus};
-use egui::{RichText, TextEdit};
+use egui::{Align, Layout, RichText, TextEdit};
 use std::path::Path;
 use swoop_media::{
     AudioSelection, MediaAuthorization, MediaInfo, MediaSelection, MediaSessionAuth, OriginCredentials, ScopedCookie,
@@ -401,10 +401,14 @@ impl SwoopApp {
         let mut action = None;
         let mut save_preferences = false;
         let mut inspect = false;
+        let max_height = ctx.content_rect().height() - 40.0;
         egui::Window::new(swoop_i18n::tr!("媒体下载"))
             .open(&mut open)
             .default_width(690.0)
-            .max_height(ctx.content_rect().height() - 40.0)
+            .max_width(ctx.content_rect().width() - 40.0)
+            // 带 vscroll 的窗口高度不随内容增长（默认 420 且会被持久化），给足表单高度免得底部按钮被截掉。
+            .min_height(max_height.min(760.0))
+            .max_height(max_height)
             .vscroll(true)
             .resizable(true)
             .show(ctx, |ui| {
@@ -419,32 +423,35 @@ impl SwoopApp {
                 }
                 ui.horizontal(|ui| {
                     ui.label(swoop_i18n::tr!("链接"));
-                    if ui
-                        .add(
-                            TextEdit::singleline(&mut self.media_window.url)
-                                .desired_width(f32::INFINITY)
-                                .hint_text(swoop_i18n::tr!("https://…/playlist.m3u8、manifest.mpd 或 mms://…")),
-                        )
-                        .changed()
-                    {
-                        // 改地址时不沿用浏览器上下文。
-                        self.media_window.source_edited();
-                    }
-                    if self.media_window.inspection.is_some() {
-                        ui.spinner();
-                        if ui.button(swoop_i18n::tr!("取消检查")).clicked()
-                            && let Some(inspection) = self.media_window.inspection.take()
-                        {
-                            inspection.cancel.cancel();
+                    // 按钮先从右往左排，输入框只占剩余宽度；按钮挤出右缘会让可缩放窗口逐帧变宽。
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if self.media_window.inspection.is_some() {
+                            if ui.button(swoop_i18n::tr!("取消检查")).clicked()
+                                && let Some(inspection) = self.media_window.inspection.take()
+                            {
+                                inspection.cancel.cancel();
+                            }
+                            ui.spinner();
+                        } else {
+                            inspect = ui
+                                .add_enabled(
+                                    !self.media_window.url.trim().is_empty(),
+                                    egui::Button::new(swoop_i18n::tr!("检查清晰度")),
+                                )
+                                .clicked();
                         }
-                    } else {
-                        inspect = ui
-                            .add_enabled(
-                                !self.media_window.url.trim().is_empty(),
-                                egui::Button::new(swoop_i18n::tr!("检查清晰度")),
+                        if ui
+                            .add(
+                                TextEdit::singleline(&mut self.media_window.url)
+                                    .desired_width(ui.available_width())
+                                    .hint_text(swoop_i18n::tr!("https://…/playlist.m3u8、manifest.mpd 或 mms://…")),
                             )
-                            .clicked();
-                    }
+                            .changed()
+                        {
+                            // 改地址时不沿用浏览器上下文。
+                            self.media_window.source_edited();
+                        }
+                    });
                 });
                 ui.horizontal(|ui| {
                     ui.label(swoop_i18n::tr!("清晰度"));
@@ -587,6 +594,9 @@ impl SwoopApp {
                                 .suffix(swoop_i18n::tr!(" 秒")),
                         );
                     }
+                });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
                     start = super::primary_button(ui, &p, swoop_i18n::tr!("开始下载")).clicked();
                     if ui.button(swoop_i18n::tr!("媒体设置")).clicked() {
                         self.media_window.proxy_login =

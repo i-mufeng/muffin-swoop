@@ -57,55 +57,59 @@ impl SwoopApp {
                 ui.label(RichText::new(swoop_i18n::tr!("下载属性")).size(18.0).strong());
                 ui.add(egui::Label::new(&task.file_name).truncate());
                 ui.add_space(12.0);
-                ui.label(swoop_i18n::tr!("描述"));
-                ui.add(
-                    egui::TextEdit::multiline(&mut editor.description)
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(3)
-                        .char_limit(4096),
-                );
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut editor.limited, swoop_i18n::tr!("任务限速"));
-                    ui.add_enabled(
-                        editor.limited,
-                        egui::DragValue::new(&mut editor.kib_per_second).range(1..=10 * 1024 * 1024).suffix(" KiB/s"),
+                // 操作按钮分散在各段里，整块随窗口高度滚动。
+                super::modal_body(ui, "task_properties_body", 160.0, |ui| {
+                    ui.label(swoop_i18n::tr!("描述"));
+                    ui.add(
+                        egui::TextEdit::multiline(&mut editor.description)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(3)
+                            .char_limit(4096),
                     );
-                });
-                save = super::primary_button(ui, &p, swoop_i18n::tr!("保存属性")).clicked();
-                if let Some(ftp) = &mut editor.ftp {
-                    ui.separator();
-                    let editable =
-                        matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
-                    ui.add_enabled_ui(editable, |ui| {
-                        egui::ScrollArea::vertical().id_salt("task_ftp_settings").max_height(220.0).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut editor.limited, swoop_i18n::tr!("任务限速"));
+                        ui.add_enabled(
+                            editor.limited,
+                            egui::DragValue::new(&mut editor.kib_per_second)
+                                .range(1..=10 * 1024 * 1024)
+                                .suffix(" KiB/s"),
+                        );
+                    });
+                    save = super::primary_button(ui, &p, swoop_i18n::tr!("保存属性")).clicked();
+                    if let Some(ftp) = &mut editor.ftp {
+                        ui.separator();
+                        let editable =
+                            matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
+                        ui.add_enabled_ui(editable, |ui| {
                             ftp.ui(ui, task.url.starts_with("ftps:"));
                             save_ftp = ui.button(swoop_i18n::tr!("应用 FTP 设置与登录")).clicked();
                         });
-                    });
-                }
-                ui.add_space(12.0);
-                ui.separator();
-                ui.label(swoop_i18n::tr!("下载地址"));
-                ui.add(egui::TextEdit::singleline(&mut editor.url).desired_width(f32::INFINITY));
-                let editable = matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
-                update_url = ui
-                    .add_enabled(
-                        editable && editor.url.trim() != task.url,
-                        egui::Button::new(swoop_i18n::tr!("更新地址")),
-                    )
-                    .clicked();
-                ui.label(
-                    RichText::new(if editable {
-                        swoop_i18n::tr!("更新后重新检查续传条件")
-                    } else {
-                        swoop_i18n::tr!("暂停下载后可更新地址")
-                    })
-                    .size(12.0)
-                    .color(p.text_muted),
-                );
-                if let Some(error) = &editor.error {
-                    ui.colored_label(p.danger, error);
-                }
+                    }
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.label(swoop_i18n::tr!("下载地址"));
+                    ui.add(egui::TextEdit::singleline(&mut editor.url).desired_width(f32::INFINITY));
+                    let editable =
+                        matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
+                    update_url = ui
+                        .add_enabled(
+                            editable && editor.url.trim() != task.url,
+                            egui::Button::new(swoop_i18n::tr!("更新地址")),
+                        )
+                        .clicked();
+                    ui.label(
+                        RichText::new(if editable {
+                            swoop_i18n::tr!("更新后重新检查续传条件")
+                        } else {
+                            swoop_i18n::tr!("暂停下载后可更新地址")
+                        })
+                        .size(12.0)
+                        .color(p.text_muted),
+                    );
+                    if let Some(error) = &editor.error {
+                        ui.colored_label(p.danger, error);
+                    }
+                });
             });
         if save {
             let properties = TaskProperties {

@@ -84,201 +84,207 @@ impl SwoopApp {
                 ui.set_width(510.0);
                 ui.label(RichText::new(swoop_i18n::tr!("网络与重试")).size(18.0).strong());
                 ui.label(RichText::new(swoop_i18n::tr!("新建或继续下载时生效")).size(12.0).color(p.text_muted));
-                ui.add_enabled_ui(!busy, |ui| {
-                    egui::Grid::new("network_grid").num_columns(2).spacing([18.0, 12.0]).show(ui, |ui| {
-                        ui.label(swoop_i18n::tr!("连接超时"));
-                        ui.add(
-                            egui::DragValue::new(&mut draft.connect_timeout_secs)
-                                .range(1..=86400)
-                                .suffix(swoop_i18n::tr!(" 秒")),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("读取超时"));
-                        ui.add(
-                            egui::DragValue::new(&mut draft.read_timeout_secs)
-                                .range(1..=86400)
-                                .suffix(swoop_i18n::tr!(" 秒")),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("请求总时长"));
-                        ui.horizontal(|ui| {
-                            let mut enabled = draft.request_timeout_secs.is_some();
-                            if ui.checkbox(&mut enabled, swoop_i18n::tr!("限制")).changed() {
-                                draft.request_timeout_secs = enabled.then_some(3600);
-                            }
-                            if let Some(seconds) = &mut draft.request_timeout_secs {
-                                ui.add(egui::DragValue::new(seconds).range(1..=86400).suffix(swoop_i18n::tr!(" 秒")));
-                            }
-                        });
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("失败重试"));
-                        ui.add(egui::DragValue::new(&mut draft.retries).range(0..=100).suffix(swoop_i18n::tr!(" 次")));
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("首次重试间隔"));
-                        ui.add(
-                            egui::DragValue::new(&mut draft.retry_delay_ms)
-                                .range(1..=3_600_000)
-                                .suffix(swoop_i18n::tr!(" 毫秒")),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("最大重试间隔"));
-                        ui.add(
-                            egui::DragValue::new(&mut draft.retry_max_delay_ms)
-                                .range(1..=3_600_000)
-                                .suffix(swoop_i18n::tr!(" 毫秒")),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("代理"));
-                        ui.horizontal(|ui| {
-                            let mut mode = if draft.proxy.is_some() {
-                                2
-                            } else if draft.use_system_proxy {
-                                1
-                            } else {
-                                0
-                            };
-                            let old = mode;
-                            for (id, label) in [
-                                (0, swoop_i18n::tr!("直连")),
-                                (1, swoop_i18n::tr!("系统")),
-                                (2, swoop_i18n::tr!("手动")),
-                            ] {
-                                ui.selectable_value(&mut mode, id, label);
-                            }
-                            if mode != old {
-                                draft.use_system_proxy = mode == 1;
-                                draft.proxy_auth = None;
-                                draft.proxy = (mode == 2).then(|| swoop_core::ProxyConfig {
-                                    url: "http://127.0.0.1:7890".into(),
-                                    bypass: vec!["localhost".into(), "127.0.0.1".into()],
-                                });
-                                self.network_bypass =
-                                    draft.proxy.as_ref().map(|p| p.bypass.join(", ")).unwrap_or_default();
-                            }
-                        });
-                        ui.end_row();
-                        if let Some(proxy) = &mut draft.proxy {
-                            ui.label(swoop_i18n::tr!("地址"));
+                super::modal_body(ui, "network_body", 190.0, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        egui::Grid::new("network_grid").num_columns(2).spacing([18.0, 12.0]).show(ui, |ui| {
+                            ui.label(swoop_i18n::tr!("连接超时"));
                             ui.add(
-                                egui::TextEdit::singleline(&mut proxy.url)
-                                    .desired_width(340.0)
-                                    .hint_text(swoop_i18n::tr!("http:// 或 socks5h://")),
+                                egui::DragValue::new(&mut draft.connect_timeout_secs)
+                                    .range(1..=86400)
+                                    .suffix(swoop_i18n::tr!(" 秒")),
                             );
                             ui.end_row();
-                            ui.label(swoop_i18n::tr!("不使用代理"));
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut self.network_bypass)
-                                        .desired_width(340.0)
-                                        .hint_text(swoop_i18n::tr!("主机或 IP，以逗号分隔")),
-                                )
-                                .changed()
-                            {
-                                proxy.bypass = self
-                                    .network_bypass
-                                    .split(',')
-                                    .map(str::trim)
-                                    .filter(|s| !s.is_empty())
-                                    .map(str::to_string)
-                                    .collect();
-                            }
+                            ui.label(swoop_i18n::tr!("读取超时"));
+                            ui.add(
+                                egui::DragValue::new(&mut draft.read_timeout_secs)
+                                    .range(1..=86400)
+                                    .suffix(swoop_i18n::tr!(" 秒")),
+                            );
                             ui.end_row();
-                            ui.label(swoop_i18n::tr!("代理认证"));
-                            let mut enabled = draft.proxy_auth.is_some();
-                            if ui.checkbox(&mut enabled, swoop_i18n::tr!("启用")).changed() {
-                                draft.proxy_auth = if enabled {
-                                    let scheme = if proxy.url.trim().starts_with("socks5") {
-                                        ProxyAuthScheme::Socks5
-                                    } else {
-                                        ProxyAuthScheme::Basic
-                                    };
-                                    match ProxyAuthRule::new(
-                                        &proxy.url,
-                                        scheme,
-                                        String::new(),
-                                        CredentialStorage::Session,
-                                    ) {
-                                        Ok(rule) => Some(rule),
-                                        Err(error) => {
-                                            self.network_error = Some(error.to_string());
-                                            None
-                                        }
-                                    }
+                            ui.label(swoop_i18n::tr!("请求总时长"));
+                            ui.horizontal(|ui| {
+                                let mut enabled = draft.request_timeout_secs.is_some();
+                                if ui.checkbox(&mut enabled, swoop_i18n::tr!("限制")).changed() {
+                                    draft.request_timeout_secs = enabled.then_some(3600);
+                                }
+                                if let Some(seconds) = &mut draft.request_timeout_secs {
+                                    ui.add(
+                                        egui::DragValue::new(seconds).range(1..=86400).suffix(swoop_i18n::tr!(" 秒")),
+                                    );
+                                }
+                            });
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("失败重试"));
+                            ui.add(
+                                egui::DragValue::new(&mut draft.retries).range(0..=100).suffix(swoop_i18n::tr!(" 次")),
+                            );
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("首次重试间隔"));
+                            ui.add(
+                                egui::DragValue::new(&mut draft.retry_delay_ms)
+                                    .range(1..=3_600_000)
+                                    .suffix(swoop_i18n::tr!(" 毫秒")),
+                            );
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("最大重试间隔"));
+                            ui.add(
+                                egui::DragValue::new(&mut draft.retry_max_delay_ms)
+                                    .range(1..=3_600_000)
+                                    .suffix(swoop_i18n::tr!(" 毫秒")),
+                            );
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("代理"));
+                            ui.horizontal(|ui| {
+                                let mut mode = if draft.proxy.is_some() {
+                                    2
+                                } else if draft.use_system_proxy {
+                                    1
                                 } else {
-                                    None
+                                    0
                                 };
-                            }
+                                let old = mode;
+                                for (id, label) in [
+                                    (0, swoop_i18n::tr!("直连")),
+                                    (1, swoop_i18n::tr!("系统")),
+                                    (2, swoop_i18n::tr!("手动")),
+                                ] {
+                                    ui.selectable_value(&mut mode, id, label);
+                                }
+                                if mode != old {
+                                    draft.use_system_proxy = mode == 1;
+                                    draft.proxy_auth = None;
+                                    draft.proxy = (mode == 2).then(|| swoop_core::ProxyConfig {
+                                        url: "http://127.0.0.1:7890".into(),
+                                        bypass: vec!["localhost".into(), "127.0.0.1".into()],
+                                    });
+                                    self.network_bypass =
+                                        draft.proxy.as_ref().map(|p| p.bypass.join(", ")).unwrap_or_default();
+                                }
+                            });
                             ui.end_row();
-                            if let Some(rule) = &mut draft.proxy_auth {
-                                if let Ok(endpoint) = url::Url::parse(proxy.url.trim()) {
-                                    rule.endpoint = endpoint.to_string();
+                            if let Some(proxy) = &mut draft.proxy {
+                                ui.label(swoop_i18n::tr!("地址"));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut proxy.url)
+                                        .desired_width(340.0)
+                                        .hint_text(swoop_i18n::tr!("http:// 或 socks5h://")),
+                                );
+                                ui.end_row();
+                                ui.label(swoop_i18n::tr!("不使用代理"));
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut self.network_bypass)
+                                            .desired_width(340.0)
+                                            .hint_text(swoop_i18n::tr!("主机或 IP，以逗号分隔")),
+                                    )
+                                    .changed()
+                                {
+                                    proxy.bypass = self
+                                        .network_bypass
+                                        .split(',')
+                                        .map(str::trim)
+                                        .filter(|s| !s.is_empty())
+                                        .map(str::to_string)
+                                        .collect();
                                 }
-                                ui.label(swoop_i18n::tr!("认证方式"));
-                                egui::ComboBox::from_id_salt("proxy_auth_scheme")
-                                    .selected_text(format!("{:?}", rule.scheme))
-                                    .show_ui(ui, |ui| {
-                                        for scheme in [
-                                            ProxyAuthScheme::Basic,
-                                            ProxyAuthScheme::Digest,
-                                            ProxyAuthScheme::Ntlm,
-                                            ProxyAuthScheme::Negotiate,
-                                            ProxyAuthScheme::Socks5,
-                                        ] {
-                                            ui.selectable_value(&mut rule.scheme, scheme, format!("{scheme:?}"));
-                                        }
-                                    });
                                 ui.end_row();
-                                ui.label(swoop_i18n::tr!("凭据保存"));
-                                egui::ComboBox::from_id_salt("proxy_credential_storage")
-                                    .selected_text(match rule.storage {
-                                        CredentialStorage::Session => swoop_i18n::tr!("仅本次会话"),
-                                        CredentialStorage::System => swoop_i18n::tr!("系统凭据库"),
-                                        CredentialStorage::CurrentUser => swoop_i18n::tr!("当前系统身份"),
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        ui.selectable_value(
-                                            &mut rule.storage,
+                                ui.label(swoop_i18n::tr!("代理认证"));
+                                let mut enabled = draft.proxy_auth.is_some();
+                                if ui.checkbox(&mut enabled, swoop_i18n::tr!("启用")).changed() {
+                                    draft.proxy_auth = if enabled {
+                                        let scheme = if proxy.url.trim().starts_with("socks5") {
+                                            ProxyAuthScheme::Socks5
+                                        } else {
+                                            ProxyAuthScheme::Basic
+                                        };
+                                        match ProxyAuthRule::new(
+                                            &proxy.url,
+                                            scheme,
+                                            String::new(),
                                             CredentialStorage::Session,
-                                            swoop_i18n::tr!("仅本次会话"),
-                                        );
-                                        ui.selectable_value(
-                                            &mut rule.storage,
-                                            CredentialStorage::System,
-                                            swoop_i18n::tr!("系统凭据库"),
-                                        );
-                                        ui.selectable_value(
-                                            &mut rule.storage,
-                                            CredentialStorage::CurrentUser,
-                                            swoop_i18n::tr!("当前系统身份"),
-                                        );
-                                    });
+                                        ) {
+                                            Ok(rule) => Some(rule),
+                                            Err(error) => {
+                                                self.network_error = Some(error.to_string());
+                                                None
+                                            }
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                }
                                 ui.end_row();
-                                if rule.storage == CredentialStorage::CurrentUser {
-                                    rule.username.clear();
-                                } else {
-                                    ui.label(swoop_i18n::tr!("用户名"));
-                                    ui.text_edit_singleline(&mut rule.username);
-                                    ui.end_row();
-                                    ui.label(swoop_i18n::tr!("密码"));
-                                    if ui
-                                        .add(
-                                            egui::TextEdit::singleline(&mut *editor.password)
-                                                .password(true)
-                                                .hint_text(swoop_i18n::tr!("留空保留原凭据")),
-                                        )
-                                        .changed()
-                                    {
-                                        editor.password_changed = true;
+                                if let Some(rule) = &mut draft.proxy_auth {
+                                    if let Ok(endpoint) = url::Url::parse(proxy.url.trim()) {
+                                        rule.endpoint = endpoint.to_string();
                                     }
+                                    ui.label(swoop_i18n::tr!("认证方式"));
+                                    egui::ComboBox::from_id_salt("proxy_auth_scheme")
+                                        .selected_text(format!("{:?}", rule.scheme))
+                                        .show_ui(ui, |ui| {
+                                            for scheme in [
+                                                ProxyAuthScheme::Basic,
+                                                ProxyAuthScheme::Digest,
+                                                ProxyAuthScheme::Ntlm,
+                                                ProxyAuthScheme::Negotiate,
+                                                ProxyAuthScheme::Socks5,
+                                            ] {
+                                                ui.selectable_value(&mut rule.scheme, scheme, format!("{scheme:?}"));
+                                            }
+                                        });
                                     ui.end_row();
+                                    ui.label(swoop_i18n::tr!("凭据保存"));
+                                    egui::ComboBox::from_id_salt("proxy_credential_storage")
+                                        .selected_text(match rule.storage {
+                                            CredentialStorage::Session => swoop_i18n::tr!("仅本次会话"),
+                                            CredentialStorage::System => swoop_i18n::tr!("系统凭据库"),
+                                            CredentialStorage::CurrentUser => swoop_i18n::tr!("当前系统身份"),
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(
+                                                &mut rule.storage,
+                                                CredentialStorage::Session,
+                                                swoop_i18n::tr!("仅本次会话"),
+                                            );
+                                            ui.selectable_value(
+                                                &mut rule.storage,
+                                                CredentialStorage::System,
+                                                swoop_i18n::tr!("系统凭据库"),
+                                            );
+                                            ui.selectable_value(
+                                                &mut rule.storage,
+                                                CredentialStorage::CurrentUser,
+                                                swoop_i18n::tr!("当前系统身份"),
+                                            );
+                                        });
+                                    ui.end_row();
+                                    if rule.storage == CredentialStorage::CurrentUser {
+                                        rule.username.clear();
+                                    } else {
+                                        ui.label(swoop_i18n::tr!("用户名"));
+                                        ui.text_edit_singleline(&mut rule.username);
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("密码"));
+                                        if ui
+                                            .add(
+                                                egui::TextEdit::singleline(&mut *editor.password)
+                                                    .password(true)
+                                                    .hint_text(swoop_i18n::tr!("留空保留原凭据")),
+                                            )
+                                            .changed()
+                                        {
+                                            editor.password_changed = true;
+                                        }
+                                        ui.end_row();
+                                    }
                                 }
                             }
-                        }
+                        });
                     });
+                    if let Some(error) = &self.network_error {
+                        ui.colored_label(p.danger, error);
+                    }
                 });
-                if let Some(error) = &self.network_error {
-                    ui.colored_label(p.danger, error);
-                }
                 ui.add_space(14.0);
                 if busy {
                     ui.spinner();

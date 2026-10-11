@@ -151,131 +151,133 @@ impl SwoopApp {
                 ui.label(RichText::new(swoop_i18n::tr!("站点认证")).size(18.0).strong());
                 ui.add_space(12.0);
                 ui.add_enabled_ui(!busy, |ui| {
-                    ui.horizontal(|ui| {
-                        egui::ComboBox::from_id_salt("site_auth_select")
-                            .selected_text(
-                                editor
-                                    .original
-                                    .as_ref()
-                                    .map(|r| r.origin.as_str())
-                                    .unwrap_or(swoop_i18n::tr!("添加站点")),
-                            )
-                            .width(410.0)
-                            .show_ui(ui, |ui| {
-                                let rules = editor.rules.clone();
-                                for rule in rules {
-                                    if ui
-                                        .selectable_label(editor.original.as_ref() == Some(&rule), &rule.origin)
-                                        .clicked()
-                                    {
-                                        editor.select(Some(rule));
-                                    }
-                                }
-                            });
-                        if ui.button(swoop_i18n::trf!("{} 新增", egui_phosphor::regular::PLUS)).clicked() {
-                            editor.select(None);
-                        }
-                    });
-                    ui.add_space(14.0);
-                    let identity = (editor.origin.clone(), editor.username.clone(), editor.scheme, editor.storage);
-                    egui::Grid::new("site_auth_fields").num_columns(2).spacing([18.0, 12.0]).show(ui, |ui| {
-                        ui.label(swoop_i18n::tr!("站点"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut editor.origin)
-                                .desired_width(390.0)
-                                .hint_text("https://example.com"),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("认证方式"));
+                    super::modal_body(ui, "site_auth_body", 190.0, |ui| {
                         ui.horizontal(|ui| {
-                            for (scheme, label, available) in [
-                                (HttpAuthScheme::Basic, "Basic", true),
-                                (HttpAuthScheme::Digest, "Digest", true),
-                                (HttpAuthScheme::Ntlm, "NTLM", editor.capabilities.ntlm),
-                                (HttpAuthScheme::Negotiate, "Negotiate", editor.capabilities.negotiate),
-                            ] {
-                                ui.add_enabled_ui(available, |ui| {
-                                    ui.selectable_value(&mut editor.scheme, scheme, label);
+                            egui::ComboBox::from_id_salt("site_auth_select")
+                                .selected_text(
+                                    editor
+                                        .original
+                                        .as_ref()
+                                        .map(|r| r.origin.as_str())
+                                        .unwrap_or(swoop_i18n::tr!("添加站点")),
+                                )
+                                .width(410.0)
+                                .show_ui(ui, |ui| {
+                                    let rules = editor.rules.clone();
+                                    for rule in rules {
+                                        if ui
+                                            .selectable_label(editor.original.as_ref() == Some(&rule), &rule.origin)
+                                            .clicked()
+                                        {
+                                            editor.select(Some(rule));
+                                        }
+                                    }
                                 });
+                            if ui.button(swoop_i18n::trf!("{} 新增", egui_phosphor::regular::PLUS)).clicked() {
+                                editor.select(None);
                             }
                         });
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("保存方式"));
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(
-                                &mut editor.storage,
-                                CredentialStorage::Session,
-                                swoop_i18n::tr!("本次会话"),
+                        ui.add_space(14.0);
+                        let identity = (editor.origin.clone(), editor.username.clone(), editor.scheme, editor.storage);
+                        egui::Grid::new("site_auth_fields").num_columns(2).spacing([18.0, 12.0]).show(ui, |ui| {
+                            ui.label(swoop_i18n::tr!("站点"));
+                            ui.add(
+                                egui::TextEdit::singleline(&mut editor.origin)
+                                    .desired_width(390.0)
+                                    .hint_text("https://example.com"),
                             );
-                            ui.add_enabled_ui(editor.capabilities.system_vault, |ui| {
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("认证方式"));
+                            ui.horizontal(|ui| {
+                                for (scheme, label, available) in [
+                                    (HttpAuthScheme::Basic, "Basic", true),
+                                    (HttpAuthScheme::Digest, "Digest", true),
+                                    (HttpAuthScheme::Ntlm, "NTLM", editor.capabilities.ntlm),
+                                    (HttpAuthScheme::Negotiate, "Negotiate", editor.capabilities.negotiate),
+                                ] {
+                                    ui.add_enabled_ui(available, |ui| {
+                                        ui.selectable_value(&mut editor.scheme, scheme, label);
+                                    });
+                                }
+                            });
+                            ui.end_row();
+                            ui.label(swoop_i18n::tr!("保存方式"));
+                            ui.horizontal(|ui| {
                                 ui.selectable_value(
                                     &mut editor.storage,
-                                    CredentialStorage::System,
-                                    swoop_i18n::tr!("系统凭据库"),
+                                    CredentialStorage::Session,
+                                    swoop_i18n::tr!("本次会话"),
                                 );
-                            });
-                            let current = editor.scheme == HttpAuthScheme::Negotiate
-                                || (editor.scheme == HttpAuthScheme::Ntlm && editor.capabilities.sspi);
-                            ui.add_enabled_ui(current, |ui| {
-                                if ui
-                                    .selectable_value(
+                                ui.add_enabled_ui(editor.capabilities.system_vault, |ui| {
+                                    ui.selectable_value(
                                         &mut editor.storage,
-                                        CredentialStorage::CurrentUser,
-                                        swoop_i18n::tr!("当前系统身份"),
-                                    )
-                                    .clicked()
-                                {
-                                    editor.username.clear();
+                                        CredentialStorage::System,
+                                        swoop_i18n::tr!("系统凭据库"),
+                                    );
+                                });
+                                let current = editor.scheme == HttpAuthScheme::Negotiate
+                                    || (editor.scheme == HttpAuthScheme::Ntlm && editor.capabilities.sspi);
+                                ui.add_enabled_ui(current, |ui| {
+                                    if ui
+                                        .selectable_value(
+                                            &mut editor.storage,
+                                            CredentialStorage::CurrentUser,
+                                            swoop_i18n::tr!("当前系统身份"),
+                                        )
+                                        .clicked()
+                                    {
+                                        editor.username.clear();
+                                    }
+                                });
+                                if !current && editor.storage == CredentialStorage::CurrentUser {
+                                    editor.storage = CredentialStorage::Session;
                                 }
                             });
-                            if !current && editor.storage == CredentialStorage::CurrentUser {
-                                editor.storage = CredentialStorage::Session;
-                            }
-                        });
-                        ui.end_row();
-                        if editor.storage != CredentialStorage::CurrentUser {
-                            ui.label(swoop_i18n::tr!("用户名"));
-                            ui.add(
-                                egui::TextEdit::singleline(&mut editor.username)
-                                    .desired_width(390.0)
-                                    .hint_text(swoop_i18n::tr!("用户名或 域\\用户名")),
-                            );
                             ui.end_row();
-                            if identity
-                                != (editor.origin.clone(), editor.username.clone(), editor.scheme, editor.storage)
-                            {
+                            if editor.storage != CredentialStorage::CurrentUser {
+                                ui.label(swoop_i18n::tr!("用户名"));
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut editor.username)
+                                        .desired_width(390.0)
+                                        .hint_text(swoop_i18n::tr!("用户名或 域\\用户名")),
+                                );
+                                ui.end_row();
+                                if identity
+                                    != (editor.origin.clone(), editor.username.clone(), editor.scheme, editor.storage)
+                                {
+                                    editor.clear_password();
+                                }
+                                ui.label(swoop_i18n::tr!("密码"));
+                                let unchanged = editor.credentials_unchanged();
+                                let hint = if unchanged {
+                                    swoop_i18n::tr!("留空保留已有密码")
+                                } else {
+                                    swoop_i18n::tr!("输入密码")
+                                };
+                                if ui
+                                    .add(
+                                        egui::TextEdit::singleline(&mut *editor.password)
+                                            .password(true)
+                                            .desired_width(390.0)
+                                            .hint_text(hint),
+                                    )
+                                    .changed()
+                                {
+                                    editor.password_changed = true;
+                                }
+                                ui.end_row();
+                            } else {
                                 editor.clear_password();
                             }
-                            ui.label(swoop_i18n::tr!("密码"));
-                            let unchanged = editor.credentials_unchanged();
-                            let hint = if unchanged {
-                                swoop_i18n::tr!("留空保留已有密码")
-                            } else {
-                                swoop_i18n::tr!("输入密码")
-                            };
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(&mut *editor.password)
-                                        .password(true)
-                                        .desired_width(390.0)
-                                        .hint_text(hint),
-                                )
-                                .changed()
-                            {
-                                editor.password_changed = true;
-                            }
-                            ui.end_row();
-                        } else {
-                            editor.clear_password();
+                        });
+                        if editor.origin.trim().to_ascii_lowercase().starts_with("http://") {
+                            ui.add_space(10.0);
+                            ui.checkbox(&mut editor.allow_insecure, swoop_i18n::tr!("允许此站点使用非加密 HTTP"));
+                        }
+                        if let Some(error) = &editor.error {
+                            ui.colored_label(p.danger, error);
                         }
                     });
-                    if editor.origin.trim().to_ascii_lowercase().starts_with("http://") {
-                        ui.add_space(10.0);
-                        ui.checkbox(&mut editor.allow_insecure, swoop_i18n::tr!("允许此站点使用非加密 HTTP"));
-                    }
-                    if let Some(error) = &editor.error {
-                        ui.colored_label(p.danger, error);
-                    }
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
                         save = super::primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked();

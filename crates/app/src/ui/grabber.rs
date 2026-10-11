@@ -11,10 +11,14 @@ impl SwoopApp {
         let busy = self.grabber.busy();
         let mut open = true;
         let mut action = None;
+        let max_height = ctx.content_rect().height() - 40.0;
         egui::Window::new(swoop_i18n::tr!("站点抓取"))
             .open(&mut open)
             .default_width(700.0)
-            .max_height(ctx.content_rect().height() - 40.0)
+            .max_width(ctx.content_rect().width() - 40.0)
+            // 带 vscroll 的窗口高度不随内容增长（默认 420 且会被持久化），给足表单高度。
+            .min_height(max_height.min(760.0))
+            .max_height(max_height)
             .vscroll(true)
             .show(ctx, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
@@ -185,7 +189,7 @@ impl SwoopApp {
                                 .truncate(),
                         );
                     }
-                    egui::ScrollArea::vertical().max_height(160.0).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.4).max(160.0)).show(ui, |ui| {
                         for page in snapshot.pages.iter().rev().take(100) {
                             let state = match &page.state {
                                 swoop_grabber::PageState::Pending => swoop_i18n::tr!("等待"),

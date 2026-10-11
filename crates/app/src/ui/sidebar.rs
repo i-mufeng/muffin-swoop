@@ -58,29 +58,27 @@ impl SwoopApp {
                                 self.queue_editor.show(self.queue_filter.unwrap_or(swoop_core::MAIN_QUEUE_ID));
                             }
                         });
-                        egui::ScrollArea::vertical().id_salt("sidebar_queues").max_height(180.0).show(ui, |ui| {
-                            for queue in &self.queues {
-                                let prefix = if queue.running {
-                                    egui_phosphor::regular::PLAY
-                                } else {
-                                    egui_phosphor::regular::PAUSE
-                                };
-                                let label = format!(
-                                    "{prefix} {}  {}",
-                                    super::queue_name(queue),
-                                    queue.active_count + queue.waiting_count
-                                );
-                                let response = ui.selectable_label(self.queue_filter == Some(queue.id), label);
-                                if response.clicked() {
-                                    self.queue_filter = Some(queue.id);
-                                    self.filter = Filter::All;
-                                    self.category_filter = None;
-                                }
-                                if response.double_clicked() {
-                                    self.queue_editor.show(queue.id);
-                                }
+                        for queue in &self.queues {
+                            let prefix = if queue.running {
+                                egui_phosphor::regular::PLAY
+                            } else {
+                                egui_phosphor::regular::PAUSE
+                            };
+                            let label = format!(
+                                "{prefix} {}  {}",
+                                super::queue_name(queue),
+                                queue.active_count + queue.waiting_count
+                            );
+                            let response = ui.selectable_label(self.queue_filter == Some(queue.id), label);
+                            if response.clicked() {
+                                self.queue_filter = Some(queue.id);
+                                self.filter = Filter::All;
+                                self.category_filter = None;
                             }
-                        });
+                            if response.double_clicked() {
+                                self.queue_editor.show(queue.id);
+                            }
+                        }
 
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
@@ -97,18 +95,16 @@ impl SwoopApp {
                                 self.category_error = None;
                             }
                         });
-                        egui::ScrollArea::vertical().id_salt("sidebar_categories").max_height(120.0).show(ui, |ui| {
-                            for rule in &self.categories.rules {
-                                if ui
-                                    .selectable_label(self.category_filter.as_ref() == Some(&rule.name), &rule.name)
-                                    .clicked()
-                                {
-                                    self.category_filter = Some(rule.name.clone());
-                                    self.queue_filter = None;
-                                    self.filter = Filter::All;
-                                }
+                        for rule in &self.categories.rules {
+                            if ui
+                                .selectable_label(self.category_filter.as_ref() == Some(&rule.name), &rule.name)
+                                .clicked()
+                            {
+                                self.category_filter = Some(rule.name.clone());
+                                self.queue_filter = None;
+                                self.filter = Filter::All;
                             }
-                        });
+                        }
                     });
 
                 ui.with_layout(Layout::bottom_up(Align::Min), |ui| {

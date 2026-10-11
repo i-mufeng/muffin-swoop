@@ -151,6 +151,13 @@ fn text_button(
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+/// 弹窗主体：超出窗口可用高度时滚动。`reserve` 是标题、底部按钮和弹窗边距占用的高度，
+/// 底部按钮放在主体之外，窗口再矮也点得到。
+pub fn modal_body<R>(ui: &mut Ui, id: &str, reserve: f32, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let max_height = (ui.ctx().content_rect().height() - reserve).max(120.0);
+    egui::ScrollArea::vertical().id_salt(id).max_height(max_height).show(ui, add_contents).inner
+}
+
 /// 主操作按钮（强调色填充）
 pub fn primary_button(ui: &mut Ui, p: &Palette, text: &str) -> Response {
     let hover = p.accent.lerp_to_gamma(Color32::WHITE, 0.12);

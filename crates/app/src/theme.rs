@@ -196,6 +196,9 @@ impl Palette {
             s.spacing.window_margin = egui::Margin::same(18);
             s.spacing.menu_margin = egui::Margin::same(8);
             s.spacing.icon_width = 16.0;
+            // 滚动条常驻一条细把手（仅内容溢出时出现），提示弹窗下方还有内容；悬停时照常展开。
+            s.spacing.scroll.floating_width = 4.0;
+            s.spacing.scroll.dormant_handle_opacity = 0.5;
             s.interaction.selectable_labels = false;
             s.text_styles.insert(TextStyle::Heading, FontId::proportional(20.0));
             s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));
