@@ -140,6 +140,19 @@ impl SwoopApp {
                             });
                             ui.end_row();
 
+                            ui.label(RichText::new(swoop_i18n::tr!("进度窗口")).color(p.text_muted));
+                            ui.horizontal(|ui| {
+                                if toggle(ui, &p, &mut self.progress_window).changed() {
+                                    dirty = true;
+                                }
+                                ui.label(
+                                    RichText::new(swoop_i18n::tr!("单个下载开始时弹出独立的进度窗口"))
+                                        .size(12.0)
+                                        .color(p.text_muted),
+                                );
+                            });
+                            ui.end_row();
+
                             ui.label(RichText::new(swoop_i18n::tr!("拖放")).color(p.text_muted));
                             ui.vertical(|ui| {
                                 self.native_drag.settings_ui(ui, &self.store);

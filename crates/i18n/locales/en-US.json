@@ -815,5 +815,10 @@
   "断点保存间隔": "Checkpoint interval",
   "不限速": "Unlimited",
   "继续下载": "Resume download",
-  "代理地址已变更，请重新输入本次代理凭据": "The proxy address changed. Enter its credentials again."
+  "代理地址已变更，请重新输入本次代理凭据": "The proxy address changed. Enter its credentials again.",
+  "打开": "Open",
+  "打开文件夹": "Open folder",
+  "{} · 剩余 {} · {} 连接": "{} · {} left · {} connections",
+  "进度窗口": "Progress window",
+  "单个下载开始时弹出独立的进度窗口": "Show a separate progress window when a single download starts"
 }

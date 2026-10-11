@@ -124,7 +124,7 @@ Chromium 系浏览器在扩展管理页加载 `extension/dist/`。Firefox 适配
 
 Windows job 设置明确的本机 Cargo target 和静态 CRT 参数，构建、测试、Clippy 与打包采用同一目标。任何步骤失败都会使该 job 失败，没有忽略错误或降低 Clippy 门槛。两个平台独立完成，某一平台失败不会取消另一平台。
 
-工作流允许 push、pull request 和手动运行；新增配置文件本身不等于已运行 CI。默认不上传产物；仅手动运行时勾选 `upload_artifacts` 才上传未签名包和扩展到该次 GitHub Actions run，保留 7 天，不创建 Release。Action 引用固定到已核实的 commit，运行权限为 `contents: read`。Runner 编译通过仍不能替代原生桌面验收。
+工作流允许 push、pull request 和手动运行；新增配置文件本身不等于已运行 CI。默认不上传产物；仅手动运行时勾选 `upload_artifacts` 才上传未签名包和扩展 zip（`swoop-extension-{chromium,firefox}-<版本>.zip` 及 `.sha256`，由 `npm run package` 生成）到该次 GitHub Actions run，保留 7 天，不创建 Release。Action 引用固定到已核实的 commit，运行权限为 `contents: read`。Runner 编译通过仍不能替代原生桌面验收。
 
 ## 两个平台都要执行的真实桌面清单
 

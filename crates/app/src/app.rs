@@ -9,7 +9,8 @@ use tokio::sync::broadcast;
 
 use crate::bridge::{Bridge, BridgeEvent, BridgeMode};
 use crate::clipboard::ClipboardWatcher;
-use crate::notifications::{NotificationSettings, Notifier};
+use crate::completion::FileAction;
+use crate::notifications::{NotificationAction, NotificationSettings, Notifier};
 use crate::settings::AppSettings;
 use crate::theme::{Mode, Palette};
 use crate::tray::{Tray, TrayCommand, TrayStatus};
@@ -78,8 +79,11 @@ pub struct SwoopApp {
     update_quiescence: Option<swoop_core::Quiescence>,
     pub site_auth_editor: Option<crate::ui::site_auth::SiteAuthEditor>,
     pub file_conflict: Option<crate::ui::file_conflict::ConflictPrompt>,
+    pub progress_window: bool,
+    pub task_windows: crate::ui::task_window::TaskWindows,
+    pub popup_host: crate::ui::popup::PopupHost,
     /// 窗口已隐藏到菜单栏
-    hidden: bool,
+    pub(crate) hidden: bool,
     /// 用户从菜单选了退出：放行这一次关窗请求
     quitting: bool,
     clipboard: ClipboardWatcher,
@@ -166,7 +170,10 @@ impl SwoopApp {
             close_to_tray: settings.close_to_tray,
             tray_speed: settings.tray_speed,
             notifications: settings.notifications,
-            notifier: Notifier::new(),
+            notifier: {
+                let ctx = cc.egui_ctx.clone();
+                Notifier::new(move || ctx.request_repaint())
+            },
             batch_limit: settings.batch_limit,
             queues: Vec::new(),
             queue_filter: None,
@@ -192,6 +199,9 @@ impl SwoopApp {
             update_quiescence: None,
             site_auth_editor: None,
             file_conflict: None,
+            progress_window: settings.progress_window,
+            task_windows: Default::default(),
+            popup_host: Default::default(),
             hidden: false,
             quitting: false,
             clipboard: ClipboardWatcher::new(),
@@ -240,6 +250,7 @@ impl SwoopApp {
             notifications: self.notifications,
             connections: self.engine.connections(),
             batch_limit: self.batch_limit,
+            progress_window: self.progress_window,
         }
         .save(&self.store);
         if let Err(error) = result {
@@ -360,16 +371,24 @@ impl SwoopApp {
                     if let Some(message) = self.notifications.message(&event, name, background)
                         && let Some(notifier) = &self.notifier
                     {
-                        notifier.send(message);
+                        notifier.send(match (&event, &task) {
+                            (Event::Completed(_), Some(task)) => message.with_file(task.path.clone()),
+                            _ => message,
+                        });
                     }
                     match event {
                         Event::Completed(_) => {
-                            if let Some(name) = name {
-                                self.toasts.push_info(swoop_i18n::tr!("下载完成"), name);
+                            if let Some(task) = &task {
+                                self.toasts.push_completed(
+                                    swoop_i18n::tr!("下载完成"),
+                                    task.file_name.clone(),
+                                    task.path.clone(),
+                                );
                             }
                             if !self.quitting
                                 && let Some(task) = task
-                                && let Err(error) = self.completion.submit(task.path)
+                                && let Err(error) =
+                                    self.completion.submit(task.path, !self.task_windows.contains(task.id))
                             {
                                 self.toasts.push_error(swoop_i18n::tr!("完成动作未执行"), error);
                             }
@@ -388,6 +407,26 @@ impl SwoopApp {
         }
     }
 
+    /// 系统通知上的按钮：打开文件、打开所在文件夹，点正文只调出窗口
+    fn poll_notifications(&mut self, ctx: &egui::Context) {
+        let Some(notifier) = &self.notifier else {
+            return;
+        };
+        for action in notifier.poll() {
+            let (path, action) = match action {
+                NotificationAction::Open(path) => (path, FileAction::Open),
+                NotificationAction::Reveal(path) => (path, FileAction::Reveal),
+                NotificationAction::Show => {
+                    self.show_window(ctx);
+                    continue;
+                }
+            };
+            if let Err(error) = self.completion.open_path(path, action) {
+                self.toasts.push_error(swoop_i18n::tr!("无法打开"), error);
+            }
+        }
+    }
+
     /// 浏览器扩展交来的下载：静默模式已入队，只提示；询问模式弹预填好的新建对话框
     fn poll_bridge(&mut self, ctx: &egui::Context) {
         while let Some(ev) = self.bridge.try_recv() {
@@ -400,11 +439,12 @@ impl SwoopApp {
                         execute_desktop_control(command, &mut self.media_tasks, &mut self.grabber, ctx, &self.engine)
                     }
                 }),
-                BridgeEvent::Added { file_name } => {
-                    self.toasts.push_info(swoop_i18n::tr!("已接收浏览器下载"), file_name)
+                BridgeEvent::Added { id, file_name } => {
+                    self.toasts.push_info(swoop_i18n::tr!("已接收浏览器下载"), file_name);
+                    self.open_task_window(ctx, id);
                 }
                 BridgeEvent::Ask { url, file_name, size, headers } => {
-                    self.show_window(ctx);
+                    // 新建对话框是独立窗口，主窗口隐藏时也不必调出来
                     self.add_dialog.open_from_browser(url, &file_name, size, headers);
                 }
                 BridgeEvent::Media { source } => {
@@ -718,13 +758,19 @@ impl eframe::App for SwoopApp {
             if let Some(message) = self.notifications.message(&event, Some(&name), background)
                 && let Some(notifier) = &self.notifier
             {
-                notifier.send(message);
+                notifier.send(match &path {
+                    Some(path) if success => message.with_file(path.clone()),
+                    _ => message,
+                });
             }
             if success {
-                self.toasts.push_info(swoop_i18n::tr!("媒体下载完成"), name);
+                match &path {
+                    Some(path) => self.toasts.push_completed(swoop_i18n::tr!("媒体下载完成"), name, path.clone()),
+                    None => self.toasts.push_info(swoop_i18n::tr!("媒体下载完成"), name),
+                }
                 if !self.quitting
                     && let Some(path) = path
-                    && let Err(error) = self.completion.submit(path)
+                    && let Err(error) = self.completion.submit(path, true)
                 {
                     self.toasts.push_error(swoop_i18n::tr!("完成动作未执行"), error);
                 }
@@ -733,11 +779,13 @@ impl eframe::App for SwoopApp {
             }
         }
         self.poll_events(ctx);
+        self.poll_notifications(ctx);
         self.poll_clipboard();
         self.poll_bridge(ctx);
         self.poll_file_conflicts(ctx);
         self.update_tray();
         self.poll_completion(ctx);
+        self.popup_logic(ctx);
         if self.updates.poll(ctx, self.update_install_idle(), self.quitting) {
             if let Some(guard) = self.update_quiescence.take() {
                 guard.commit();
@@ -788,6 +836,11 @@ impl eframe::App for SwoopApp {
             self.updates_ui(&ctx);
             return;
         }
+        if self.hidden {
+            // 主窗口隐藏时只画独立弹窗（有弹窗可见时 eframe 仍会跑根视口的 ui）
+            self.popups_ui(&ctx);
+            return;
+        }
         self.handle_shortcuts(&ctx);
 
         // 面板顺序决定布局：侧栏占满左侧，状态栏横跨右侧，详情面板在状态栏之上贴右，顶栏只占列表宽度
@@ -796,7 +849,6 @@ impl eframe::App for SwoopApp {
         self.detail_panel(ui);
         self.topbar(ui);
         self.task_list(ui);
-        self.add_dialog_ui(&ctx);
         self.settings_ui(&ctx);
         self.updates_ui(&ctx);
         if self.updates.installing() {
@@ -813,6 +865,7 @@ impl eframe::App for SwoopApp {
         self.completion_ui(&ctx);
         self.file_conflict_ui(&ctx);
         self.toasts_ui(&ctx);
+        self.popups_ui(&ctx);
     }
 }
 

@@ -1,5 +1,6 @@
 //! 右下角吐司：剪贴板链接询问、下载完成提示。带淡入滑入/淡出动画，悬停时不计时。
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use egui::epaint::Shadow;
@@ -10,12 +11,15 @@ use swoop_core::AddOptions;
 
 use super::{ghost_button, primary_button};
 use crate::app::SwoopApp;
+use crate::completion::FileAction;
 use crate::fonts;
 use crate::theme::R_CARD;
 
 pub enum ToastKind {
     /// 剪贴板里检测到的链接，带「下载 / 忽略」
     Links(Vec<String>),
+    /// 下载完成，带「打开 / 打开文件夹」
+    Completed(PathBuf),
     /// 普通提示
     Info,
     Error,
@@ -74,6 +78,10 @@ impl Toasts {
         self.push(ToastKind::Info, title.into(), body.into(), Duration::from_secs(5));
     }
 
+    pub fn push_completed(&mut self, title: impl Into<String>, body: impl Into<String>, path: PathBuf) {
+        self.push(ToastKind::Completed(path), title.into(), body.into(), Duration::from_secs(8));
+    }
+
     pub fn push_error(&mut self, title: impl Into<String>, body: impl Into<String>) {
         self.push(ToastKind::Error, title.into(), body.into(), Duration::from_secs(8));
     }
@@ -81,6 +89,7 @@ impl Toasts {
 
 enum Action {
     Download(u64, Vec<String>),
+    Open(u64, PathBuf, FileAction),
     Close(u64),
 }
 
@@ -132,7 +141,9 @@ impl SwoopApp {
                                     ui.spacing_mut().item_spacing.x = 10.0;
                                     let (icon, color) = match t.kind {
                                         ToastKind::Links(_) => (egui_phosphor::fill::LINK, p.accent),
-                                        ToastKind::Info => (egui_phosphor::fill::CHECK_CIRCLE, p.success),
+                                        ToastKind::Completed(_) | ToastKind::Info => {
+                                            (egui_phosphor::fill::CHECK_CIRCLE, p.success)
+                                        }
                                         ToastKind::Error => (egui_phosphor::fill::WARNING_CIRCLE, p.danger),
                                     };
                                     let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
@@ -158,16 +169,30 @@ impl SwoopApp {
                                         );
                                     });
                                 });
-                                if let ToastKind::Links(urls) = &t.kind {
-                                    ui.add_space(10.0);
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        if primary_button(ui, &p, swoop_i18n::tr!("下载")).clicked() {
-                                            actions.push(Action::Download(t.id, urls.clone()));
-                                        }
-                                        if ghost_button(ui, &p, swoop_i18n::tr!("忽略")).clicked() {
-                                            actions.push(Action::Close(t.id));
-                                        }
-                                    });
+                                match &t.kind {
+                                    ToastKind::Links(urls) => {
+                                        ui.add_space(10.0);
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if primary_button(ui, &p, swoop_i18n::tr!("下载")).clicked() {
+                                                actions.push(Action::Download(t.id, urls.clone()));
+                                            }
+                                            if ghost_button(ui, &p, swoop_i18n::tr!("忽略")).clicked() {
+                                                actions.push(Action::Close(t.id));
+                                            }
+                                        });
+                                    }
+                                    ToastKind::Completed(path) => {
+                                        ui.add_space(10.0);
+                                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                            if primary_button(ui, &p, swoop_i18n::tr!("打开")).clicked() {
+                                                actions.push(Action::Open(t.id, path.clone(), FileAction::Open));
+                                            }
+                                            if ghost_button(ui, &p, swoop_i18n::tr!("打开文件夹")).clicked() {
+                                                actions.push(Action::Open(t.id, path.clone(), FileAction::Reveal));
+                                            }
+                                        });
+                                    }
+                                    ToastKind::Info | ToastKind::Error => {}
                                 }
                             });
                             if resp.response.hovered() {
@@ -188,8 +213,14 @@ impl SwoopApp {
         for a in actions {
             match a {
                 Action::Download(id, urls) => {
-                    self.add_urls(urls);
+                    self.add_urls(ctx, urls);
                     self.close_toast(id);
+                }
+                Action::Open(id, path, action) => {
+                    self.close_toast(id);
+                    if let Err(error) = self.completion.open_path(path, action) {
+                        self.toasts.push_error(swoop_i18n::tr!("无法打开"), error);
+                    }
                 }
                 Action::Close(id) => self.close_toast(id),
             }
@@ -207,17 +238,16 @@ impl SwoopApp {
         }
     }
 
-    /// 直接按默认目录添加一组链接；失败的汇总成一条错误吐司
-    pub fn add_urls(&mut self, urls: Vec<String>) {
+    /// 按默认目录（启用分类时按分类子目录）添加一组链接；失败的汇总成一条错误吐司
+    pub fn add_urls(&mut self, ctx: &egui::Context, urls: Vec<String>) {
         let mut failed = Vec::new();
+        let single = urls.len() == 1;
         for url in urls {
-            if let Err(e) = self.engine.add(AddOptions {
-                url: url.clone(),
-                dir: self.default_dir.clone(),
-                file_name: None,
-                headers: Vec::new(),
-            }) {
-                failed.push(format!("{url}: {e}"));
+            let dir = self.categories.target(&self.default_dir, &url, None);
+            match self.engine.add(AddOptions { url: url.clone(), dir, file_name: None, headers: Vec::new() }) {
+                Ok(id) if single => self.open_task_window(ctx, id),
+                Ok(_) => {}
+                Err(e) => failed.push(format!("{url}: {e}")),
             }
         }
         if !failed.is_empty() {

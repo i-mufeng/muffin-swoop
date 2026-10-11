@@ -94,6 +94,7 @@ fn main() -> eframe::Result {
     let ownership = Arc::new(ownership);
 
     let db_path = data.join("swoop.db");
+    let fresh_install = !db_path.exists();
     let store = match Store::open(&db_path) {
         Ok(s) => Arc::new(s),
         Err(e) => {
@@ -102,6 +103,9 @@ fn main() -> eframe::Result {
         }
     };
     let settings = AppSettings::load(&store, default_download_dir());
+    if fresh_install {
+        categories::Categories::init_fresh(&store, &settings.default_dir);
+    }
 
     let config = Config {
         connections: settings.connections,

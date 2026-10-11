@@ -32,6 +32,8 @@ pub struct AppSettings {
     /// 新建或继续任务时采用的最大连接数。
     pub connections: usize,
     pub batch_limit: usize,
+    /// 单个下载开始时弹出独立的进度窗口
+    pub progress_window: bool,
 }
 
 pub fn default_download_dir() -> PathBuf {
@@ -69,6 +71,7 @@ impl AppSettings {
                 .and_then(|v| v.parse().ok())
                 .filter(|n| (1..=crate::batch::MAX_BATCH_LIMIT).contains(n))
                 .unwrap_or(crate::batch::DEFAULT_BATCH_LIMIT),
+            progress_window: flag("progress_window", true),
         }
     }
 
@@ -92,6 +95,7 @@ impl AppSettings {
             ("notification_sound", flag_str(self.notifications.sound)),
             ("connections", self.connections.to_string()),
             ("batch_limit", self.batch_limit.to_string()),
+            ("progress_window", flag_str(self.progress_window)),
         ];
         store.set_settings(&pairs)
     }

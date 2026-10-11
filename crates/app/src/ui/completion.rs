@@ -74,8 +74,7 @@ impl SwoopApp {
             && self.engine.snapshot().iter().all(|t| t.status == swoop_core::TaskStatus::Completed)
             && self.media_tasks.jobs.iter().all(|j| j.status == crate::media_tasks::MediaStatus::Completed);
         let action = self.completion.countdown.tick(now, ready, &self.completion.settings);
-        if (!was_counting && self.completion.countdown.remaining(now).is_some()) || self.completion.needs_attention {
-            self.completion.needs_attention = false;
+        if !was_counting && self.completion.countdown.remaining(now).is_some() {
             self.show_window(ctx);
         }
         match action {
@@ -225,36 +224,52 @@ impl SwoopApp {
             if modal.should_close() {
                 self.completion.countdown.cancel();
             }
-            return;
         }
-        if let Some(path) = self.completion.dialogs.front().cloned() {
-            let mut close = false;
-            let modal = egui::Modal::new(egui::Id::new("completed_file"))
-                .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-                .show(ctx, |ui| {
-                    ui.set_width(420.0);
-                    ui.label(RichText::new(swoop_i18n::tr!("下载完成")).size(18.0).strong().color(p.success));
-                    ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-                    ui.add_space(14.0);
-                    ui.horizontal(|ui| {
-                        for (label, action) in [
-                            (swoop_i18n::tr!("打开所在目录"), FileAction::Reveal),
-                            (swoop_i18n::tr!("打开文件"), FileAction::Open),
-                        ] {
-                            if ui.button(label).clicked() {
-                                if let Err(error) = self.completion.open_path(path.clone(), action) {
-                                    self.toasts.push_error(swoop_i18n::tr!("无法打开"), error);
-                                } else {
-                                    close = true;
-                                }
-                            }
-                        }
-                        close |= ui.button(swoop_i18n::tr!("关闭")).clicked();
-                    });
-                });
-            if close || modal.should_close() {
-                self.completion.dialogs.pop_front();
+    }
+
+    /// 完成窗口（独立窗口，对标 IDM 的下载完成对话框）；多个文件依次显示
+    pub fn completed_window_ui(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.completion.dialogs.front().cloned() else { return };
+        let p = self.palette;
+        let size = egui::vec2(440.0, 170.0);
+        let builder = super::popup::builder(swoop_i18n::tr!("下载完成"), size, super::popup::centered(ctx, size, 0));
+        let mut action = None;
+        let mut close_clicked = false;
+        let mut close = super::popup::show(ctx, egui::ViewportId::from_hash_of("swoop-completed"), builder, &p, |ui| {
+            ui.label(RichText::new(swoop_i18n::tr!("下载完成")).size(18.0).strong().color(p.success));
+            ui.add(
+                egui::Label::new(RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).color(p.text))
+                    .truncate(),
+            );
+            if let Some(dir) = path.parent() {
+                ui.add(
+                    egui::Label::new(RichText::new(dir.display().to_string()).size(12.0).color(p.text_muted))
+                        .truncate(),
+                );
             }
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if super::primary_button(ui, &p, swoop_i18n::tr!("打开")).clicked() {
+                        action = Some(FileAction::Open);
+                    }
+                    if super::ghost_button(ui, &p, swoop_i18n::tr!("打开文件夹")).clicked() {
+                        action = Some(FileAction::Reveal);
+                    }
+                    if super::ghost_button(ui, &p, swoop_i18n::tr!("关闭")).clicked() {
+                        close_clicked = true;
+                    }
+                });
+            });
+        });
+        close |= close_clicked;
+        if let Some(action) = action {
+            match self.completion.open_path(path, action) {
+                Ok(()) => close = true,
+                Err(error) => self.toasts.push_error(swoop_i18n::tr!("无法打开"), error),
+            }
+        }
+        if close {
+            self.completion.dialogs.pop_front();
         }
     }
 }

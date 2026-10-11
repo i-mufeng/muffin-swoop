@@ -64,6 +64,7 @@ pub enum BridgeEvent {
     },
     /// 静默模式：任务已加入引擎
     Added {
+        id: swoop_core::TaskId,
         file_name: String,
     },
     /// 询问模式：探测成功，等 UI 弹新建对话框
@@ -373,7 +374,7 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
             let dir = shared.categories.lock().unwrap().target(&dir, &task.url, Some(&info.file_name));
             match shared.engine.add(AddOptions { url: task.url, dir, file_name: None, headers }) {
                 Ok(id) => {
-                    shared.emit(BridgeEvent::Added { file_name: info.file_name.clone() });
+                    shared.emit(BridgeEvent::Added { id, file_name: info.file_name.clone() });
                     reply(StatusCode::OK, json!({ "id": id.0, "file_name": info.file_name, "size": info.size }))
                 }
                 Err(e) => error(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()),
@@ -545,7 +546,7 @@ mod tests {
         assert_eq!(status, 200, "{body}");
         assert_eq!(body["file_name"], "report.pdf");
         assert_eq!(body["size"], BODY.len());
-        assert!(matches!(f.bridge.try_recv(), Some(BridgeEvent::Added { file_name }) if file_name == "report.pdf"));
+        assert!(matches!(f.bridge.try_recv(), Some(BridgeEvent::Added { file_name, .. }) if file_name == "report.pdf"));
 
         let id = swoop_core::TaskId(body["id"].as_u64().unwrap());
         let t0 = Instant::now();

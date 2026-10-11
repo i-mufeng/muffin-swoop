@@ -9,7 +9,7 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 - `crates/media`（HLS/DASH/MMS 检查与 FFmpeg 下载）、`crates/grabber`（站点抓取）、`crates/ftp`（FTP/FTPS 传输，`core` 依赖它）、`crates/updater`（签名更新）：同样禁止依赖 UI crate。各自说明见 `crates/media/README.md`、`docs/grabber.md`、`docs/ftp.md`、`docs/updates.md`。
 - 界面文案统一写 `swoop_i18n::tr!("中文原文")`，英文译文加到 `crates/i18n/locales/en-US.json`；缺译文编译期报错（`crates/i18n-macros`）。删文案时顺手删掉对应译文。
 - `crates/app/src/bridge.rs`：浏览器桥接，只绑 127.0.0.1 的 hyper 服务（`/ping`、`/tasks`），协议见 `docs/browser-extension.md`；改协议要同步改 `extension/src/api.ts`。
-- `extension/`：MV3 扩展（TypeScript + esbuild），`npm run build` 同时产出 Chromium 的 `extension/dist/` 和 Firefox 的 `extension/dist-firefox/`；规则类逻辑写成纯函数放 `rules.ts` 并在 `rules.test.ts` 加测试。
+- `extension/`：MV3 扩展（TypeScript + esbuild），`npm run build` 同时产出 Chromium 的 `extension/dist/` 和 Firefox 的 `extension/dist-firefox/`，`npm run package` 再打成 `target/packages/` 下的商店 zip；规则类逻辑写成纯函数放 `rules.ts` 并在 `rules.test.ts` 加测试。
 - 品牌图标源文件在 `assets/brand/swoop`（应用图标、托盘、扩展图标都由此生成）；`assets/brand/logo-*/` 是概念稿，已加入 gitignore，不入库。
 - 颜色/间距只在 `crates/app/src/theme.rs` 定义（`Palette`），UI 代码不写裸色值。
 - 图标用 `egui_phosphor::regular::*`；中文字体内嵌 `assets/fonts/AlibabaPuHuiTi-3-55-Regular.subset.otf`（GB2312 子集，`include_bytes!`），不要在运行时加载系统字体（整字体几十 MB 常驻内存）。要扩充字符集改 `scripts/make_font_subset.py` 重新生成。
@@ -37,7 +37,7 @@ cargo run -p swoop-app
 python3 -m venv target/ftp-fixture-venv && target/ftp-fixture-venv/bin/python -m pip install -r crates/ftp/tests/requirements.txt  # 首次
 cargo test --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings   # 与 CI 一致，警告即失败
-cd extension && npm test && npm run typecheck && npm run build
+cd extension && npm test && npm run typecheck && npm run package   # package 含 build
 bash scripts/package-macos.sh   # zip + DMG；Windows 用 scripts/package-windows.ps1 出 zip + NSIS setup.exe；需先 cargo install cargo-packager --version 0.11.8 --locked
 ```
 

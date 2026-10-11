@@ -83,6 +83,7 @@ SWOOP_DEMO=1 SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=tmp/shot.png \
 cd extension
 npm install
 npm run build       # Chromium: dist/；Firefox: dist-firefox/
+npm run package     # 构建并打包为 target/packages/swoop-extension-{chromium,firefox}-<版本>.zip（附 .sha256）
 npm test            # 规则等纯函数的单元测试
 npm run typecheck
 ```
@@ -94,6 +95,7 @@ Chrome / Edge / Arc / Brave：打开 `chrome://extensions` → 开启「开发�
 - 下载接管监听 `downloads.onCreated`：先暂停浏览器下载，Swoop 探测成功才取消，否则恢复。被动媒体检测只记录候选，不自动开始下载。
 - 右键链接/图片/视频 →「用 Swoop 下载」。
 - 扩展弹窗可打开「本页全部链接」或媒体选择页；缓存上限、检测开关、过期时间、批量并发等均可配置。
+- `npm run package` 产出的 zip 以 `manifest.json` 为包根，可直接上传 Chrome Web Store / AMO；版本取 `package.json`，与 `public/manifest.json` 不一致时报错。同版本重复打包会覆盖，且产物逐字节一致。
 - Firefox 本地测试加载 `extension/dist-firefox/manifest.json`；浏览器商店签名与发布尚未执行。
 - 协议与安全边界见 `docs/browser-extension.md`。
 

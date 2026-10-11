@@ -134,6 +134,23 @@ impl Categories {
         let json = serde_json::to_string(self).map_err(|e| e.to_string())?;
         store.set_setting("categories", &json).map_err(|e| e.to_string())
     }
+    /// 新安装：开启分类并在下载目录下预建各分类目录。建目录失败只记日志，下载时仍会按需创建。
+    pub fn init_fresh(store: &Store, base: &Path) -> Self {
+        let categories = Self { enabled: true, ..Default::default() };
+        if let Err(error) = categories.save(store) {
+            tracing::warn!("分类设置未保存：{error}");
+        }
+        categories.create_dirs(base);
+        categories
+    }
+    pub fn create_dirs(&self, base: &Path) {
+        for rule in &self.rules {
+            let dir = base.join(rule.directory.trim());
+            if let Err(error) = std::fs::create_dir_all(&dir) {
+                tracing::warn!(path = %dir.display(), "创建分类目录失败：{error}");
+            }
+        }
+    }
     pub fn classify(&self, raw: &str, file_name: Option<&str>) -> Option<&CategoryRule> {
         let url = url::Url::parse(raw).ok()?;
         let decoded = percent_encoding::percent_decode_str(url.path()).decode_utf8_lossy();
@@ -198,5 +215,19 @@ mod tests {
         rules.rules[0].directory = "safe".into();
         rules.rules[0].domains = "good.test@bad.test".into();
         assert!(rules.validate().is_err());
+    }
+    #[test]
+    fn fresh_install_enables_categories_and_creates_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::in_memory().unwrap();
+        let base = dir.path().join("Downloads");
+        let categories = Categories::init_fresh(&store, &base);
+        assert!(categories.enabled);
+        assert_eq!(Categories::load(&store), categories);
+        for rule in &categories.rules {
+            assert!(base.join(&rule.directory).is_dir(), "{}", rule.directory);
+        }
+        // 已有安装没有保存过分类时仍是关闭状态
+        assert!(!Categories::load(&Store::in_memory().unwrap()).enabled);
     }
 }

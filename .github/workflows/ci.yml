@@ -91,9 +91,9 @@ jobs:
       - name: Typecheck extension
         working-directory: extension
         run: npm run typecheck
-      - name: Build extension
+      - name: Build and package extension
         working-directory: extension
-        run: npm run build
+        run: npm run package
       - name: Package macOS app
         if: runner.os == 'macOS'
         run: bash scripts/package-macos.sh --profile release --skip-build
@@ -152,7 +152,5 @@ jobs:
             target/packages/*.dmg
             target/packages/*-setup.exe
             target/packages/*.sha256
-            extension/dist/
-            extension/dist-firefox/
           if-no-files-found: error
           retention-days: 7

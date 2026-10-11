@@ -155,7 +155,6 @@ pub struct CompletionActions {
     pub settings: CompletionSettings,
     pub countdown: Countdown,
     pub dialogs: VecDeque<PathBuf>,
-    pub needs_attention: bool,
     tx: Option<SyncSender<Work>>,
     rx: Receiver<Outcome>,
     pending: usize,
@@ -180,7 +179,6 @@ impl CompletionActions {
             settings: CompletionSettings::load(store),
             countdown: Countdown::default(),
             dialogs: VecDeque::new(),
-            needs_attention: false,
             tx: worker.ok().map(|_| tx),
             rx: results,
             pending: 0,
@@ -192,16 +190,21 @@ impl CompletionActions {
     pub fn busy(&self) -> bool {
         self.pending > 0 || self.power.is_some()
     }
-    pub fn submit(&mut self, path: PathBuf) -> Result<(), String> {
+    /// `dialog` 为 false 时不弹完成窗口（该任务的进度窗口会原地变成完成窗口）
+    pub fn submit(&mut self, path: PathBuf, dialog: bool) -> Result<(), String> {
         self.countdown.completed();
         if self.settings.file_action == FileAction::None && self.settings.scanner.is_none() {
-            self.offer_dialog(path);
+            if dialog {
+                self.offer_dialog(path);
+            }
             return Ok(());
         }
         if self.cancel.is_cancelled() {
             self.cancel = CancellationToken::new();
         }
-        let work = Work { path, settings: self.settings.clone(), cancel: self.cancel.clone() };
+        let mut settings = self.settings.clone();
+        settings.show_dialog &= dialog;
+        let work = Work { path, settings, cancel: self.cancel.clone() };
         let result = self
             .tx
             .as_ref()
@@ -220,7 +223,6 @@ impl CompletionActions {
                 self.dialogs.pop_front();
             }
             self.dialogs.push_back(path);
-            self.needs_attention = true;
         }
     }
     pub fn poll(&mut self) -> Vec<Outcome> {

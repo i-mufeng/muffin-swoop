@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use egui::{Align, Frame, Key, Layout, Margin, Modifiers, RichText};
+use egui::{Align, Key, Layout, Margin, Modifiers, RichText};
 use swoop_core::AddOptions;
 
 use super::{ghost_button, primary_button};
@@ -23,6 +23,13 @@ pub struct AddDialog {
     pub queue: swoop_core::QueueId,
     pub ftp: crate::ftp_settings::FtpEditor,
     import: Option<std::sync::mpsc::Receiver<Result<Option<String>, String>>>,
+    /// 独立窗口的位置（打开时按屏幕居中算一次）；`raise` 让已打开的窗口回到前台
+    pos: Option<egui::Pos2>,
+    raise: bool,
+}
+
+fn viewport_id() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("swoop-add-dialog")
 }
 
 impl AddDialog {
@@ -41,6 +48,8 @@ impl AddDialog {
             queue: swoop_core::MAIN_QUEUE_ID,
             ftp: crate::ftp_settings::FtpEditor::default(),
             import: None,
+            pos: None,
+            raise: false,
         }
     }
 
@@ -64,6 +73,7 @@ impl AddDialog {
 
     fn close(&mut self) {
         self.open = false;
+        self.pos = None;
         self.error = None;
         self.browser_headers.clear();
         self.browser_names.clear();
@@ -88,6 +98,7 @@ impl AddDialog {
     pub fn open_with(&mut self, prefill: Option<String>) {
         self.open = true;
         self.want_focus = true;
+        self.raise = true;
         self.error = None;
         self.preview = None;
         if let Some(t) = prefill {
@@ -194,179 +205,176 @@ impl SwoopApp {
         let mut submit = false;
         let mut cancel = false;
 
-        let modal = egui::Modal::new(egui::Id::new("add_dialog"))
-            .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-            .show(ctx, |ui| {
-                ui.set_width(520.0);
-                ui.label(RichText::new(swoop_i18n::tr!("新建下载")).size(18.0).strong().color(p.text));
-                if ui
-                    .add_enabled(self.add_dialog.import.is_none(), egui::Button::new(swoop_i18n::tr!("导入链接文件…")))
-                    .clicked()
-                {
-                    self.start_import(ctx, None);
-                }
-                ui.label(
-                    RichText::new(swoop_i18n::tr!("每行一个链接，支持 {001..010}、{a..z} 批量展开"))
-                        .size(12.5)
-                        .color(p.text_muted),
+        let size = egui::vec2(580.0, 500.0);
+        if self.add_dialog.pos.is_none() {
+            self.add_dialog.pos = super::popup::centered(ctx, size, 0);
+        }
+        let builder = super::popup::builder(swoop_i18n::tr!("新建下载"), size, self.add_dialog.pos);
+        if std::mem::take(&mut self.add_dialog.raise) {
+            ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Focus);
+        }
+        let close = super::popup::show(ctx, viewport_id(), builder, &p, |ui| {
+            if ui
+                .add_enabled(self.add_dialog.import.is_none(), egui::Button::new(swoop_i18n::tr!("导入链接文件…")))
+                .clicked()
+            {
+                self.start_import(ctx, None);
+            }
+            ui.label(
+                RichText::new(swoop_i18n::tr!("每行一个链接，支持 {001..010}、{a..z} 批量展开"))
+                    .size(12.5)
+                    .color(p.text_muted),
+            );
+            if let Some(note) = &self.add_dialog.browser_note {
+                ui.add_space(4.0);
+                ui.label(RichText::new(note).size(12.5).color(p.accent));
+            }
+            ui.add_space(12.0);
+
+            super::modal_body(ui, "add_dialog_body", 260.0, |ui| {
+                let resp = ui.add(
+                    egui::TextEdit::multiline(&mut self.add_dialog.text)
+                        .desired_rows(4)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("https://example.com/file.zip")
+                        .font(egui::TextStyle::Monospace)
+                        .margin(Margin::same(10)),
                 );
-                if let Some(note) = &self.add_dialog.browser_note {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(note).size(12.5).color(p.accent));
+                if resp.changed() {
+                    self.add_dialog.text_changed();
                 }
-                ui.add_space(12.0);
+                if self.add_dialog.want_focus {
+                    resp.request_focus();
+                    self.add_dialog.want_focus = false;
+                }
 
-                super::modal_body(ui, "add_dialog_body", 260.0, |ui| {
-                    let resp = ui.add(
-                        egui::TextEdit::multiline(&mut self.add_dialog.text)
-                            .desired_rows(4)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("https://example.com/file.zip")
-                            .font(egui::TextStyle::Monospace)
-                            .margin(Margin::same(10)),
-                    );
-                    if resp.changed() {
-                        self.add_dialog.text_changed();
+                if !self.add_dialog.text.trim().is_empty() {
+                    if self.add_dialog.preview.is_none() || self.add_dialog.preview_limit != self.batch_limit {
+                        self.add_dialog.preview = Some(crate::batch::parse(&self.add_dialog.text, self.batch_limit));
+                        self.add_dialog.preview_limit = self.batch_limit;
                     }
-                    if self.add_dialog.want_focus {
-                        resp.request_focus();
-                        self.add_dialog.want_focus = false;
-                    }
-
-                    if !self.add_dialog.text.trim().is_empty() {
-                        if self.add_dialog.preview.is_none() || self.add_dialog.preview_limit != self.batch_limit {
-                            self.add_dialog.preview =
-                                Some(crate::batch::parse(&self.add_dialog.text, self.batch_limit));
-                            self.add_dialog.preview_limit = self.batch_limit;
-                        }
-                        match self.add_dialog.preview.as_ref().unwrap() {
-                            Ok(urls) => {
-                                egui::CollapsingHeader::new(swoop_i18n::trf!("{} 个链接 · 查看预览", urls.len())).show(
-                                    ui,
-                                    |ui| {
-                                        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-                                            for url in urls.iter().take(100) {
-                                                ui.add(egui::Label::new(url).truncate());
-                                            }
-                                            if urls.len() > 100 {
-                                                ui.label(swoop_i18n::trf!("另有 {} 个链接", urls.len() - 100));
-                                            }
-                                        });
-                                    },
-                                );
-                            }
-                            Err(error) => {
-                                ui.label(RichText::new(error).size(12.0).color(p.danger));
-                            }
-                        }
-                    }
-
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(swoop_i18n::tr!("保存到")).color(p.text_muted));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.add_dialog.dir)
-                                .desired_width(f32::INFINITY)
-                                .margin(Margin::symmetric(10, 6)),
-                        );
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(swoop_i18n::tr!("下载队列")).color(p.text_muted));
-                        let queues = self.engine.queues();
-                        if !queues.iter().any(|q| q.id == self.add_dialog.queue) {
-                            self.add_dialog.queue = swoop_core::MAIN_QUEUE_ID;
-                        }
-                        let selected = queues.iter().find(|q| q.id == self.add_dialog.queue);
-                        egui::ComboBox::from_id_salt("add_queue")
-                            .selected_text(selected.map(super::queue_name).unwrap_or(swoop_i18n::tr!("主队列")))
-                            .show_ui(ui, |ui| {
-                                for q in &queues {
-                                    ui.selectable_value(&mut self.add_dialog.queue, q.id, super::queue_name(q));
-                                }
-                            });
-                        if selected.is_some_and(|q| !q.running) {
-                            ui.label(
-                                RichText::new(swoop_i18n::tr!("加入后等待队列启动")).size(12.0).color(p.text_muted),
+                    match self.add_dialog.preview.as_ref().unwrap() {
+                        Ok(urls) => {
+                            egui::CollapsingHeader::new(swoop_i18n::trf!("{} 个链接 · 查看预览", urls.len())).show(
+                                ui,
+                                |ui| {
+                                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                                        for url in urls.iter().take(100) {
+                                            ui.add(egui::Label::new(url).truncate());
+                                        }
+                                        if urls.len() > 100 {
+                                            ui.label(swoop_i18n::trf!("另有 {} 个链接", urls.len() - 100));
+                                        }
+                                    });
+                                },
                             );
                         }
-                    });
-
-                    if self.categories.enabled {
-                        ui.label(RichText::new(swoop_i18n::tr!("已启用分类保存规则")).size(12.0).color(p.text_muted));
-                        if let Some(Ok(urls)) = &self.add_dialog.preview {
-                            let base = expand_tilde(&self.add_dialog.dir);
-                            for url in urls.iter().take(3) {
-                                let target = self.categories.target(&base, url, None);
-                                ui.add(
-                                    egui::Label::new(
-                                        RichText::new(target.display().to_string()).size(12.0).color(p.text_muted),
-                                    )
-                                    .truncate(),
-                                );
-                            }
+                        Err(error) => {
+                            ui.label(RichText::new(error).size(12.0).color(p.danger));
                         }
                     }
+                }
 
-                    if let Some(Ok(urls)) = &self.add_dialog.preview
-                        && urls.iter().any(|url| crate::ftp_settings::is_ftp(url))
-                    {
-                        let implicit = urls
-                            .iter()
-                            .filter(|url| crate::ftp_settings::is_ftp(url))
-                            .all(|url| url.starts_with("ftps:"));
-                        ui.vertical(|ui| {
-                            self.add_dialog.ftp.ui(ui, implicit);
-                            if ui
-                                .small_button(swoop_i18n::tr!("记住连接设置"))
-                                .on_hover_text(swoop_i18n::tr!("用户名和密码不保存为默认值"))
-                                .clicked()
-                            {
-                                match self.add_dialog.ftp.save_defaults(&self.engine) {
-                                    Ok(()) => self.toasts.push_info(
-                                        swoop_i18n::tr!("FTP 设置已保存"),
-                                        swoop_i18n::tr!("用于后续新建下载"),
-                                    ),
-                                    Err(error) => self.add_dialog.error = Some(error),
-                                }
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(swoop_i18n::tr!("保存到")).color(p.text_muted));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.add_dialog.dir)
+                            .desired_width(f32::INFINITY)
+                            .margin(Margin::symmetric(10, 6)),
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(swoop_i18n::tr!("下载队列")).color(p.text_muted));
+                    let queues = self.engine.queues();
+                    if !queues.iter().any(|q| q.id == self.add_dialog.queue) {
+                        self.add_dialog.queue = swoop_core::MAIN_QUEUE_ID;
+                    }
+                    let selected = queues.iter().find(|q| q.id == self.add_dialog.queue);
+                    egui::ComboBox::from_id_salt("add_queue")
+                        .selected_text(selected.map(super::queue_name).unwrap_or(swoop_i18n::tr!("主队列")))
+                        .show_ui(ui, |ui| {
+                            for q in &queues {
+                                ui.selectable_value(&mut self.add_dialog.queue, q.id, super::queue_name(q));
                             }
                         });
-                    }
-
-                    if let Some(err) = &self.add_dialog.error {
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(err).size(12.5).color(p.danger));
+                    if selected.is_some_and(|q| !q.running) {
+                        ui.label(RichText::new(swoop_i18n::tr!("加入后等待队列启动")).size(12.0).color(p.text_muted));
                     }
                 });
-                ui.add_space(16.0);
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(swoop_i18n::tr!("⌘↩ 开始  ·  Esc 取消")).size(12.0).color(p.text_muted));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if primary_button(ui, &p, swoop_i18n::tr!("开始下载")).clicked() {
-                            submit = true;
+
+                if self.categories.enabled {
+                    ui.label(RichText::new(swoop_i18n::tr!("已启用分类保存规则")).size(12.0).color(p.text_muted));
+                    if let Some(Ok(urls)) = &self.add_dialog.preview {
+                        let base = expand_tilde(&self.add_dialog.dir);
+                        for url in urls.iter().take(3) {
+                            let target = self.categories.target(&base, url, None);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(target.display().to_string()).size(12.0).color(p.text_muted),
+                                )
+                                .truncate(),
+                            );
                         }
-                        if ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked() {
-                            cancel = true;
+                    }
+                }
+
+                if let Some(Ok(urls)) = &self.add_dialog.preview
+                    && urls.iter().any(|url| crate::ftp_settings::is_ftp(url))
+                {
+                    let implicit =
+                        urls.iter().filter(|url| crate::ftp_settings::is_ftp(url)).all(|url| url.starts_with("ftps:"));
+                    ui.vertical(|ui| {
+                        self.add_dialog.ftp.ui(ui, implicit);
+                        if ui
+                            .small_button(swoop_i18n::tr!("记住连接设置"))
+                            .on_hover_text(swoop_i18n::tr!("用户名和密码不保存为默认值"))
+                            .clicked()
+                        {
+                            match self.add_dialog.ftp.save_defaults(&self.engine) {
+                                Ok(()) => self
+                                    .toasts
+                                    .push_info(swoop_i18n::tr!("FTP 设置已保存"), swoop_i18n::tr!("用于后续新建下载")),
+                                Err(error) => self.add_dialog.error = Some(error),
+                            }
                         }
                     });
+                }
+
+                if let Some(err) = &self.add_dialog.error {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(err).size(12.5).color(p.danger));
+                }
+            });
+            ui.add_space(16.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(swoop_i18n::tr!("⌘↩ 开始  ·  Esc 取消")).size(12.0).color(p.text_muted));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if primary_button(ui, &p, swoop_i18n::tr!("开始下载")).clicked() {
+                        submit = true;
+                    }
+                    if ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked() {
+                        cancel = true;
+                    }
                 });
             });
-
-        if modal.should_close() {
+            if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
+                submit = true;
+            }
+        });
+        if close {
             cancel = true;
-        }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
-            submit = true;
         }
 
         if cancel {
             self.add_dialog.close();
         } else if submit {
-            self.submit_add();
+            self.submit_add(ctx);
         }
     }
 
-    fn submit_add(&mut self) {
+    fn submit_add(&mut self, ctx: &egui::Context) {
         let dir = expand_tilde(&self.add_dialog.dir);
         let urls = match crate::batch::parse(&self.add_dialog.text, self.batch_limit) {
             Ok(urls) => urls,
@@ -383,6 +391,7 @@ impl SwoopApp {
 
         let mut failed = Vec::new();
         let mut retry = Vec::new();
+        let mut started = Vec::new();
         for url in urls {
             let headers = self.add_dialog.browser_headers.get(&url).cloned().unwrap_or_default();
             let file_name = self.add_dialog.browser_names.get(&url).cloned();
@@ -395,10 +404,20 @@ impl SwoopApp {
             } else {
                 self.engine.enqueue(options, self.add_dialog.queue).map_err(|e| e.to_string())
             };
-            if let Err(e) = result {
-                failed.push(format!("{url}\n  {e}"));
-                retry.push(url);
+            match result {
+                Ok(id) => started.push(id),
+                Err(e) => {
+                    failed.push(format!("{url}\n  {e}"));
+                    retry.push(url);
+                }
             }
+        }
+        // 只为单个、立即开始的下载弹进度窗口；批量或等待队列的不弹
+        let queue_running = self.engine.queues().iter().any(|q| q.id == self.add_dialog.queue && q.running);
+        if let [id] = started[..]
+            && queue_running
+        {
+            self.open_task_window(ctx, id);
         }
         if self.default_dir != dir {
             self.default_dir = dir;
