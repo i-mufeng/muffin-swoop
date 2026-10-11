@@ -16,6 +16,8 @@ pub struct ProbeInfo {
     pub resumable: bool,
     pub etag: Option<String>,
     pub last_modified: Option<String>,
+    /// 去掉参数后的小写 MIME，如 `application/pdf`
+    pub content_type: Option<String>,
 }
 
 /// 任务级请求头里由引擎自己管理、调用方传了也忽略的头
@@ -63,8 +65,11 @@ pub async fn probe(client: &Client, url: &Url, headers: &HeaderMap) -> Result<Pr
     let file_name = file_name_from(headers, &final_url);
     let etag = header_string(headers, header::ETAG);
     let last_modified = header_string(headers, header::LAST_MODIFIED);
+    let content_type = header_string(headers, header::CONTENT_TYPE)
+        .and_then(|v| v.split(';').next().map(|m| m.trim().to_ascii_lowercase()))
+        .filter(|m| !m.is_empty());
 
-    Ok(ProbeInfo { final_url, file_name, size, resumable, etag, last_modified })
+    Ok(ProbeInfo { final_url, file_name, size, resumable, etag, last_modified, content_type })
 }
 
 fn header_string(h: &HeaderMap, name: header::HeaderName) -> Option<String> {

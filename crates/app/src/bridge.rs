@@ -233,7 +233,26 @@ struct TaskRequest {
     referrer: Option<String>,
     #[serde(default)]
     headers: Vec<(String, String)>,
+    /// 浏览器看到的 MIME 与大小（来自 downloads 事件）；有就用来核对重新探测的结果
+    #[serde(default)]
+    mime: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
     // suggested_name：协议里有，但 onCreated 时浏览器通常还没定文件名，v0.3 以探测结果为准
+}
+
+/// 浏览器那次下载可能是 POST 表单或一次性链接，Swoop 用 GET 重新请求拿到的未必是同一个东西。
+/// 拿到网页而浏览器下的不是网页、或大小对不上，就判定不是同一份文件，交回浏览器。
+fn mismatch(expected_mime: Option<&str>, expected_size: Option<u64>, info: &swoop_core::ProbeInfo) -> Option<String> {
+    let got_html = info.content_type.as_deref().is_some_and(|m| m == "text/html");
+    let want_html = expected_mime.is_some_and(|m| m.to_ascii_lowercase().starts_with("text/html"));
+    if expected_mime.is_some_and(|m| !m.is_empty()) && got_html && !want_html {
+        return Some("链接返回的是网页而不是文件（可能需要登录或是表单提交）".into());
+    }
+    match (expected_size.filter(|s| *s > 0), info.size) {
+        (Some(want), Some(got)) if want != got => Some(format!("文件大小不一致：浏览器 {want} 字节，Swoop 探测到 {got} 字节")),
+        _ => None,
+    }
 }
 
 async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Bytes>> {
@@ -267,6 +286,10 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         Ok(Err(e)) => return error(StatusCode::UNPROCESSABLE_ENTITY, &format!("探测失败：{e}")),
         Err(_) => return error(StatusCode::UNPROCESSABLE_ENTITY, "探测超时"),
     };
+    if let Some(reason) = mismatch(task.mime.as_deref(), task.size, &info) {
+        tracing::info!(url = %task.url, "不接管: {reason}");
+        return error(StatusCode::UNPROCESSABLE_ENTITY, &reason);
+    }
     tracing::info!(url = %task.url, name = %info.file_name, size = ?info.size, "收到浏览器下载");
 
     let mode = *shared.mode.lock().unwrap();
@@ -323,6 +346,27 @@ mod tests {
         assert!(authorize(Some("127.0.0.1"), None, p).is_err());
         assert!(authorize(Some("127.0.0.1:51230"), Some("https://evil.com"), p).is_err());
         assert!(authorize(Some("127.0.0.1:51230"), Some("null"), p).is_err());
+    }
+
+    #[test]
+    fn mismatch_rules() {
+        let info = |ct: Option<&str>, size: Option<u64>| swoop_core::ProbeInfo {
+            final_url: "http://a/b".parse().unwrap(),
+            file_name: "b".into(),
+            size,
+            resumable: false,
+            etag: None,
+            last_modified: None,
+            content_type: ct.map(str::to_string),
+        };
+        let html = info(Some("text/html"), Some(100));
+        assert!(mismatch(Some("application/pdf"), None, &html).is_some());
+        assert!(mismatch(Some("text/html; charset=utf-8"), None, &html).is_none(), "本来就是网页");
+        assert!(mismatch(None, None, &html).is_none(), "右键菜单没有 MIME，信任用户");
+        assert!(mismatch(Some("application/zip"), Some(99), &info(Some("application/zip"), Some(100))).is_some());
+        assert!(mismatch(Some("application/zip"), Some(100), &info(Some("application/zip"), Some(100))).is_none());
+        assert!(mismatch(Some("application/zip"), Some(100), &info(None, None)).is_none(), "大小未知不拦");
+        assert!(mismatch(Some(""), Some(0), &html).is_none());
     }
 
     #[test]
