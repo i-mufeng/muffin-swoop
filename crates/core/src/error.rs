@@ -20,6 +20,10 @@ pub enum Error {
     Cancelled,
     #[error("任务不存在")]
     TaskNotFound,
+    #[error("数据库错误: {0}")]
+    Db(#[from] rusqlite::Error),
+    #[error("序列化错误: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("内部错误: {0}")]
     Internal(String),
 }

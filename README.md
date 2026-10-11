@@ -40,9 +40,19 @@ SWOOP_DEMO=1 SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=tmp/shot.png \
   cargo run -p swoop-app --features screenshot
 ```
 
+注意：自动截图抓的是第一帧，而 egui 的 `Area`（右下角吐司、设置/新建弹窗）在首帧总是隐藏，
+所以截图里看不到它们，需要实际运行查看。
+
+## 数据与设置
+
+- 数据库：`~/Library/Application Support/com.muffin.swoop/swoop.db`（SQLite，WAL）。
+- 任务新增/状态变化即时落盘，下载中每秒刷新一次区段表；重启后按设置自动续传，续传前比对 ETag 与文件大小，变了就从头下。
+- 设置（主题、默认目录、进度条样式、限速、剪贴板监听、自动续传）存在同一个库的 `settings` 表。
+- 剪贴板监听：每秒轮询一次，只对启动后新复制的 http(s) 链接弹吐司（可在设置里关闭）。
+
 ## 路线图
 
 - v0.1 骨架：引擎（分段/续传/限速）+ 基础列表 UI ✅
-- v0.2 好用：任务持久化（SQLite）、剪贴板监听吐司、详情面板（速度曲线）、系统通知、托盘、设置持久化
+- v0.2 好用：任务持久化（SQLite）✅、剪贴板监听吐司 ✅、设置持久化 ✅、完成/失败吐司 ✅、详情面板（速度曲线）、系统通知、托盘
 - v0.3 生态：CLI + 本地 IPC、浏览器扩展接管下载
 - v0.4+：HLS/m3u8 视频、BT/磁力（librqbit）

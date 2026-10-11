@@ -23,6 +23,7 @@ egui_extras = { workspace = true }
 egui-phosphor = { workspace = true }
 tokio = { workspace = true }
 dirs = { workspace = true }
+arboard = { version = "3.6", default-features = false }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }

@@ -1,14 +1,24 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod clipboard;
 mod demo;
 mod fonts;
+mod settings;
 mod theme;
 mod ui;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use swoop_core::{Config, Engine};
+use swoop_core::{Config, Engine, Store};
+
+use crate::settings::{AppSettings, default_download_dir};
+
+/// 数据目录：macOS 为 ~/Library/Application Support/com.muffin.swoop，与 eframe 自身状态同目录
+fn data_dir() -> PathBuf {
+    dirs::data_dir().map(|d| d.join("com.muffin.swoop")).unwrap_or_else(|| PathBuf::from("."))
+}
 
 fn main() -> eframe::Result {
     tracing_subscriber::fmt()
@@ -23,7 +33,26 @@ fn main() -> eframe::Result {
         .enable_all()
         .build()
         .expect("启动 tokio runtime 失败");
-    let engine = Arc::new(Engine::new(rt.handle().clone(), Config::default()));
+
+    let db_path = data_dir().join("swoop.db");
+    let store = match Store::open(&db_path) {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            tracing::error!(path = %db_path.display(), "打开数据库失败: {e}");
+            std::process::exit(1);
+        }
+    };
+    let settings = AppSettings::load(&store, default_download_dir());
+
+    let config = Config {
+        speed_limit: if settings.speed_limit_on { ui::format::mbps_to_bps(settings.speed_limit_mbps) } else { 0 },
+        ..Config::default()
+    };
+    let engine = Arc::new(Engine::with_store(rt.handle().clone(), config, store.clone()));
+    match engine.load(settings.auto_resume) {
+        Ok(n) => tracing::info!(count = n, auto_resume = settings.auto_resume, "已恢复历史任务"),
+        Err(e) => tracing::warn!("恢复历史任务失败: {e}"),
+    }
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Swoop")
@@ -53,7 +82,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx);
-            Ok(Box::new(app::SwoopApp::new(cc, engine)))
+            Ok(Box::new(app::SwoopApp::new(cc, engine, store, settings)))
         }),
     )
 }

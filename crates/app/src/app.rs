@@ -3,14 +3,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use egui::{Key, Modifiers};
-use swoop_core::{Engine, TaskId, TaskSnapshot};
+use swoop_core::{Engine, Event, Store, TaskId, TaskSnapshot};
+use tokio::sync::broadcast;
 
+use crate::clipboard::ClipboardWatcher;
+use crate::settings::AppSettings;
 use crate::theme::{Mode, Palette};
 use crate::ui::Filter;
 use crate::ui::add_dialog::AddDialog;
+use crate::ui::progress::ProgressStyle;
+use crate::ui::toast::Toasts;
 
 pub struct SwoopApp {
     pub engine: Arc<Engine>,
+    pub store: Arc<Store>,
     pub palette: Palette,
     /// 本帧的任务快照（每帧从引擎刷新）
     pub tasks: Vec<TaskSnapshot>,
@@ -22,34 +28,65 @@ pub struct SwoopApp {
     pub default_dir: PathBuf,
     pub limit_enabled: bool,
     pub limit_mbps: f64,
-    pub progress_style: crate::ui::progress::ProgressStyle,
+    pub progress_style: ProgressStyle,
+    pub clipboard_watch: bool,
+    pub auto_resume: bool,
+    pub toasts: Toasts,
+    clipboard: ClipboardWatcher,
+    events: broadcast::Receiver<Event>,
 }
 
 impl SwoopApp {
-    pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>) -> Self {
-        // SWOOP_THEME=light 可指定启动主题（主题持久化放在 v0.2）
-        let palette = match std::env::var("SWOOP_THEME").as_deref() {
-            Ok("light") => Palette::light(),
-            _ => Palette::dark(),
+    pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>, store: Arc<Store>, settings: AppSettings) -> Self {
+        // 环境变量只影响本次运行，不写回设置
+        let mode = std::env::var("SWOOP_THEME").ok().and_then(|v| Mode::parse(&v)).unwrap_or(settings.theme);
+        let progress_style =
+            std::env::var("SWOOP_PROGRESS").ok().and_then(|v| ProgressStyle::parse(&v)).unwrap_or(settings.progress_style);
+        let palette = match mode {
+            Mode::Dark => Palette::dark(),
+            Mode::Light => Palette::light(),
         };
         palette.apply(&cc.egui_ctx);
-        let default_dir = dirs::download_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let events = engine.subscribe();
+        let mut toasts = Toasts::default();
+        if crate::demo::enabled() {
+            toasts.push_info("下载完成", "rustup-init");
+            toasts.push_links(vec!["https://releases.ubuntu.com/24.04/ubuntu-24.04.3-desktop-amd64.iso".into()]);
+        }
         Self {
             engine,
+            store,
             palette,
             tasks: Vec::new(),
             filter: Filter::All,
             search: String::new(),
             selected: None,
-            add_dialog: AddDialog::new(&default_dir),
+            add_dialog: AddDialog::new(&settings.default_dir),
             show_settings: false,
-            default_dir,
-            limit_enabled: false,
-            limit_mbps: 5.0,
-            progress_style: crate::ui::progress::ProgressStyle::from_env(),
+            default_dir: settings.default_dir,
+            limit_enabled: settings.speed_limit_on,
+            limit_mbps: settings.speed_limit_mbps,
+            progress_style,
+            clipboard_watch: settings.clipboard_watch,
+            auto_resume: settings.auto_resume,
+            toasts,
+            clipboard: ClipboardWatcher::new(),
+            events,
         }
+    }
+
+    /// 把当前 UI 状态写回设置表
+    pub fn save_settings(&self) {
+        AppSettings {
+            theme: self.palette.mode,
+            default_dir: self.default_dir.clone(),
+            progress_style: self.progress_style,
+            clipboard_watch: self.clipboard_watch,
+            auto_resume: self.auto_resume,
+            speed_limit_on: self.limit_enabled,
+            speed_limit_mbps: self.limit_mbps,
+        }
+        .save(&self.store);
     }
 
     pub fn set_theme(&mut self, ctx: &egui::Context, mode: Mode) {
@@ -58,6 +95,7 @@ impl SwoopApp {
             Mode::Light => Palette::light(),
         };
         self.palette.apply(ctx);
+        self.save_settings();
     }
 
     pub fn toggle_theme(&mut self, ctx: &egui::Context) {
@@ -101,6 +139,38 @@ impl SwoopApp {
             }
         }
     }
+
+    /// 引擎事件：下载完成/失败时弹吐司
+    fn poll_events(&mut self) {
+        loop {
+            match self.events.try_recv() {
+                Ok(Event::Completed(id)) => {
+                    if let Some(t) = self.engine.snapshot_one(id) {
+                        self.toasts.push_info("下载完成", t.file_name);
+                    }
+                }
+                Ok(Event::Failed(id, reason)) => {
+                    let name = self.engine.snapshot_one(id).map(|t| t.file_name).unwrap_or_default();
+                    self.toasts.push_error(format!("下载失败：{name}"), reason);
+                }
+                Ok(_) => {}
+                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// 剪贴板里出现新链接 → 吐司询问；新建对话框打开时不打扰
+    fn poll_clipboard(&mut self) {
+        if !self.clipboard_watch {
+            return;
+        }
+        let urls = self.clipboard.poll();
+        if urls.is_empty() || self.add_dialog.open {
+            return;
+        }
+        self.toasts.push_links(urls);
+    }
 }
 
 pub fn looks_like_url(s: &str) -> bool {
@@ -117,6 +187,8 @@ impl eframe::App for SwoopApp {
         if crate::demo::enabled() {
             self.tasks.extend(crate::demo::tasks(&self.default_dir));
         }
+        self.poll_events();
+        self.poll_clipboard();
         self.handle_shortcuts(&ctx);
 
         // 面板顺序决定布局：侧栏占满左侧，状态栏/顶栏只占右侧剩余宽度
@@ -126,8 +198,9 @@ impl eframe::App for SwoopApp {
         self.task_list(ui);
         self.add_dialog_ui(&ctx);
         self.settings_ui(&ctx);
+        self.toasts_ui(&ctx);
 
-        // 有任务在跑就 10fps 刷新进度，否则低频
+        // 有任务在跑就 10fps 刷新进度，否则低频；剪贴板轮询也靠这个节拍
         let any_active = self.tasks.iter().any(|t| t.status.is_active());
         ctx.request_repaint_after(if any_active { Duration::from_millis(100) } else { Duration::from_millis(500) });
     }

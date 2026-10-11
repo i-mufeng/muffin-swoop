@@ -47,6 +47,7 @@ pub struct TaskSnapshot {
     pub segments: Vec<SegmentSnapshot>,
     pub active_connections: usize,
     pub created_at: SystemTime,
+    pub completed_at: Option<SystemTime>,
 }
 
 impl TaskSnapshot {

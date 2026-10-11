@@ -19,11 +19,20 @@ pub enum ProgressStyle {
 }
 
 impl ProgressStyle {
-    pub fn from_env() -> Self {
-        match std::env::var("SWOOP_PROGRESS").as_deref() {
-            Ok("lanes") => Self::Lanes,
-            Ok("overlay") => Self::Overlay,
-            _ => Self::Cells,
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "cells" => Some(Self::Cells),
+            "lanes" => Some(Self::Lanes),
+            "overlay" => Some(Self::Overlay),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cells => "cells",
+            Self::Lanes => "lanes",
+            Self::Overlay => "overlay",
         }
     }
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use egui::{Align, Frame, Layout, Margin, RichText};
 
-use super::primary_button;
+use super::{primary_button, toggle};
 use crate::app::SwoopApp;
 use crate::theme::Mode;
 
@@ -13,11 +13,12 @@ impl SwoopApp {
         }
         let p = self.palette;
         let mut close = false;
+        let mut dirty = false;
 
         let modal = egui::Modal::new(egui::Id::new("settings"))
             .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
             .show(ctx, |ui| {
-                ui.set_width(460.0);
+                ui.set_width(480.0);
                 ui.label(RichText::new("设置").size(18.0).strong().color(p.text));
                 ui.add_space(14.0);
 
@@ -30,6 +31,7 @@ impl SwoopApp {
                     {
                         self.default_dir = PathBuf::from(&dir);
                         self.add_dialog.dir = dir;
+                        dirty = true;
                     }
                     ui.end_row();
 
@@ -50,13 +52,32 @@ impl SwoopApp {
                         for (s, label) in [(S::Cells, "像素格"), (S::Lanes, "轨道"), (S::Overlay, "叠加")] {
                             if ui.selectable_label(self.progress_style == s, label).clicked() {
                                 self.progress_style = s;
+                                dirty = true;
                             }
                         }
                     });
                     ui.end_row();
 
+                    ui.label(RichText::new("监听剪贴板链接").color(p.text_muted));
+                    ui.horizontal(|ui| {
+                        if toggle(ui, &p, &mut self.clipboard_watch).changed() {
+                            dirty = true;
+                        }
+                        ui.label(RichText::new("复制链接后右下角询问是否下载").size(12.0).color(p.text_muted));
+                    });
+                    ui.end_row();
+
+                    ui.label(RichText::new("启动时自动继续").color(p.text_muted));
+                    ui.horizontal(|ui| {
+                        if toggle(ui, &p, &mut self.auto_resume).changed() {
+                            dirty = true;
+                        }
+                        ui.label(RichText::new("上次未完成的任务在启动后立即续传").size(12.0).color(p.text_muted));
+                    });
+                    ui.end_row();
+
                     ui.label(RichText::new("每任务连接数").color(p.text_muted));
-                    ui.label(format!("{}（v0.2 支持修改与持久化）", self.engine.config().connections));
+                    ui.label(format!("{}（下个版本支持修改）", self.engine.config().connections));
                     ui.end_row();
 
                     ui.label(RichText::new("版本").color(p.text_muted));
@@ -72,6 +93,9 @@ impl SwoopApp {
                 });
             });
 
+        if dirty {
+            self.save_settings();
+        }
         if close || modal.should_close() {
             self.show_settings = false;
         }

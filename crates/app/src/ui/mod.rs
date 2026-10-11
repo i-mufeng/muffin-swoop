@@ -9,6 +9,7 @@ pub mod settings;
 pub mod sidebar;
 pub mod statusbar;
 pub mod task_list;
+pub mod toast;
 pub mod topbar;
 
 use egui::{Align2, Color32, CornerRadius, CursorIcon, FontId, Response, RichText, Sense, Stroke, Ui, pos2, vec2};
@@ -64,9 +65,21 @@ pub fn icon_text(glyph: &str, size: f32, color: Color32) -> RichText {
     RichText::new(glyph).size(size).color(color)
 }
 
+/// 是否处于自动截图模式（EFRAME_SCREENSHOT_TO）
+fn screenshot_mode() -> bool {
+    static SHOT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SHOT.get_or_init(|| std::env::var_os("EFRAME_SCREENSHOT_TO").is_some())
+}
+
+/// 动画时长；截图模式下近似为 0，让第 2 帧就呈现最终状态。
+/// 不能真的给 0：egui 内部会算 elapsed / duration，得到 NaN。
+pub fn anim_secs(secs: f32) -> f32 {
+    if screenshot_mode() { 0.001 } else { secs }
+}
+
 /// 悬停过渡系数 0..1
 fn hover_t(ui: &Ui, resp: &Response) -> f32 {
-    ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), 0.12)
+    ui.ctx().animate_bool_with_time(resp.id.with("hover"), resp.hovered(), anim_secs(0.12))
 }
 
 /// 28×28 图标按钮，悬停出现浅底，颜色从 muted 过渡到 text。

@@ -5,7 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::header;
 use reqwest::{Client, StatusCode};
@@ -19,6 +19,7 @@ use crate::error::{Error, Result};
 use crate::limiter::Limiter;
 use crate::probe::probe;
 use crate::segment::{SegmentMap, SegmentState};
+use crate::store::{Store, TaskRecord};
 use crate::task::{SegmentSnapshot, TaskId, TaskSnapshot, TaskStatus};
 use crate::util::{unique_file_name, write_at};
 
@@ -78,6 +79,7 @@ struct Inner {
     events: broadcast::Sender<Event>,
     limiter: Arc<Limiter>,
     config: Config,
+    store: Option<Arc<Store>>,
 }
 
 struct Entry {
@@ -98,8 +100,10 @@ struct TaskShared {
     /// f64 bits
     speed: AtomicU64,
     resumable: AtomicBool,
+    etag: Mutex<Option<String>>,
     segments: Mutex<SegmentMap>,
     created_at: SystemTime,
+    completed_at: Mutex<Option<SystemTime>>,
 }
 
 impl TaskShared {
@@ -124,8 +128,25 @@ impl TaskShared {
     }
 }
 
+fn unix_secs(t: SystemTime) -> i64 {
+    t.duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+fn from_unix(secs: i64) -> SystemTime {
+    UNIX_EPOCH + Duration::from_secs(secs.max(0) as u64)
+}
+
 impl Engine {
     pub fn new(handle: Handle, config: Config) -> Self {
+        Self::build(handle, config, None)
+    }
+
+    /// 带持久化的引擎；之后调用 [`Engine::load`] 恢复历史任务。
+    pub fn with_store(handle: Handle, config: Config, store: Arc<Store>) -> Self {
+        Self::build(handle, config, Some(store))
+    }
+
+    fn build(handle: Handle, config: Config, store: Option<Arc<Store>>) -> Self {
         let client = Client::builder()
             .user_agent(config.user_agent.clone())
             .connect_timeout(config.connect_timeout)
@@ -143,8 +164,71 @@ impl Engine {
                 events,
                 limiter: Arc::new(Limiter::new(config.speed_limit)),
                 config,
+                store,
             }),
         }
+    }
+
+    pub fn store(&self) -> Option<&Arc<Store>> {
+        self.inner.store.as_ref()
+    }
+
+    /// 从数据库恢复任务。`auto_resume` 为 true 时，上次仍在下载的任务立即继续；否则恢复为已暂停。
+    /// 返回恢复的任务数。
+    pub fn load(&self, auto_resume: bool) -> Result<usize> {
+        let Some(store) = &self.inner.store else { return Ok(0) };
+        let records = store.load_tasks()?;
+        let mut count = 0;
+        let mut to_resume = Vec::new();
+        for rec in records {
+            let Ok(url) = Url::parse(&rec.url) else {
+                tracing::warn!(id = rec.id.0, "跳过无效 URL 的任务: {}", rec.url);
+                continue;
+            };
+            let was_active = rec.status.is_active();
+            let status = match rec.status {
+                TaskStatus::Completed => TaskStatus::Completed,
+                TaskStatus::Failed(e) => TaskStatus::Failed(e),
+                _ => TaskStatus::Paused,
+            };
+            let mut segments = rec.segments;
+            segments.reset_active();
+            let downloaded = if status == TaskStatus::Completed {
+                rec.total.unwrap_or(rec.downloaded)
+            } else {
+                segments.total_downloaded()
+            };
+            let shared = Arc::new(TaskShared {
+                id: rec.id,
+                url,
+                dir: rec.dir,
+                file_name: Mutex::new(rec.file_name),
+                user_named: rec.user_named,
+                status: Mutex::new(status),
+                total: AtomicU64::new(rec.total.unwrap_or(0)),
+                downloaded: AtomicU64::new(downloaded),
+                speed: AtomicU64::new(0),
+                resumable: AtomicBool::new(rec.resumable),
+                etag: Mutex::new(rec.etag),
+                segments: Mutex::new(segments),
+                created_at: from_unix(rec.created_at),
+                completed_at: Mutex::new(rec.completed_at.map(from_unix)),
+            });
+            self.inner
+                .tasks
+                .lock()
+                .unwrap()
+                .insert(rec.id, Entry { shared, cancel: CancellationToken::new() });
+            self.inner.next_id.fetch_max(rec.id.0 + 1, Ordering::Relaxed);
+            if was_active && auto_resume {
+                to_resume.push(rec.id);
+            }
+            count += 1;
+        }
+        for id in to_resume {
+            let _ = self.resume(id);
+        }
+        Ok(count)
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -168,20 +252,44 @@ impl Engine {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(Error::Internal(format!("暂不支持的协议: {}", url.scheme())));
         }
-        let id = TaskId(self.inner.next_id.fetch_add(1, Ordering::Relaxed));
+        let created_at = SystemTime::now();
+        let user_named = opts.file_name.is_some();
+        let file_name = opts.file_name.unwrap_or_default();
+
+        let id = match &self.inner.store {
+            Some(store) => store.insert_task(&TaskRecord {
+                id: TaskId(0),
+                url: url.to_string(),
+                dir: opts.dir.clone(),
+                file_name: file_name.clone(),
+                user_named,
+                total: None,
+                resumable: false,
+                etag: None,
+                status: TaskStatus::Queued,
+                segments: SegmentMap::default(),
+                downloaded: 0,
+                created_at: unix_secs(created_at),
+                completed_at: None,
+            })?,
+            None => TaskId(self.inner.next_id.fetch_add(1, Ordering::Relaxed)),
+        };
+
         let shared = Arc::new(TaskShared {
             id,
             url,
             dir: opts.dir,
-            user_named: opts.file_name.is_some(),
-            file_name: Mutex::new(opts.file_name.unwrap_or_default()),
+            user_named,
+            file_name: Mutex::new(file_name),
             status: Mutex::new(TaskStatus::Queued),
             total: AtomicU64::new(0),
             downloaded: AtomicU64::new(0),
             speed: AtomicU64::new(0),
             resumable: AtomicBool::new(false),
+            etag: Mutex::new(None),
             segments: Mutex::new(SegmentMap::default()),
-            created_at: SystemTime::now(),
+            created_at,
+            completed_at: Mutex::new(None),
         });
         let cancel = CancellationToken::new();
         self.inner
@@ -194,14 +302,19 @@ impl Engine {
     }
 
     pub fn pause(&self, id: TaskId) -> Result<()> {
-        let tasks = self.inner.tasks.lock().unwrap();
-        let entry = tasks.get(&id).ok_or(Error::TaskNotFound)?;
-        if entry.shared.status().is_active() {
+        let shared = {
+            let tasks = self.inner.tasks.lock().unwrap();
+            let entry = tasks.get(&id).ok_or(Error::TaskNotFound)?;
+            if !entry.shared.status().is_active() {
+                return Ok(());
+            }
             entry.shared.set_status(TaskStatus::Paused);
             entry.shared.set_speed(0.0);
             entry.cancel.cancel();
-            let _ = self.inner.events.send(Event::Changed(id));
-        }
+            entry.shared.clone()
+        };
+        persist(&self.inner, &shared);
+        let _ = self.inner.events.send(Event::Changed(id));
         Ok(())
     }
 
@@ -239,13 +352,19 @@ impl Engine {
                 let _ = std::fs::remove_file(path);
             }
         }
+        if let Some(store) = &self.inner.store
+            && let Err(e) = store.delete_task(id)
+        {
+            tracing::warn!(task = id.0, "删除任务记录失败: {e}");
+        }
         let _ = self.inner.events.send(Event::Removed(id));
         Ok(())
     }
 
+    /// 全部任务快照，最新的在前
     pub fn snapshot(&self) -> Vec<TaskSnapshot> {
         let tasks = self.inner.tasks.lock().unwrap();
-        tasks.values().map(|e| snapshot_of(&e.shared)).collect()
+        tasks.values().rev().map(|e| snapshot_of(&e.shared)).collect()
     }
 
     pub fn snapshot_one(&self, id: TaskId) -> Option<TaskSnapshot> {
@@ -265,6 +384,7 @@ fn snapshot_of(s: &TaskShared) -> TaskSnapshot {
     // 再调用 path() 去锁同一把锁就会自锁死。先取出来再组装。
     let file_name = s.file_name.lock().unwrap().clone();
     let path = s.dir.join(&file_name);
+    let completed_at = *s.completed_at.lock().unwrap();
     let map = s.segments.lock().unwrap();
     TaskSnapshot {
         id: s.id,
@@ -282,6 +402,38 @@ fn snapshot_of(s: &TaskShared) -> TaskSnapshot {
             .collect(),
         active_connections: map.active_count(),
         created_at: s.created_at,
+        completed_at,
+    }
+}
+
+fn record_of(s: &TaskShared) -> TaskRecord {
+    let file_name = s.file_name.lock().unwrap().clone();
+    let etag = s.etag.lock().unwrap().clone();
+    let completed_at = *s.completed_at.lock().unwrap();
+    let segments = s.segments.lock().unwrap().clone();
+    TaskRecord {
+        id: s.id,
+        url: s.url.to_string(),
+        dir: s.dir.clone(),
+        file_name,
+        user_named: s.user_named,
+        total: s.total(),
+        resumable: s.resumable.load(Ordering::Relaxed),
+        etag,
+        status: s.status(),
+        segments,
+        downloaded: s.downloaded.load(Ordering::Relaxed),
+        created_at: unix_secs(s.created_at),
+        completed_at: completed_at.map(unix_secs),
+    }
+}
+
+/// 全量写入一次任务记录（有 store 时）
+fn persist(inner: &Inner, shared: &TaskShared) {
+    if let Some(store) = &inner.store
+        && let Err(e) = store.save_task(&record_of(shared))
+    {
+        tracing::warn!(task = shared.id.0, "保存任务失败: {e}");
     }
 }
 
@@ -294,17 +446,21 @@ fn spawn_run(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: CancellationTok
         match result {
             Ok(()) => {
                 shared.set_status(TaskStatus::Completed);
+                *shared.completed_at.lock().unwrap() = Some(SystemTime::now());
+                persist(&inner, &shared);
                 let _ = inner.events.send(Event::Completed(id));
             }
             Err(_) if shared.status() == TaskStatus::Paused => {
                 // 用户主动暂停，状态已在 pause() 里设置
                 shared.segments.lock().unwrap().reset_active();
+                persist(&inner, &shared);
                 let _ = inner.events.send(Event::Changed(id));
             }
             Err(e) => {
                 tracing::warn!(task = id.0, "下载失败: {e}");
                 shared.segments.lock().unwrap().reset_active();
                 shared.set_status(TaskStatus::Failed(e.to_string()));
+                persist(&inner, &shared);
                 let _ = inner.events.send(Event::Failed(id, e.to_string()));
             }
         }
@@ -321,6 +477,21 @@ async fn run_task(inner: &Arc<Inner>, shared: &Arc<TaskShared>, cancel: Cancella
         _ = cancel.cancelled() => return Err(Error::Cancelled),
     };
     tracing::info!(task = id.0, size = ?info.size, resumable = info.resumable, name = %info.file_name, "探测完成");
+
+    // 续传校验：ETag 或大小变了，说明远端文件已更新，丢弃旧进度
+    {
+        let mut map = shared.segments.lock().unwrap();
+        if !map.segments.is_empty() {
+            let old_etag = shared.etag.lock().unwrap().clone();
+            let etag_changed = matches!((&old_etag, &info.etag), (Some(a), Some(b)) if a != b);
+            let size_changed = info.size.is_some() && shared.total() != info.size;
+            if etag_changed || size_changed {
+                tracing::info!(task = id.0, "远端文件已变化，从头下载");
+                *map = SegmentMap::default();
+            }
+        }
+    }
+    *shared.etag.lock().unwrap() = info.etag.clone();
 
     if let Some(size) = info.size {
         shared.total.store(size, Ordering::Relaxed);
@@ -359,6 +530,7 @@ async fn run_task(inner: &Arc<Inner>, shared: &Arc<TaskShared>, cancel: Cancella
     let file = Arc::new(file);
 
     shared.set_status(TaskStatus::Downloading);
+    persist(inner, shared);
     let _ = inner.events.send(Event::Changed(id));
 
     let workers = if info.resumable && info.size.is_some() { inner.config.connections.max(1) } else { 1 };
@@ -520,11 +692,13 @@ async fn download_segment(
     }
 }
 
+/// 每 250ms 计算一次速度；每 4 次（1 秒）把区段表刷到数据库
 async fn speed_ticker(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: CancellationToken) {
     let mut interval = tokio::time::interval(Duration::from_millis(250));
     let mut last_bytes = shared.downloaded.load(Ordering::Relaxed);
     let mut last_t = Instant::now();
     let mut ewma = 0.0f64;
+    let mut tick = 0u32;
     loop {
         tokio::select! {
             _ = interval.tick() => {}
@@ -539,5 +713,15 @@ async fn speed_ticker(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: Cancel
         last_bytes = bytes;
         last_t = now;
         let _ = inner.events.send(Event::Changed(shared.id));
+
+        tick += 1;
+        if tick % 4 == 0
+            && let Some(store) = &inner.store
+        {
+            let segments = shared.segments.lock().unwrap().clone();
+            if let Err(e) = store.save_progress(shared.id, &segments, bytes) {
+                tracing::warn!(task = shared.id.0, "刷新进度失败: {e}");
+            }
+        }
     }
 }

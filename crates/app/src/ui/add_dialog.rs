@@ -134,7 +134,10 @@ impl SwoopApp {
                 failed.push(format!("{url}\n  {e}"));
             }
         }
-        self.default_dir = dir;
+        if self.default_dir != dir {
+            self.default_dir = dir;
+            self.save_settings();
+        }
 
         if failed.is_empty() {
             self.add_dialog.open = false;

@@ -9,6 +9,23 @@ pub enum Mode {
     Light,
 }
 
+impl Mode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "dark" => Some(Self::Dark),
+            "light" => Some(Self::Light),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Dark => "dark",
+            Self::Light => "light",
+        }
+    }
+}
+
 /// 圆角（像素）
 pub const R_CARD: u8 = 12;
 pub const R_CTRL: u8 = 8;

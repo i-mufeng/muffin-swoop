@@ -158,6 +158,104 @@ fn falls_back_to_single_connection_without_range() {
     assert!(got == *body);
 }
 
+/// 持久化：任务完成后用同一个 store 重建引擎，记录应完整恢复
+#[test]
+fn persisted_tasks_survive_restart() {
+    use swoop_core::Store;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = Arc::new(make_body(700 * 1024));
+    let server = start_server(body.clone(), true, "keep.bin");
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("swoop.db");
+
+    {
+        let store = Arc::new(Store::open(&db).unwrap());
+        let engine = Engine::with_store(
+            rt.handle().clone(),
+            Config { connections: 3, min_segment: 64 * 1024, ..Config::default() },
+            store,
+        );
+        let id = engine
+            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+            .unwrap();
+        assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+    }
+
+    // "重启"
+    let store = Arc::new(Store::open(&db).unwrap());
+    let engine = Engine::with_store(rt.handle().clone(), Config::default(), store);
+    assert_eq!(engine.load(true).unwrap(), 1);
+    let tasks = engine.snapshot();
+    assert_eq!(tasks.len(), 1);
+    let t = &tasks[0];
+    assert_eq!(t.status, TaskStatus::Completed);
+    assert_eq!(t.file_name, "keep.bin");
+    assert_eq!(t.total, Some(body.len() as u64));
+    assert_eq!(t.downloaded, body.len() as u64);
+    assert!(t.completed_at.is_some());
+
+    // 再添加一个任务，id 必须延续而不是和旧任务冲突
+    let id2 = engine
+        .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+        .unwrap();
+    assert_ne!(id2, t.id);
+    assert_eq!(wait_done(&engine, id2, Duration::from_secs(30)), TaskStatus::Completed);
+    assert_eq!(engine.snapshot_one(id2).unwrap().file_name, "keep (1).bin");
+}
+
+/// 持久化 + 自动续传：下载中途"退出"，重启后从数据库里的断点继续并完成
+#[test]
+fn interrupted_download_resumes_after_restart() {
+    use swoop_core::Store;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = Arc::new(make_body(2 * 1024 * 1024));
+    let server = start_server(body.clone(), true, "resume2.bin");
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("swoop.db");
+
+    let id = {
+        let store = Arc::new(Store::open(&db).unwrap());
+        let engine = Engine::with_store(
+            rt.handle().clone(),
+            Config { connections: 4, min_segment: 128 * 1024, ..Config::default() },
+            store,
+        );
+        let id = engine
+            .add(AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), file_name: None })
+            .unwrap();
+        let t0 = Instant::now();
+        loop {
+            let s = engine.snapshot_one(id).unwrap();
+            if s.downloaded > 256 * 1024 || t0.elapsed() > Duration::from_secs(10) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // 模拟进程被杀：暂停让进度落盘，然后丢弃引擎（状态仍记为 paused）
+        engine.pause(id).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        let snap = engine.snapshot_one(id).unwrap();
+        assert!(snap.downloaded < body.len() as u64);
+        id
+    };
+
+    let store = Arc::new(Store::open(&db).unwrap());
+    let engine = Engine::with_store(
+        rt.handle().clone(),
+        Config { connections: 4, min_segment: 128 * 1024, ..Config::default() },
+        store,
+    );
+    engine.load(true).unwrap();
+    // 暂停态不会自动续传，手动继续
+    let before = engine.snapshot_one(id).unwrap();
+    assert_eq!(before.status, TaskStatus::Paused);
+    assert!(before.downloaded > 0, "应恢复出断点进度");
+    engine.resume(id).unwrap();
+    assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+    let got = std::fs::read(dir.path().join("resume2.bin")).unwrap();
+    assert!(got == *body);
+}
+
 #[test]
 fn pause_and_resume_completes() {
     let rt = tokio::runtime::Runtime::new().unwrap();

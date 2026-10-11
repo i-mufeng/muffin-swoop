@@ -136,6 +136,7 @@ fn task(
     }
     let _ = size;
     let active_connections = segments.iter().filter(|s| s.state == SegmentState::Active).count();
+    let completed_at = (status == TaskStatus::Completed).then(SystemTime::now);
     TaskSnapshot {
         id: TaskId(id),
         url: url.to_string(),
@@ -148,5 +149,6 @@ fn task(
         segments,
         active_connections,
         created_at: SystemTime::now(),
+        completed_at,
     }
 }

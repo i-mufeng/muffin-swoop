@@ -28,6 +28,7 @@ impl SwoopApp {
                         if toggle(ui, &p, &mut self.limit_enabled).changed() {
                             let bps = if self.limit_enabled { format::mbps_to_bps(self.limit_mbps) } else { 0 };
                             self.engine.set_speed_limit(bps);
+                            self.save_settings();
                         }
                         if self.limit_enabled {
                             let resp = ui.add(
@@ -39,6 +40,9 @@ impl SwoopApp {
                             );
                             if resp.changed() {
                                 self.engine.set_speed_limit(format::mbps_to_bps(self.limit_mbps));
+                            }
+                            if resp.drag_stopped() || resp.lost_focus() {
+                                self.save_settings();
                             }
                         }
                         ui.label(RichText::new("限速").size(12.5).color(p.text_muted));
