@@ -1,12 +1,15 @@
 // Swoop 本地服务的两个接口：GET /ping 与 POST /tasks。协议见 docs/browser-extension.md。
 
 export interface TaskBody {
+  /** 自动接管仅 HTTP(S)；手动入口也支持 FTP(S)，此时 headers 为空且不传 referrer。 */
   url: string;
   referrer?: string;
   headers: [string, string][];
   /** 浏览器看到的 MIME 与大小，Swoop 用来核对重新探测的是不是同一个文件 */
   mime?: string;
   size?: number;
+  /** 清单候选交给桌面媒体窗口，不作为普通文件下载。 */
+  media?: "hls" | "dash";
 }
 
 export type HandoffResult = { ok: true; fileName: string; size: number | null } | { ok: false; error: string };
@@ -35,6 +38,16 @@ export async function ping(port: number, ms = 1500): Promise<boolean> {
   }
 }
 
+/** 旧桌面会忽略未知 JSON 字段，先确认能力以免误下载清单文本。 */
+export async function supportsMedia(port: number): Promise<boolean> {
+  try {
+    const response = await fetchWithTimeout(`${base(port)}/ping`, {}, 1500);
+    if (!response.ok) return false;
+    const body = await response.json() as { app?: string; media_handoff?: boolean };
+    return body.app === "swoop" && body.media_handoff === true;
+  } catch { return false; }
+}
+
 /** Swoop 那边先探测（上限 10 秒）再回答，所以超时给足 15 秒 */
 export async function sendTask(port: number, body: TaskBody, ms = 15_000): Promise<HandoffResult> {
   try {
@@ -44,9 +57,14 @@ export async function sendTask(port: number, body: TaskBody, ms = 15_000): Promi
       ms,
     );
     const json = (await resp.json().catch(() => ({}))) as { file_name?: string; size?: number | null; error?: string };
-    if (resp.ok) return { ok: true, fileName: json.file_name ?? "", size: json.size ?? null };
+    if (resp.ok) {
+      if (typeof json.file_name !== "string" || !json.file_name || !(json.size == null || (typeof json.size === "number" && Number.isFinite(json.size) && json.size >= 0))) {
+        return { ok: false, error: "Swoop 返回了无效结果，请先检查任务列表再重试" };
+      }
+      return { ok: true, fileName: json.file_name, size: json.size ?? null };
+    }
     return { ok: false, error: json.error ?? `Swoop 返回 HTTP ${resp.status}` };
   } catch (e) {
-    return { ok: false, error: e instanceof DOMException && e.name === "AbortError" ? "Swoop 响应超时" : "无法连接 Swoop" };
+    return { ok: false, error: e instanceof DOMException && e.name === "AbortError" ? "Swoop 响应超时，请先检查任务列表再重试" : "无法连接 Swoop" };
   }
 }

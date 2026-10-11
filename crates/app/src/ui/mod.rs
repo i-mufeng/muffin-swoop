@@ -2,16 +2,29 @@
 //! 全部走 `Palette` 令牌，带 120–150ms 的悬停过渡。
 
 pub mod add_dialog;
+pub mod categories;
+pub mod completion;
 pub mod detail;
+pub mod file_conflict;
 pub mod filekind;
 pub mod format;
+pub mod grabber;
+pub mod media;
+mod media_proxy;
+pub mod network;
 pub mod progress;
+pub mod queues;
+pub mod quota;
 pub mod settings;
 pub mod sidebar;
+pub mod site_auth;
 pub mod statusbar;
 pub mod task_list;
+pub mod task_properties;
+pub mod task_table;
 pub mod toast;
 pub mod topbar;
+pub mod updates;
 
 use egui::{Align2, Color32, CornerRadius, CursorIcon, FontId, Response, RichText, Sense, Stroke, Ui, pos2, vec2};
 
@@ -33,10 +46,10 @@ impl Filter {
 
     pub fn label(self) -> &'static str {
         match self {
-            Filter::All => "全部",
-            Filter::Active => "下载中",
-            Filter::Completed => "已完成",
-            Filter::Failed => "失败",
+            Filter::All => swoop_i18n::tr!("全部"),
+            Filter::Active => swoop_i18n::tr!("下载中"),
+            Filter::Completed => swoop_i18n::tr!("已完成"),
+            Filter::Failed => swoop_i18n::tr!("失败"),
         }
     }
 
@@ -54,7 +67,7 @@ impl Filter {
         use swoop_core::TaskStatus as S;
         match self {
             Filter::All => true,
-            Filter::Active => matches!(status, S::Queued | S::Probing | S::Downloading | S::Paused),
+            Filter::Active => matches!(status, S::Queued | S::Probing | S::Downloading | S::Paused | S::FileConflict),
             Filter::Completed => matches!(status, S::Completed),
             Filter::Failed => matches!(status, S::Failed(_)),
         }
@@ -109,7 +122,14 @@ pub fn icon_button_colored(
     resp.on_hover_cursor(CursorIcon::PointingHand).on_hover_text(tooltip)
 }
 
-fn text_button(ui: &mut Ui, text: &str, fill: Color32, fill_hover: Color32, fg: Color32, stroke: Option<Color32>) -> Response {
+fn text_button(
+    ui: &mut Ui,
+    text: &str,
+    fill: Color32,
+    fill_hover: Color32,
+    fg: Color32,
+    stroke: Option<Color32>,
+) -> Response {
     let font = FontId::proportional(13.5);
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, fg);
     let size = vec2(galley.size().x + 26.0, 32.0);
@@ -181,5 +201,13 @@ pub fn file_tile(ui: &mut Ui, p: &Palette, kind: FileKind, size: f32) {
         let painter = ui.painter();
         painter.rect_filled(rect, CornerRadius::same(R_TILE), p.soft(tint));
         painter.text(rect.center(), Align2::CENTER_CENTER, kind.icon(), fonts::icon_fill(size * 0.5), tint);
+    }
+}
+/// Localize only the built-in default label; user-renamed queues keep their stored names.
+pub fn queue_name(queue: &swoop_core::QueueSnapshot) -> &str {
+    if queue.id == swoop_core::MAIN_QUEUE_ID && queue.name == "主队列" {
+        swoop_i18n::tr!("主队列")
+    } else {
+        &queue.name
     }
 }

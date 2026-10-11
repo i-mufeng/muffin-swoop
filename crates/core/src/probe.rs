@@ -21,8 +21,14 @@ pub struct ProbeInfo {
 }
 
 /// 任务级请求头里由引擎自己管理、调用方传了也忽略的头
-const MANAGED_HEADERS: [header::HeaderName; 5] =
-    [header::RANGE, header::HOST, header::CONTENT_LENGTH, header::CONNECTION, header::TRANSFER_ENCODING];
+const MANAGED_HEADERS: [header::HeaderName; 6] = [
+    header::RANGE,
+    header::HOST,
+    header::CONTENT_LENGTH,
+    header::CONNECTION,
+    header::TRANSFER_ENCODING,
+    header::PROXY_AUTHORIZATION,
+];
 
 /// 把调用方给的请求头（如浏览器带来的 Cookie / Referer / User-Agent）转成 [`HeaderMap`]。
 /// 名称或值不合法时报错；引擎自己管理的头（Range 等）直接丢弃。
@@ -34,26 +40,35 @@ pub fn build_headers(pairs: &[(String, String)]) -> Result<HeaderMap> {
         if MANAGED_HEADERS.contains(&name) {
             continue;
         }
-        let value = header::HeaderValue::from_str(value.trim()).map_err(|_| Error::InvalidHeader(name.to_string()))?;
+        let value = header::HeaderValue::from_str(value.trim())
+            .map_err(|_| Error::InvalidHeader(name.to_string()))?;
         map.append(name, value);
     }
     Ok(map)
 }
 
-/// `headers` 会附加到请求上，其中的 User-Agent 覆盖 client 默认值
+/// `headers` 会附加到请求上，其中的 User-Agent 覆盖 client 默认值。
+/// client 必须关闭自动重定向，才能由这里逐跳执行敏感头过滤；通常使用 Engine::probe_url。
 pub async fn probe(client: &Client, url: &Url, headers: &HeaderMap) -> Result<ProbeInfo> {
-    let resp = client
-        .get(url.clone())
-        .headers(headers.clone())
-        .header(header::RANGE, "bytes=0-0")
-        .send()
-        .await?;
-    let status = resp.status();
+    let mut request_headers = headers.clone();
+    request_headers.insert(header::RANGE, header::HeaderValue::from_static("bytes=0-0"));
+    let resp = crate::network::get_following_redirects(client, url, &request_headers).await?;
+    probe_info(resp.status(), resp.headers(), resp.url().clone())
+}
+
+pub(crate) async fn probe_network(network: &crate::network::NetworkRuntime, url: &Url, headers: &HeaderMap) -> Result<ProbeInfo> {
+    let mut request_headers = headers.clone();
+    request_headers.insert(header::RANGE, header::HeaderValue::from_static("bytes=0-0"));
+    let resp = network.get(url, &request_headers).await?;
+    probe_info(resp.status(), resp.headers(), resp.url().clone())
+}
+
+fn probe_info(status: StatusCode, headers: &HeaderMap, final_url: Url) -> Result<ProbeInfo> {
     if !status.is_success() {
         return Err(Error::Http(status.as_u16()));
     }
-    let headers = resp.headers();
-    let final_url = resp.url().clone();
+
+
 
     let (size, resumable) = if status == StatusCode::PARTIAL_CONTENT {
         (content_range_total(headers), true)
@@ -69,15 +84,30 @@ pub async fn probe(client: &Client, url: &Url, headers: &HeaderMap) -> Result<Pr
         .and_then(|v| v.split(';').next().map(|m| m.trim().to_ascii_lowercase()))
         .filter(|m| !m.is_empty());
 
-    Ok(ProbeInfo { final_url, file_name, size, resumable, etag, last_modified, content_type })
+    Ok(ProbeInfo {
+        final_url,
+        file_name,
+        size,
+        resumable,
+        etag,
+        last_modified,
+        content_type,
+    })
 }
 
 fn header_string(h: &HeaderMap, name: header::HeaderName) -> Option<String> {
-    h.get(name).and_then(|v| v.to_str().ok()).map(str::to_string)
+    h.get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
 }
 
 fn content_length(h: &HeaderMap) -> Option<u64> {
-    h.get(header::CONTENT_LENGTH)?.to_str().ok()?.trim().parse().ok()
+    h.get(header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn accept_ranges(h: &HeaderMap) -> bool {
@@ -96,7 +126,9 @@ pub fn content_range_total(h: &HeaderMap) -> Option<u64> {
 
 /// 文件名优先级：Content-Disposition filename* > filename > URL 最后一段 > "download"
 pub fn file_name_from(h: &HeaderMap, url: &Url) -> String {
-    if let Some(cd) = h.get(header::CONTENT_DISPOSITION).and_then(|v| v.to_str().ok())
+    if let Some(cd) = h
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
         && let Some(name) = parse_content_disposition(cd)
     {
         return sanitize_file_name(&name);
@@ -117,7 +149,9 @@ pub fn file_name_from_url(url: &Url) -> Option<String> {
 pub fn parse_content_disposition(value: &str) -> Option<String> {
     let mut plain: Option<String> = None;
     for part in value.split(';').map(str::trim) {
-        let Some((key, val)) = part.split_once('=') else { continue };
+        let Some((key, val)) = part.split_once('=') else {
+            continue;
+        };
         let key = key.trim().to_ascii_lowercase();
         let val = val.trim();
         if key == "filename*" {
@@ -126,7 +160,9 @@ pub fn parse_content_disposition(value: &str) -> Option<String> {
             let _charset = it.next();
             let _lang = it.next();
             if let Some(enc) = it.next() {
-                let decoded = percent_decode_str(enc.trim_matches('"')).decode_utf8_lossy().to_string();
+                let decoded = percent_decode_str(enc.trim_matches('"'))
+                    .decode_utf8_lossy()
+                    .to_string();
                 if !decoded.is_empty() {
                     return Some(decoded);
                 }
@@ -153,8 +189,14 @@ mod tests {
 
     #[test]
     fn parses_plain_filename() {
-        assert_eq!(parse_content_disposition("attachment; filename=\"a b.tar.gz\"").unwrap(), "a b.tar.gz");
-        assert_eq!(parse_content_disposition("inline; FILENAME=x.bin").unwrap(), "x.bin");
+        assert_eq!(
+            parse_content_disposition("attachment; filename=\"a b.tar.gz\"").unwrap(),
+            "a b.tar.gz"
+        );
+        assert_eq!(
+            parse_content_disposition("inline; FILENAME=x.bin").unwrap(),
+            "x.bin"
+        );
         assert!(parse_content_disposition("attachment").is_none());
     }
 

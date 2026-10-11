@@ -46,6 +46,7 @@ const TAIL: usize = 7;
 pub fn status_color(p: &Palette, status: &TaskStatus) -> Color32 {
     match status {
         TaskStatus::Queued | TaskStatus::Probing | TaskStatus::Downloading => p.accent,
+        TaskStatus::FileConflict => p.tint_amber,
         TaskStatus::Paused => p.text_muted,
         TaskStatus::Completed => p.success,
         TaskStatus::Failed(_) => p.danger,

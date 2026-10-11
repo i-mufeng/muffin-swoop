@@ -9,11 +9,15 @@
     "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "icons": "node scripts/make-icons.mjs"
+    "icons": "node scripts/make-icons.mjs",
+    "build:chromium": "node esbuild.config.mjs --browser=chromium",
+    "build:firefox": "node esbuild.config.mjs --browser=firefox"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.5",
+    "@types/node": "^22.20.5",
     "esbuild": "^0.28.2",
+    "happy-dom": "^20.14.6",
     "typescript": "^7.0.2",
     "vitest": "^5.0.3"
   }

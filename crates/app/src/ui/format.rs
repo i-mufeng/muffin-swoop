@@ -36,13 +36,13 @@ pub fn duration(secs: f64) -> String {
     }
     let s = secs.round() as u64;
     if s < 60 {
-        format!("{s} 秒")
+        swoop_i18n::trf!("{s} 秒")
     } else if s < 3600 {
         format!("{}:{:02}", s / 60, s % 60)
     } else if s < 86_400 {
         format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
     } else {
-        format!("{} 天 {} 小时", s / 86_400, (s % 86_400) / 3600)
+        swoop_i18n::trf!("{} 天 {} 小时", s / 86_400, (s % 86_400) / 3600)
     }
 }
 
@@ -53,13 +53,13 @@ pub fn ago(t: SystemTime) -> String {
 
 fn ago_secs(s: u64) -> String {
     if s < 60 {
-        "刚刚".to_string()
+        swoop_i18n::tr!("刚刚").to_string()
     } else if s < 3600 {
-        format!("{} 分钟前", s / 60)
+        swoop_i18n::trf!("{} 分钟前", s / 60)
     } else if s < 86_400 {
-        format!("{} 小时前", s / 3600)
+        swoop_i18n::trf!("{} 小时前", s / 3600)
     } else {
-        format!("{} 天前", s / 86_400)
+        swoop_i18n::trf!("{} 天前", s / 86_400)
     }
 }
 

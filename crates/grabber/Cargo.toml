@@ -1,0 +1,28 @@
+[package]
+name = "swoop-grabber"
+description = "Bounded resumable HTTP website capture for Swoop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["net", "process"] }
+tokio-util = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = "0.10"
+lol_html = "3"
+html-escape = "0.2"
+fs2 = "0.4"
+robotstxt = "0.3"
+cssparser = "0.36"
+encoding_rs = "0.8"
+mime = "0.3"
+tempfile = "3"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["net"] }

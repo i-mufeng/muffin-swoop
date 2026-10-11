@@ -56,10 +56,23 @@ impl BridgeMode {
 }
 
 pub enum BridgeEvent {
+    /// Authenticated local instance/CLI activation (never a browser endpoint).
+    Show,
+    Control(crate::instance::ControlRequest),
+    Media {
+        source: swoop_media::MediaSource,
+    },
     /// 静默模式：任务已加入引擎
-    Added { file_name: String },
+    Added {
+        file_name: String,
+    },
     /// 询问模式：探测成功，等 UI 弹新建对话框
-    Ask { url: String, file_name: String, size: Option<u64>, headers: Vec<(String, String)> },
+    Ask {
+        url: String,
+        file_name: String,
+        size: Option<u64>,
+        headers: Vec<(String, String)>,
+    },
 }
 
 /// UI 线程与服务共享的状态
@@ -67,6 +80,7 @@ struct Shared {
     engine: Arc<Engine>,
     mode: Mutex<BridgeMode>,
     dir: Mutex<PathBuf>,
+    categories: Mutex<crate::categories::Categories>,
     last_ping: Mutex<Option<SystemTime>>,
     events: mpsc::Sender<BridgeEvent>,
     /// 有新事件时唤醒 UI（egui 空闲时不会自己重绘）
@@ -105,6 +119,7 @@ impl Bridge {
             engine,
             mode: Mutex::new(mode),
             dir: Mutex::new(dir),
+            categories: Mutex::new(crate::categories::Categories::default()),
             last_ping: Mutex::new(None),
             events: tx,
             wake: Box::new(wake),
@@ -117,7 +132,11 @@ impl Bridge {
     pub fn start(&mut self, port: u16) -> Result<u16, String> {
         self.stop();
         let std_listener = std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AddrInUse { format!("端口 {port} 已被占用") } else { format!("端口 {port}：{e}") }
+            if e.kind() == std::io::ErrorKind::AddrInUse {
+                swoop_i18n::trf!("端口 {port} 已被占用")
+            } else {
+                swoop_i18n::trf!("端口 {port}：{e}")
+            }
         })?;
         std_listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         let port = std_listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -151,6 +170,10 @@ impl Bridge {
         *self.shared.dir.lock().unwrap() = dir;
     }
 
+    pub fn set_categories(&self, categories: crate::categories::Categories) {
+        *self.shared.categories.lock().unwrap() = categories;
+    }
+
     /// 最近一次扩展心跳的时间
     pub fn last_ping(&self) -> Option<SystemTime> {
         *self.shared.last_ping.lock().unwrap()
@@ -158,6 +181,32 @@ impl Bridge {
 
     pub fn try_recv(&self) -> Option<BridgeEvent> {
         self.events.try_recv().ok()
+    }
+
+    pub fn activation_callback(&self) -> crate::instance::Activate {
+        let shared = self.shared.clone();
+        Arc::new(move || {
+            let delivered = shared.events.send(BridgeEvent::Show).is_ok();
+            (shared.wake)();
+            delivered
+        })
+    }
+
+    pub fn control_callback(&self) -> crate::instance::DesktopControl {
+        let shared = self.shared.clone();
+        Arc::new(move |request| {
+            let delivered = shared.events.send(BridgeEvent::Control(request)).is_ok();
+            (shared.wake)();
+            delivered
+        })
+    }
+
+    pub fn directory_callback(&self) -> crate::instance::DefaultDirectory {
+        let shared = self.shared.clone();
+        Arc::new(move |url, name| {
+            let directory = shared.dir.lock().unwrap().clone();
+            shared.categories.lock().unwrap().target(&directory, url, name)
+        })
     }
 }
 
@@ -193,18 +242,18 @@ async fn serve(listener: tokio::net::TcpListener, port: u16, shared: Arc<Shared>
 /// 防 DNS rebinding 与网页跨站调用：Host 必须是回环名 + 本端口；
 /// Origin 只允许缺省（本机脚本）或扩展页，网页的 http(s) / null 来源一律拒绝。
 fn authorize(host: Option<&str>, origin: Option<&str>, port: u16) -> Result<(), &'static str> {
-    let host = host.ok_or("缺少 Host")?;
+    let host = host.ok_or(swoop_i18n::tr!("缺少 Host"))?;
     let (name, host_port) = match host.rsplit_once(':') {
         Some((n, p)) => (n, p.parse::<u16>().ok()),
         None => (host, Some(80)),
     };
     if !matches!(name, "127.0.0.1" | "localhost") || host_port != Some(port) {
-        return Err("Host 不是本机地址");
+        return Err(swoop_i18n::tr!("Host 不是本机地址"));
     }
     match origin {
         None => Ok(()),
         Some(o) if o.starts_with("chrome-extension://") || o.starts_with("moz-extension://") => Ok(()),
-        Some(_) => Err("不接受网页来源的请求"),
+        Some(_) => Err(swoop_i18n::tr!("不接受网页来源的请求")),
     }
 }
 
@@ -217,11 +266,14 @@ async fn handle(shared: Arc<Shared>, port: u16, req: Request<Incoming>) -> Resul
     let resp = match (req.method(), req.uri().path()) {
         (&Method::GET, "/ping") => {
             *shared.last_ping.lock().unwrap() = Some(SystemTime::now());
-            reply(StatusCode::OK, json!({ "app": "swoop", "version": env!("CARGO_PKG_VERSION") }))
+            reply(
+                StatusCode::OK,
+                json!({ "app": "swoop", "version": env!("CARGO_PKG_VERSION"), "media_handoff": true }),
+            )
         }
         (&Method::POST, "/tasks") => post_task(&shared, req).await,
-        (_, "/ping" | "/tasks") => error(StatusCode::METHOD_NOT_ALLOWED, "不支持的方法"),
-        _ => error(StatusCode::NOT_FOUND, "未知路径"),
+        (_, "/ping" | "/tasks") => error(StatusCode::METHOD_NOT_ALLOWED, swoop_i18n::tr!("不支持的方法")),
+        _ => error(StatusCode::NOT_FOUND, swoop_i18n::tr!("未知路径")),
     };
     Ok(resp)
 }
@@ -238,7 +290,16 @@ struct TaskRequest {
     mime: Option<String>,
     #[serde(default)]
     size: Option<u64>,
+    #[serde(default)]
+    media: Option<MediaFormat>,
     // suggested_name：协议里有，但 onCreated 时浏览器通常还没定文件名，v0.3 以探测结果为准
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum MediaFormat {
+    Hls,
+    Dash,
 }
 
 /// 浏览器那次下载可能是 POST 表单或一次性链接，Swoop 用 GET 重新请求拿到的未必是同一个东西。
@@ -247,10 +308,12 @@ fn mismatch(expected_mime: Option<&str>, expected_size: Option<u64>, info: &swoo
     let got_html = info.content_type.as_deref().is_some_and(|m| m == "text/html");
     let want_html = expected_mime.is_some_and(|m| m.to_ascii_lowercase().starts_with("text/html"));
     if expected_mime.is_some_and(|m| !m.is_empty()) && got_html && !want_html {
-        return Some("链接返回的是网页而不是文件（可能需要登录或是表单提交）".into());
+        return Some(swoop_i18n::tr!("链接返回的是网页而不是文件（可能需要登录或是表单提交）").into());
     }
     match (expected_size.filter(|s| *s > 0), info.size) {
-        (Some(want), Some(got)) if want != got => Some(format!("文件大小不一致：浏览器 {want} 字节，Swoop 探测到 {got} 字节")),
+        (Some(want), Some(got)) if want != got => {
+            Some(swoop_i18n::trf!("文件大小不一致：浏览器 {want} 字节，Swoop 探测到 {got} 字节"))
+        }
         _ => None,
     }
 }
@@ -263,15 +326,15 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("application/json"));
     if !is_json {
-        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, "需要 application/json");
+        return error(StatusCode::UNSUPPORTED_MEDIA_TYPE, swoop_i18n::tr!("需要 application/json"));
     }
     let body = match Limited::new(req.into_body(), MAX_BODY).collect().await {
         Ok(b) => b.to_bytes(),
-        Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, "请求体过大或读取失败"),
+        Err(_) => return error(StatusCode::PAYLOAD_TOO_LARGE, swoop_i18n::tr!("请求体过大或读取失败")),
     };
     let task: TaskRequest = match serde_json::from_slice(&body) {
         Ok(t) => t,
-        Err(e) => return error(StatusCode::BAD_REQUEST, &format!("请求体无效：{e}")),
+        Err(e) => return error(StatusCode::BAD_REQUEST, &swoop_i18n::trf!("请求体无效：{e}")),
     };
 
     let mut headers = task.headers;
@@ -281,21 +344,33 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         headers.push(("Referer".into(), r));
     }
 
+    if task.media.is_some() {
+        let source = swoop_media::MediaSource { url: task.url, headers };
+        if let Err(reason) = source.validate() {
+            return error(StatusCode::UNPROCESSABLE_ENTITY, &reason.to_string());
+        }
+        let name = crate::ui::media::suggested_name(&source.url);
+        shared.emit(BridgeEvent::Media { source });
+        return reply(StatusCode::OK, json!({ "id": null, "file_name": name, "size": null }));
+    }
     let info = match tokio::time::timeout(PROBE_TIMEOUT, shared.engine.probe_url(&task.url, &headers)).await {
         Ok(Ok(info)) => info,
-        Ok(Err(e)) => return error(StatusCode::UNPROCESSABLE_ENTITY, &format!("探测失败：{e}")),
-        Err(_) => return error(StatusCode::UNPROCESSABLE_ENTITY, "探测超时"),
+        Ok(Err(e)) => {
+            return error(StatusCode::UNPROCESSABLE_ENTITY, &swoop_i18n::trf!("探测失败：{e}"));
+        }
+        Err(_) => return error(StatusCode::UNPROCESSABLE_ENTITY, swoop_i18n::tr!("探测超时")),
     };
     if let Some(reason) = mismatch(task.mime.as_deref(), task.size, &info) {
-        tracing::info!(url = %task.url, "不接管: {reason}");
+        tracing::info!("不接管: {reason}");
         return error(StatusCode::UNPROCESSABLE_ENTITY, &reason);
     }
-    tracing::info!(url = %task.url, name = %info.file_name, size = ?info.size, "收到浏览器下载");
+    tracing::info!(name = %info.file_name, size = ?info.size, "收到浏览器下载");
 
     let mode = *shared.mode.lock().unwrap();
     match mode {
         BridgeMode::Silent => {
             let dir = shared.dir.lock().unwrap().clone();
+            let dir = shared.categories.lock().unwrap().target(&dir, &task.url, Some(&info.file_name));
             match shared.engine.add(AddOptions { url: task.url, dir, file_name: None, headers }) {
                 Ok(id) => {
                     shared.emit(BridgeEvent::Added { file_name: info.file_name.clone() });
@@ -317,7 +392,7 @@ fn reply(status: StatusCode, body: serde_json::Value) -> Response<Full<Bytes>> {
         .status(status)
         .header(CONTENT_TYPE, "application/json; charset=utf-8")
         .body(Full::new(Bytes::from(body.to_string())))
-        .expect("静态响应头")
+        .expect(swoop_i18n::tr!("静态响应头"))
 }
 
 fn error(status: StatusCode, msg: &str) -> Response<Full<Bytes>> {
@@ -442,9 +517,11 @@ mod tests {
     fn ping_records_heartbeat() {
         let f = fixture(BridgeMode::Silent);
         assert!(f.bridge.last_ping().is_none());
-        let bytes = f.rt.block_on(async { reqwest::get(format!("{}/ping", f.base)).await.unwrap().bytes().await.unwrap() });
+        let bytes =
+            f.rt.block_on(async { reqwest::get(format!("{}/ping", f.base)).await.unwrap().bytes().await.unwrap() });
         let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(body["app"], "swoop");
+        assert_eq!(body["media_handoff"], true);
         assert!(f.bridge.last_ping().is_some());
     }
 
@@ -500,13 +577,152 @@ mod tests {
     }
 
     #[test]
+    fn ftp_manual_handoff_probes_local_server_without_http_context() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("ftp://{}/archive.zip", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let start = Instant::now();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(start.elapsed() < Duration::from_secs(5), "未收到 FTP 探测");
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            stream.write_all(b"220 Local FTP fixture\r\n").unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut commands = Vec::new();
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 {
+                    break;
+                }
+                let command = line.split_whitespace().next().unwrap().to_string();
+                let reply = match command.as_str() {
+                    "USER" => "331 Password required\r\n",
+                    "PASS" => "230 Anonymous login accepted\r\n",
+                    "PWD" => "257 \"/\"\r\n",
+                    "TYPE" => "200 Binary type\r\n",
+                    "SIZE" => "213 42\r\n",
+                    "MDTM" => "213 20261011000000\r\n",
+                    "REST" => "350 Restart accepted\r\n",
+                    "QUIT" => "221 Goodbye\r\n",
+                    _ => panic!("非探测 FTP 命令：{command}"),
+                };
+                commands.push(command.clone());
+                stream.write_all(reply.as_bytes()).unwrap();
+                if command == "QUIT" {
+                    break;
+                }
+            }
+            commands
+        });
+        let f = fixture(BridgeMode::Ask);
+        f.engine
+            .set_network_policy(swoop_core::NetworkPolicy { use_system_proxy: false, retries: 0, ..Default::default() })
+            .unwrap();
+        let (status, body) = post(&f, json!({ "url": url, "headers": [] }), Some("chrome-extension://abc"));
+        let commands = server.join().unwrap();
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["file_name"], "archive.zip");
+        assert_eq!(body["size"], 42);
+        assert!(commands.iter().any(|command| command == "SIZE"));
+        assert!(!commands.iter().any(|command| command == "RETR"));
+        match f.bridge.try_recv() {
+            Some(BridgeEvent::Ask { url: received, file_name, size, headers }) => {
+                assert_eq!(received, url);
+                assert_eq!(file_name, "archive.zip");
+                assert_eq!(size, Some(42));
+                assert!(headers.is_empty());
+            }
+            _ => panic!("应收到 FTP Ask 事件"),
+        }
+        assert!(f.engine.snapshot().is_empty());
+    }
+
+    #[test]
+    fn ftp_http_context_credentials_and_media_are_rejected_before_network() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let host = listener.local_addr().unwrap();
+        let f = fixture(BridgeMode::Ask);
+        for scheme in ["ftp", "ftps"] {
+            let url = format!("{scheme}://{host}/archive.zip");
+            for body in [
+                json!({ "url": url, "headers": [["User-Agent", "Browser/1"]] }),
+                json!({ "url": url, "headers": [["Cookie", "session=private"]] }),
+                json!({ "url": url, "referrer": "https://example.test/page" }),
+                json!({ "url": url, "media": "hls" }),
+                json!({ "url": format!("{scheme}://user:secret@{host}/archive.zip"), "headers": [] }),
+            ] {
+                let (status, response) = post(&f, body, Some("moz-extension://abc"));
+                assert_eq!(status, 422, "{response}");
+            }
+        }
+        assert_eq!(listener.accept().unwrap_err().kind(), std::io::ErrorKind::WouldBlock);
+        assert!(f.bridge.try_recv().is_none());
+        assert!(f.engine.snapshot().is_empty());
+    }
+
+    #[test]
+    fn media_handoff_never_adds_manifest_to_http_engine() {
+        for mode in [BridgeMode::Silent, BridgeMode::Ask] {
+            let f = fixture(mode);
+            let (status, body) = post(
+                &f,
+                json!({"url":"https://media.example.test/master.m3u8", "media":"hls", "headers":[["User-Agent", "SwoopTest"]]}),
+                Some("chrome-extension://abc"),
+            );
+            assert_eq!(status, 200, "{body}");
+            assert!(body["id"].is_null());
+            assert_eq!(body["file_name"], "master.mp4");
+            assert!(matches!(f.bridge.try_recv(), Some(BridgeEvent::Media { .. })));
+            assert!(f.engine.snapshot().is_empty());
+            let (status, _) = post(
+                &f,
+                json!({"url":"https://media.example.test/m.mpd", "media":"dash", "headers":[["Cookie", "session=private"]]}),
+                None,
+            );
+            assert_eq!(status, 422);
+            assert!(f.bridge.try_recv().is_none());
+            let (status, _) = post(&f, json!({"url":"https://media.example.test/m", "media":"unknown"}), None);
+            assert_eq!(status, 400);
+            assert!(f.engine.snapshot().is_empty());
+        }
+    }
+
+    #[test]
+    fn browser_silent_download_obeys_category_directory() {
+        let url = file_server(b"category file");
+        let f = fixture(BridgeMode::Silent);
+        let categories = crate::categories::Categories { enabled: true, ..Default::default() };
+        f.bridge.set_categories(categories);
+        let (status, body) = post(&f, json!({ "url": url, "headers": [["Cookie", "token=1"]] }), None);
+        assert_eq!(status, 200, "{body}");
+        let id = swoop_core::TaskId(body["id"].as_u64().unwrap());
+        let until = Instant::now();
+        while f.engine.snapshot_one(id).unwrap().status != TaskStatus::Completed {
+            assert!(until.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let task = f.engine.snapshot_one(id).unwrap();
+        assert_eq!(task.path.parent().unwrap(), f.dir.path().join("Documents"));
+    }
+
+    #[test]
     fn rejects_web_origin_and_bad_requests() {
         let f = fixture(BridgeMode::Silent);
         let (status, _) = post(&f, json!({ "url": "http://127.0.0.1:1/x" }), Some("https://evil.com"));
         assert_eq!(status, 403);
         let (status, _) = post(&f, json!({ "nope": 1 }), None);
         assert_eq!(status, 400);
-        let (status, _) = post(&f, json!({ "url": "ftp://example.com/a" }), None);
+        let (status, _) = post(&f, json!({ "url": "file:///tmp/a" }), None);
         assert_eq!(status, 422);
 
         let status = f.rt.block_on(async {

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use swoop_core::Store;
 
 use crate::bridge::{BridgeMode, DEFAULT_PORT};
+use crate::notifications::{NotificationSettings, NotificationTiming};
 use crate::theme::Mode;
 use crate::ui::progress::ProgressStyle;
 
@@ -27,12 +28,14 @@ pub struct AppSettings {
     pub close_to_tray: bool,
     /// 菜单栏图标旁显示总速度（仅 macOS）
     pub tray_speed: bool,
+    pub notifications: NotificationSettings,
+    /// 新建或继续任务时采用的最大连接数。
+    pub connections: usize,
+    pub batch_limit: usize,
 }
 
 pub fn default_download_dir() -> PathBuf {
-    dirs::download_dir()
-        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
-        .unwrap_or_else(|| PathBuf::from("."))
+    dirs::download_dir().or_else(|| dirs::home_dir().map(|h| h.join("Downloads"))).unwrap_or_else(|| PathBuf::from("."))
 }
 
 impl AppSettings {
@@ -52,11 +55,25 @@ impl AppSettings {
             bridge_mode: get("bridge_mode").and_then(|v| BridgeMode::parse(&v)).unwrap_or_default(),
             close_to_tray: flag("close_to_tray", true),
             tray_speed: flag("tray_speed", true),
+            notifications: NotificationSettings {
+                on_complete: flag("notify_complete", true),
+                on_failure: flag("notify_failure", true),
+                sound: flag("notification_sound", false),
+                timing: get("notification_timing").and_then(|v| NotificationTiming::parse(&v)).unwrap_or_default(),
+            },
+            connections: get("connections")
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (1..=swoop_core::MAX_CONNECTIONS).contains(n))
+                .unwrap_or(swoop_core::Config::default().connections),
+            batch_limit: get("batch_limit")
+                .and_then(|v| v.parse().ok())
+                .filter(|n| (1..=crate::batch::MAX_BATCH_LIMIT).contains(n))
+                .unwrap_or(crate::batch::DEFAULT_BATCH_LIMIT),
         }
     }
 
-    pub fn save(&self, store: &Store) {
-        let pairs: [(&str, String); 12] = [
+    pub fn save(&self, store: &Store) -> swoop_core::Result<()> {
+        let pairs = [
             ("theme", self.theme.as_str().into()),
             ("default_dir", self.default_dir.display().to_string()),
             ("progress_style", self.progress_style.as_str().into()),
@@ -69,15 +86,62 @@ impl AppSettings {
             ("bridge_mode", self.bridge_mode.as_str().into()),
             ("close_to_tray", flag_str(self.close_to_tray)),
             ("tray_speed", flag_str(self.tray_speed)),
+            ("notify_complete", flag_str(self.notifications.on_complete)),
+            ("notify_failure", flag_str(self.notifications.on_failure)),
+            ("notification_timing", self.notifications.timing.as_str().into()),
+            ("notification_sound", flag_str(self.notifications.sound)),
+            ("connections", self.connections.to_string()),
+            ("batch_limit", self.batch_limit.to_string()),
         ];
-        for (k, v) in pairs {
-            if let Err(e) = store.set_setting(k, &v) {
-                tracing::warn!(key = k, "保存设置失败: {e}");
-            }
-        }
+        store.set_settings(&pairs)
     }
 }
 
 fn flag_str(b: bool) -> String {
     if b { "1" } else { "0" }.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notifications::{NotificationSettings, NotificationTiming};
+
+    #[test]
+    fn old_settings_receive_notification_and_connection_defaults() {
+        let store = Store::in_memory().unwrap();
+        let settings = AppSettings::load(&store, PathBuf::from("downloads"));
+        assert_eq!(settings.notifications, NotificationSettings::default());
+        assert_eq!(settings.connections, 8);
+    }
+
+    #[test]
+    fn notification_preferences_and_connections_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.db");
+        let store = Store::open(&path).unwrap();
+        let mut settings = AppSettings::load(&store, dir.path().into());
+        settings.notifications.on_complete = false;
+        settings.notifications.on_failure = true;
+        settings.notifications.timing = NotificationTiming::Always;
+        settings.notifications.sound = true;
+        settings.connections = 3;
+        settings.save(&store).unwrap();
+        drop(store);
+        let reopened = Store::open(&path).unwrap();
+        let restored = AppSettings::load(&reopened, PathBuf::from("unused"));
+        assert_eq!(restored.notifications, settings.notifications);
+        assert_eq!(restored.connections, 3);
+    }
+
+    #[test]
+    fn invalid_connection_counts_and_notification_timing_have_safe_defaults() {
+        let store = Store::in_memory().unwrap();
+        store.set_setting("notification_timing", "unknown").unwrap();
+        for value in ["0", "33", "-1", "broken", "999999999999999999999999"] {
+            store.set_setting("connections", value).unwrap();
+            let settings = AppSettings::load(&store, PathBuf::from("downloads"));
+            assert_eq!(settings.connections, 8);
+            assert_eq!(settings.notifications.timing, NotificationTiming::Background);
+        }
+    }
 }

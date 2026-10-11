@@ -21,7 +21,32 @@ impl SwoopApp {
                     ui.label(icon_text(egui_phosphor::regular::ARROW_DOWN, ICON_SM, p.accent));
                     ui.label(RichText::new(format::speed(speed)).size(13.0).strong().color(p.text));
                     ui.add_space(4.0);
-                    ui.label(RichText::new(format!("{active} 个任务进行中")).size(12.5).color(p.text_muted));
+                    ui.label(RichText::new(swoop_i18n::trf!("{active} 个任务进行中")).size(12.5).color(p.text_muted));
+                    if self.completion.busy() || self.completion.failed {
+                        let label = if self.completion.failed {
+                            swoop_i18n::tr!("完成动作异常")
+                        } else {
+                            swoop_i18n::tr!("完成动作处理中")
+                        };
+                        if ui.small_button(label).clicked() {
+                            self.completion_editor =
+                                Some(super::completion::CompletionEditor::new(&self.completion.settings));
+                        }
+                    }
+                    let quota = self.engine.quota();
+                    if quota.policy.max_bytes > 0 || quota.error.is_some() {
+                        let text = if quota.error.is_some() {
+                            swoop_i18n::tr!("配额异常").to_string()
+                        } else if quota.waiting {
+                            swoop_i18n::tr!("等待配额重置").to_string()
+                        } else {
+                            swoop_i18n::trf!("配额余 {}", format::bytes(quota.remaining_bytes.unwrap_or(0)))
+                        };
+                        if ui.small_button(text).clicked() {
+                            self.quota_editor = Some(quota.policy);
+                            self.quota_error = None;
+                        }
+                    }
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
@@ -45,7 +70,7 @@ impl SwoopApp {
                                 self.save_settings();
                             }
                         }
-                        ui.label(RichText::new("限速").size(12.5).color(p.text_muted));
+                        ui.label(RichText::new(swoop_i18n::tr!("限速")).size(12.5).color(p.text_muted));
                         ui.label(icon_text(egui_phosphor::regular::GAUGE, ICON_SM, p.text_muted));
                     });
                 });

@@ -3,7 +3,9 @@
 use std::time::{Duration, Instant};
 
 use egui::epaint::Shadow;
-use egui::{Align, Align2, Area, Color32, CornerRadius, Frame, Id, Label, Layout, Margin, Order, RichText, Sense, Stroke, vec2};
+use egui::{
+    Align, Align2, Area, Color32, CornerRadius, Frame, Id, Label, Layout, Margin, Order, RichText, Sense, Stroke, vec2,
+};
 use swoop_core::AddOptions;
 
 use super::{ghost_button, primary_button};
@@ -54,12 +56,16 @@ impl Toasts {
                     list.push(u);
                 }
             }
-            t.title = format!("检测到 {} 个链接", list.len());
+            t.title = swoop_i18n::trf!("检测到 {} 个链接", list.len());
             t.body = list.last().cloned().unwrap_or_default();
             t.created = Instant::now();
             return;
         }
-        let title = if urls.len() == 1 { "检测到链接".to_string() } else { format!("检测到 {} 个链接", urls.len()) };
+        let title = if urls.len() == 1 {
+            swoop_i18n::tr!("检测到链接").to_string()
+        } else {
+            swoop_i18n::trf!("检测到 {} 个链接", urls.len())
+        };
         let body = urls[0].clone();
         self.push(ToastKind::Links(urls), title, body, Duration::from_secs(12));
     }
@@ -95,10 +101,9 @@ impl SwoopApp {
         let mut hovered: Vec<u64> = Vec::new();
         let width = 360.0;
 
-        Area::new(Id::new("toasts"))
-            .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -48.0))
-            .order(Order::Foreground)
-            .show(ctx, |ui| {
+        Area::new(Id::new("toasts")).anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -48.0)).order(Order::Foreground).show(
+            ctx,
+            |ui| {
                 ui.set_width(width);
                 ui.spacing_mut().item_spacing.y = 8.0;
                 for t in &self.toasts.items {
@@ -115,7 +120,12 @@ impl SwoopApp {
                                 .stroke(Stroke::new(1.0, p.border))
                                 .corner_radius(CornerRadius::same(R_CARD))
                                 .inner_margin(Margin::same(14))
-                                .shadow(Shadow { offset: [0, 8], blur: 24, spread: 0, color: Color32::from_black_alpha(90) });
+                                .shadow(Shadow {
+                                    offset: [0, 8],
+                                    blur: 24,
+                                    spread: 0,
+                                    color: Color32::from_black_alpha(90),
+                                });
                             let resp = frame.show(ui, |ui| {
                                 ui.set_width(width - 28.0);
                                 ui.horizontal(|ui| {
@@ -128,21 +138,33 @@ impl SwoopApp {
                                     let (rect, _) = ui.allocate_exact_size(vec2(32.0, 32.0), Sense::hover());
                                     let painter = ui.painter();
                                     painter.rect_filled(rect, CornerRadius::same(8), p.soft(color));
-                                    painter.text(rect.center(), Align2::CENTER_CENTER, icon, fonts::icon_fill(16.0), color);
+                                    painter.text(
+                                        rect.center(),
+                                        Align2::CENTER_CENTER,
+                                        icon,
+                                        fonts::icon_fill(16.0),
+                                        color,
+                                    );
 
                                     ui.vertical(|ui| {
                                         ui.spacing_mut().item_spacing.y = 2.0;
-                                        ui.add(Label::new(RichText::new(&t.title).size(13.5).strong().color(p.text)).truncate());
-                                        ui.add(Label::new(RichText::new(&t.body).size(12.0).color(p.text_muted)).truncate());
+                                        ui.add(
+                                            Label::new(RichText::new(&t.title).size(13.5).strong().color(p.text))
+                                                .truncate(),
+                                        );
+                                        ui.add(
+                                            Label::new(RichText::new(&t.body).size(12.0).color(p.text_muted))
+                                                .truncate(),
+                                        );
                                     });
                                 });
                                 if let ToastKind::Links(urls) = &t.kind {
                                     ui.add_space(10.0);
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        if primary_button(ui, &p, "下载").clicked() {
+                                        if primary_button(ui, &p, swoop_i18n::tr!("下载")).clicked() {
                                             actions.push(Action::Download(t.id, urls.clone()));
                                         }
-                                        if ghost_button(ui, &p, "忽略").clicked() {
+                                        if ghost_button(ui, &p, swoop_i18n::tr!("忽略")).clicked() {
                                             actions.push(Action::Close(t.id));
                                         }
                                     });
@@ -154,7 +176,8 @@ impl SwoopApp {
                         });
                     });
                 }
-            });
+            },
+        );
 
         // 悬停时暂停倒计时
         for t in &mut self.toasts.items {
@@ -172,7 +195,9 @@ impl SwoopApp {
             }
         }
         // 淡出完成后移除
-        self.toasts.items.retain(|t| !(t.closing && ctx.animate_bool_with_time(Id::new(("toast", t.id)), false, super::anim_secs(0.18)) <= 0.001));
+        self.toasts.items.retain(|t| {
+            !(t.closing && ctx.animate_bool_with_time(Id::new(("toast", t.id)), false, super::anim_secs(0.18)) <= 0.001)
+        });
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 
@@ -186,12 +211,17 @@ impl SwoopApp {
     pub fn add_urls(&mut self, urls: Vec<String>) {
         let mut failed = Vec::new();
         for url in urls {
-            if let Err(e) = self.engine.add(AddOptions { url: url.clone(), dir: self.default_dir.clone(), file_name: None, headers: Vec::new() }) {
+            if let Err(e) = self.engine.add(AddOptions {
+                url: url.clone(),
+                dir: self.default_dir.clone(),
+                file_name: None,
+                headers: Vec::new(),
+            }) {
                 failed.push(format!("{url}: {e}"));
             }
         }
         if !failed.is_empty() {
-            self.toasts.push_error("部分链接未能添加", failed.join("\n"));
+            self.toasts.push_error(swoop_i18n::tr!("部分链接未能添加"), failed.join("\n"));
         }
     }
 }

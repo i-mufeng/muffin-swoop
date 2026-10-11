@@ -1,16 +1,21 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/app"]
+members = ["crates/core", "crates/app", "crates/media", "crates/grabber", "crates/ftp", "crates/updater", "crates/i18n", "crates/i18n-macros"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.95"
 license = "MIT"
 authors = ["mufeng"]
 
 [workspace.dependencies]
 swoop-core = { path = "crates/core" }
+swoop-media = { path = "crates/media" }
+swoop-grabber = { path = "crates/grabber" }
+swoop-ftp = { path = "crates/ftp" }
+swoop-updater = { path = "crates/updater" }
+swoop-i18n = { path = "crates/i18n" }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync"] }
 tokio-util = { version = "0.7" }

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swoop · A 折光</title><link rel="icon" href="swoop-app.svg">
+  <style>
+    :root{color-scheme:light;--bg:#f5f6fa;--surface:#fff;--ink:#171b25;--muted:#747d90;--line:#e6e9f0;--accent:#4a6cf2}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;-webkit-font-smoothing:antialiased}
+    body.dark{color-scheme:dark;--bg:#0b0d12;--surface:#161a23;--ink:#eef0f6;--muted:#8d97ad;--line:#262d3b;--accent:#91a8ff}
+    a{color:inherit;text-decoration:none}button{font:inherit;color:inherit;cursor:pointer}button,a{outline-offset:5px}button:focus-visible,a:focus-visible{outline:2px solid var(--accent)}
+    main{max-width:1140px;margin:auto;padding:38px 40px 30px}header{display:flex;align-items:center;justify-content:space-between;gap:16px}
+    .brand{display:flex;align-items:center;gap:10px;font-size:17px;font-weight:650}.brand img{width:30px;height:30px}.actions{display:flex;align-items:center;gap:12px}
+    .toggle{width:38px;height:38px;border:1px solid var(--line);background:var(--surface);border-radius:50%;display:grid;place-items:center}.toggle svg{width:18px;height:18px}
+    .download{font-size:13px;font-weight:550;border:1px solid var(--line);border-radius:10px;padding:11px 16px;background:var(--surface)}
+    .hero{margin:42px 0 24px;min-height:375px;border:1px solid var(--line);border-radius:24px;background:var(--surface);display:grid;grid-template-columns:1.05fr 1fr;align-items:center;padding:30px 55px;gap:34px}
+    .symbol{display:grid;place-items:center;border-right:1px solid var(--line)}.symbol img{width:min(100%,276px);height:auto}.eyebrow{display:flex;align-items:center;gap:12px;font-size:12px;letter-spacing:.06em;color:var(--muted)}
+    .selected{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:20px;padding:5px 9px;font-size:10px;letter-spacing:0}.selected svg{width:12px;height:12px}
+    h1{font-size:54px;font-weight:650;letter-spacing:-2.5px;line-height:1.1;margin:22px 0 14px}p{font-size:14px;color:var(--muted);line-height:1.8;margin:0}
+    .swatches{display:flex;gap:18px;margin-top:27px}.swatch{font-size:11px;display:flex;gap:7px;align-items:center;color:var(--muted);font-variant-numeric:tabular-nums}.swatch i{width:10px;height:10px;border-radius:50%}
+    .section-head{display:flex;align-items:center;justify-content:space-between;margin:32px 0 16px}h2{font-size:14px;font-weight:600;margin:0}.note{color:var(--muted);font-size:11px}
+    .variants{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}.sample{height:190px;display:flex;align-items:center;justify-content:center;gap:18px}.sample>img{width:115px;height:115px}.sizes img{object-fit:contain}.label{display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--line);padding:16px 18px;font-size:12px}.label a{color:var(--accent);font-size:11px}.mono-dark{display:none}.dark .mono-dark{display:block}.dark .mono-light{display:none}
+    footer{display:flex;justify-content:space-between;gap:16px;padding:26px 2px 0;color:var(--muted);font-size:11px}
+    @media(max-width:700px){main{padding:24px 18px}.hero{grid-template-columns:1fr;gap:20px;padding:25px;margin-top:28px}.symbol{border-right:0;border-bottom:1px solid var(--line);padding-bottom:16px}.symbol img{width:200px}.hero-copy{padding:8px 5px 16px}h1{font-size:44px;margin:16px 0}.variants{grid-template-columns:1fr}.sample{height:170px}.section-head .note{max-width:120px;text-align:right}.download{padding:10px 12px}footer{flex-wrap:wrap}}
+  </style>
+</head>
+<body>
+  <main>
+    <header><div class="brand"><img src="swoop-app.svg" alt="">Swoop</div><div class="actions"><button class="toggle" type="button" aria-label="切换深色背景" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.3 14a8.5 8.5 0 0 1-10.3-10.3A8.5 8.5 0 1 0 20.3 14Z"/></svg></button><a class="download" href="swoop-a-assets.zip" download>下载资源包 ↗</a></div></header>
+    <section class="hero" aria-labelledby="title">
+      <div class="symbol"><img src="swoop.svg" alt="蓝紫双色的 S 形折光标志"></div>
+      <div class="hero-copy"><div class="eyebrow">A / 折光 <span class="selected"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m3 8 3 3 7-7"/></svg> 已选定</span></div><h1 id="title">Swoop</h1><p>一个折面，旋转 180°。<br>清晰的轮廓，轻盈的速度感。</p><div class="swatches"><span class="swatch"><i style="background:#176fff"></i>#176FFF</span><span class="swatch"><i style="background:#7c3cf4"></i>#7C3CF4</span></div></div>
+    </section>
+    <div class="section-head"><h2>同一个标志，不同的落点</h2><span class="note">透明底 · 纯矢量 · 可缩放</span></div>
+    <div class="variants">
+      <article class="card"><div class="sample"><img src="swoop.svg" alt="双色标志"></div><div class="label"><span>双色主标</span><a href="swoop.svg" download>下载 SVG ↗</a></div></article>
+      <article class="card"><div class="sample"><img class="mono-light" src="swoop-mono.svg" alt="深色单色标志"><img class="mono-dark" src="swoop-white.svg" alt="白色单色标志"></div><div class="label"><span>单色标志</span><a id="mono-download" href="swoop-mono.svg" download>下载 SVG ↗</a></div></article>
+      <article class="card"><div class="sample sizes"><img src="png/swoop-app-16.png" alt="16 像素应用图标" style="width:16px;height:16px"><img src="png/swoop-app-32.png" alt="32 像素应用图标" style="width:32px;height:32px"><img src="png/swoop-app-128.png" alt="应用图标" style="width:80px;height:80px"></div><div class="label"><span>应用图标</span><a href="swoop-app.svg" download>下载 SVG ↗</a></div></article>
+    </div>
+    <footer><span>SVG / PNG / ICO / ICNS</span><span>Swoop · Visual identity / 01</span></footer>
+  </main>
+  <script>
+    document.querySelector('.toggle').addEventListener('click', function () {
+      const dark = document.body.classList.toggle('dark');
+      this.setAttribute('aria-pressed', String(dark));
+      this.setAttribute('aria-label', dark ? '切换浅色背景' : '切换深色背景');
+      document.querySelector('#mono-download').href = dark ? 'swoop-white.svg' : 'swoop-mono.svg';
+    });
+  </script>
+</body>
+</html>

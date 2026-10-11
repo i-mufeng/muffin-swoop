@@ -14,6 +14,7 @@ pub enum TaskStatus {
     Probing,
     Downloading,
     Paused,
+    FileConflict,
     Completed,
     Failed(String),
 }
@@ -54,9 +55,7 @@ pub struct TaskSnapshot {
 
 impl TaskSnapshot {
     pub fn progress(&self) -> Option<f32> {
-        self.total
-            .filter(|t| *t > 0)
-            .map(|t| (self.downloaded as f64 / t as f64).clamp(0.0, 1.0) as f32)
+        self.total.filter(|t| *t > 0).map(|t| (self.downloaded as f64 / t as f64).clamp(0.0, 1.0) as f32)
     }
 
     /// 预计剩余秒数
@@ -67,4 +66,12 @@ impl TaskSnapshot {
         }
         Some(total.saturating_sub(self.downloaded) as f64 / self.speed_bps)
     }
+}
+
+/// 任务级可编辑属性；0 表示不额外限制该任务的下载速率。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TaskProperties {
+    pub description: String,
+    pub speed_limit: u64,
 }

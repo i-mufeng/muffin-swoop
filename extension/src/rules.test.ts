@@ -25,8 +25,8 @@ describe("shouldIntercept", () => {
     expect(shouldIntercept(item(), settings({ enabled: false })).take).toBe(false);
   });
 
-  it("blob/data/file 与无效链接放行", () => {
-    for (const url of ["blob:https://a.com/uuid", "data:text/plain,hi", "file:///tmp/a", "ftp://a.com/x", "not a url"]) {
+  it("blob/data/file、FTP(S) 与无效链接不自动接管", () => {
+    for (const url of ["blob:https://a.com/uuid", "data:text/plain,hi", "file:///tmp/a", "ftp://a.com/x", "ftps://a.com/x", "not a url"]) {
       expect(shouldIntercept(item({ url }), settings()).take, url).toBe(false);
     }
   });
@@ -87,6 +87,7 @@ describe("helpers", () => {
     expect(normalizeSettings({})).toEqual(DEFAULT_SETTINGS);
     expect(normalizeSettings({ port: 80, minSizeMB: -3, excludedDomains: "x", enabled: "yes" })).toEqual(DEFAULT_SETTINGS);
     expect(normalizeSettings({ port: 6000, minSizeMB: 2, excludedDomains: ["a.com", 3, ""], enabled: false })).toEqual({
+      ...DEFAULT_SETTINGS,
       enabled: false,
       port: 6000,
       minSizeMB: 2,

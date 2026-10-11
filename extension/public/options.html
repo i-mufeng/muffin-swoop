@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <title>Swoop 扩展设置</title>
+  <title data-i18n="Swoop 扩展设置">Swoop 扩展设置</title>
   <link rel="stylesheet" href="ui.css">
   <style>
     body { padding: 32px 16px; }
@@ -20,37 +20,57 @@
   <main>
     <div class="row">
       <img src="icons/icon-48.png" width="28" height="28" alt="">
-      <h1>Swoop 扩展设置</h1>
+      <h1 data-i18n="Swoop 扩展设置">Swoop 扩展设置</h1>
     </div>
 
     <div class="card field">
-      <label for="port">端口</label>
+      <label for="language" data-i18n="语言">语言</label>
+      <select id="language"><option value="zh-CN">简体中文</option><option value="en-US">English</option></select>
+    </div>
+
+    <div class="card field">
+      <label for="port" data-i18n="端口">端口</label>
       <div class="row">
         <input id="port" type="number" min="1024" max="65535">
-        <button id="test">测试连接</button>
+        <button id="test" data-i18n="测试连接">测试连接</button>
         <span id="test-result" class="muted hint"></span>
       </div>
-      <div class="muted hint">需与 Swoop「设置 → 浏览器集成」里的端口一致，默认 51230。</div>
+      <div class="muted hint" data-i18n="需与 Swoop「设置 → 浏览器集成」里的端口一致，默认 51230。">需与 Swoop「设置 → 浏览器集成」里的端口一致，默认 51230。</div>
     </div>
 
     <div class="card field">
-      <label for="excluded">不接管的域名</label>
+      <label for="excluded" data-i18n="不接管的域名">不接管的域名</label>
       <textarea id="excluded" placeholder="example.com&#10;drive.google.com" spellcheck="false"></textarea>
-      <div class="muted hint">每行一个，自动包含子域名。这些网站的下载始终交给浏览器。</div>
+      <div class="muted hint" data-i18n="每行一个，自动包含子域名。这些网站的下载始终交给浏览器。">每行一个，自动包含子域名。这些网站的下载始终交给浏览器。</div>
     </div>
 
     <div class="card field">
-      <label for="min-size">大小阈值（MB）</label>
+      <label for="min-size" data-i18n="大小阈值（MB）">大小阈值（MB）</label>
       <div class="row">
         <input id="min-size" type="number" min="0" step="0.5">
-        <span class="muted hint">小于此大小的下载交给浏览器；0 表示不限。大小未知的下载照常接管。</span>
+        <span class="muted hint" data-i18n="小于此大小的下载交给浏览器；0 表示不限。大小未知的下载照常接管。">小于此大小的下载交给浏览器；0 表示不限。大小未知的下载照常接管。</span>
       </div>
+    </div>
+
+    <div class="card field">
+      <label for="batch-concurrency" data-i18n="本页链接 · 同时提交数">本页链接 · 同时提交数</label>
+      <input id="batch-concurrency" type="number" min="1" max="6" step="1" required>
+      <label for="max-page-links" data-i18n="每页链接上限">每页链接上限</label>
+      <input id="max-page-links" type="number" min="100" max="10000" step="1" required>
+    </div>
+
+    <div class="card field">
+      <label><input id="detect-media" type="checkbox"> <span data-i18n="检测网页音视频">检测网页音视频</span></label>
+      <label for="max-media-candidates" data-i18n="每页媒体上限">每页媒体上限</label>
+      <input id="max-media-candidates" type="number" min="10" max="500" step="1" required>
+      <label for="media-retention" data-i18n="保留时间（分钟）">保留时间（分钟）</label>
+      <input id="media-retention" type="number" min="1" max="1440" step="1" required>
     </div>
 
     <div class="row">
       <span id="msg" class="hint"></span>
       <span class="spacer"></span>
-      <button id="save" class="primary">保存</button>
+      <button id="save" class="primary" data-i18n="保存">保存</button>
     </div>
   </main>
   <script src="options.js"></script>

@@ -21,6 +21,7 @@ const CHART_H: f32 = 96.0;
 const LABEL_W: f32 = 64.0;
 
 enum DetailAction {
+    Edit(TaskId),
     Close,
     CopyLink(String),
     Reveal(TaskId),
@@ -63,6 +64,7 @@ impl SwoopApp {
             });
 
         match action {
+            Some(DetailAction::Edit(id)) => self.edit_task(id),
             Some(DetailAction::Close) => self.selected = None,
             Some(DetailAction::CopyLink(url)) => self.copy_link(ui.ctx(), url),
             Some(DetailAction::Reveal(id)) => {
@@ -85,19 +87,23 @@ fn detail_contents(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) 
         file_tile(ui, p, FileKind::from_name(&t.file_name), 40.0);
         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if icon_button(ui, p, i::X, "关闭（Esc）").clicked() {
+            if icon_button(ui, p, i::X, swoop_i18n::tr!("关闭（Esc）")).clicked() {
                 action = Some(DetailAction::Close);
             }
-            if !t.file_name.is_empty() && icon_button(ui, p, i::FOLDER_OPEN, "在访达中显示").clicked() {
+            if !t.file_name.is_empty() && icon_button(ui, p, i::FOLDER_OPEN, swoop_i18n::tr!("在访达中显示")).clicked()
+            {
                 action = Some(DetailAction::Reveal(t.id));
             }
-            if icon_button(ui, p, i::LINK, "复制链接").clicked() {
+            if icon_button(ui, p, i::LINK, swoop_i18n::tr!("复制链接")).clicked() {
                 action = Some(DetailAction::CopyLink(t.url.clone()));
+            }
+            if icon_button(ui, p, i::PENCIL_SIMPLE, swoop_i18n::tr!("下载属性")).clicked() {
+                action = Some(DetailAction::Edit(t.id));
             }
         });
     });
     ui.add_space(10.0);
-    let name = if t.file_name.is_empty() { "正在获取文件信息…" } else { &t.file_name };
+    let name = if t.file_name.is_empty() { swoop_i18n::tr!("正在获取文件信息…") } else { &t.file_name };
     wrapped_text(ui, name, FontId::proportional(15.0), p.text, 3);
     ui.add_space(6.0);
     status_pill(ui, p, &t.status);
@@ -109,42 +115,62 @@ fn detail_contents(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) 
     // 基本信息
     let muted = |s: &str| RichText::new(s).color(p.text_muted);
     let text = |s: String| RichText::new(s).color(p.text);
-    info_row(ui, p, "大小", t.total.map(format::bytes).map_or_else(|| muted("未知"), text), None);
+    info_row(
+        ui,
+        p,
+        swoop_i18n::tr!("大小"),
+        t.total.map(format::bytes).map_or_else(|| muted(swoop_i18n::tr!("未知")), text),
+        None,
+    );
     let done = match t.progress() {
         Some(pr) => format!("{}（{:.1}%）", format::bytes(t.downloaded), pr * 100.0),
         None => format::bytes(t.downloaded),
     };
-    info_row(ui, p, "已下载", text(done), None);
+    info_row(ui, p, swoop_i18n::tr!("已下载"), text(done), None);
     if t.status.is_active() {
         let eta = t.eta_secs().map(format::duration);
-        info_row(ui, p, "剩余时间", eta.map_or_else(|| muted("—"), text), None);
+        info_row(ui, p, swoop_i18n::tr!("剩余时间"), eta.map_or_else(|| muted("—"), text), None);
     }
     if t.status == TaskStatus::Downloading {
-        info_row(ui, p, "连接", text(format!("{} 个活动", t.active_connections)), None);
+        info_row(ui, p, swoop_i18n::tr!("连接"), text(swoop_i18n::trf!("{} 个活动", t.active_connections)), None);
     }
     // 探测前不知道是否支持 Range
     let resumable = match (t.segments.is_empty(), t.resumable) {
         (true, _) => muted("—"),
-        (false, true) => RichText::new("支持").color(p.success),
-        (false, false) => muted("不支持（单连接）"),
+        (false, true) => RichText::new(swoop_i18n::tr!("支持")).color(p.success),
+        (false, false) => muted(swoop_i18n::tr!("不支持（单连接）")),
     };
-    info_row(ui, p, "断点续传", resumable, None);
+    info_row(ui, p, swoop_i18n::tr!("断点续传"), resumable, None);
     let dir = t.path.parent().map(format::tilde).unwrap_or_default();
-    if info_row(ui, p, "保存到", text(dir), Some("在访达中显示")).clicked() {
+    if info_row(ui, p, swoop_i18n::tr!("保存到"), text(dir), Some(swoop_i18n::tr!("在访达中显示"))).clicked() {
         action = Some(DetailAction::Reveal(t.id));
     }
-    if info_row(ui, p, "链接", RichText::new(&t.url).color(p.accent), Some("点击复制")).clicked() {
+    if info_row(
+        ui,
+        p,
+        swoop_i18n::tr!("链接"),
+        RichText::new(&t.url).color(p.accent),
+        Some(swoop_i18n::tr!("点击复制")),
+    )
+    .clicked()
+    {
         action = Some(DetailAction::CopyLink(t.url.clone()));
     }
-    info_row(ui, p, "创建于", text(format::ago(t.created_at)), None);
+    info_row(ui, p, swoop_i18n::tr!("创建于"), text(format::ago(t.created_at)), None);
     if let Some(at) = t.completed_at {
-        info_row(ui, p, "完成于", text(format::ago(at)), None);
+        info_row(ui, p, swoop_i18n::tr!("完成于"), text(format::ago(at)), None);
     }
     if let TaskStatus::Failed(reason) = &t.status {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
-            let (rect, _) = ui.allocate_exact_size(vec2(LABEL_W, 20.0), Sense::hover());
-            ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, "失败原因", FontId::proportional(12.5), p.text_muted);
+            let (rect, _) = ui.allocate_exact_size(vec2(info_label_width(ui), 20.0), Sense::hover());
+            ui.painter_at(rect).text(
+                rect.left_center(),
+                Align2::LEFT_CENTER,
+                swoop_i18n::tr!("失败原因"),
+                FontId::proportional(12.5),
+                p.text_muted,
+            );
             ui.add(Label::new(RichText::new(reason).size(12.5).color(p.danger)).wrap());
         });
     }
@@ -152,14 +178,14 @@ fn detail_contents(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) 
     // 区段：一行一段，动态分段后会比连接数多
     ui.add_space(14.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("区段").size(12.5).strong().color(p.text));
+        ui.label(RichText::new(swoop_i18n::tr!("区段")).size(12.5).strong().color(p.text));
         if !t.segments.is_empty() {
             pill(ui, &t.segments.len().to_string(), p.soft(p.text_muted), p.text_muted);
         }
     });
     ui.add_space(6.0);
     if t.segments.is_empty() {
-        ui.label(RichText::new("探测完成后显示").size(12.0).color(p.text_muted));
+        ui.label(RichText::new(swoop_i18n::tr!("探测完成后显示")).size(12.0).color(p.text_muted));
     } else {
         let color = status_color(p, &t.status);
         let active = t.status == TaskStatus::Downloading;
@@ -173,7 +199,12 @@ fn detail_contents(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) 
 /// 带行数上限的换行文本（超出用省略号）
 fn wrapped_text(ui: &mut Ui, text: &str, font: FontId, color: Color32, max_rows: usize) {
     let mut job = LayoutJob::single_section(text.to_owned(), TextFormat::simple(font, color));
-    job.wrap = TextWrapping { max_width: ui.available_width(), max_rows, break_anywhere: false, overflow_character: Some('…') };
+    job.wrap = TextWrapping {
+        max_width: ui.available_width(),
+        max_rows,
+        break_anywhere: false,
+        overflow_character: Some('…'),
+    };
     let galley = ui.painter().layout_job(job);
     let (rect, resp) = ui.allocate_exact_size(galley.size(), Sense::hover());
     let elided = galley.elided;
@@ -185,12 +216,13 @@ fn wrapped_text(ui: &mut Ui, text: &str, font: FontId, color: Color32, max_rows:
 
 fn status_pill(ui: &mut Ui, p: &Palette, status: &TaskStatus) {
     let (label, bg, fg) = match status {
-        TaskStatus::Queued => ("排队中", p.soft(p.text_muted), p.text_muted),
-        TaskStatus::Probing => ("连接中", p.accent_soft, p.accent),
-        TaskStatus::Downloading => ("下载中", p.accent_soft, p.accent),
-        TaskStatus::Paused => ("已暂停", p.soft(p.text_muted), p.text_muted),
-        TaskStatus::Completed => ("已完成", p.success_soft, p.success),
-        TaskStatus::Failed(_) => ("失败", p.danger_soft, p.danger),
+        TaskStatus::Queued => (swoop_i18n::tr!("排队中"), p.soft(p.text_muted), p.text_muted),
+        TaskStatus::Probing => (swoop_i18n::tr!("连接中"), p.accent_soft, p.accent),
+        TaskStatus::Downloading => (swoop_i18n::tr!("下载中"), p.accent_soft, p.accent),
+        TaskStatus::FileConflict => (swoop_i18n::tr!("等待确认"), p.soft(p.tint_amber), p.tint_amber),
+        TaskStatus::Paused => (swoop_i18n::tr!("已暂停"), p.soft(p.text_muted), p.text_muted),
+        TaskStatus::Completed => (swoop_i18n::tr!("已完成"), p.success_soft, p.success),
+        TaskStatus::Failed(_) => (swoop_i18n::tr!("失败"), p.danger_soft, p.danger),
     };
     pill(ui, label, bg, fg);
 }
@@ -199,8 +231,14 @@ fn status_pill(ui: &mut Ui, p: &Palette, status: &TaskStatus) {
 fn info_row(ui: &mut Ui, p: &Palette, label: &str, value: RichText, click_hint: Option<&str>) -> egui::Response {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let (rect, _) = ui.allocate_exact_size(vec2(LABEL_W, 20.0), Sense::hover());
-        ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, label, FontId::proportional(12.5), p.text_muted);
+        let (rect, _) = ui.allocate_exact_size(vec2(info_label_width(ui), 20.0), Sense::hover());
+        ui.painter_at(rect).text(
+            rect.left_center(),
+            Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(12.5),
+            p.text_muted,
+        );
         let mut l = Label::new(value.size(12.5)).truncate();
         if click_hint.is_some() {
             l = l.sense(Sense::click());
@@ -212,6 +250,23 @@ fn info_row(ui: &mut Ui, p: &Palette, label: &str, value: RichText, click_hint: 
         }
     })
     .inner
+}
+
+fn info_label_width(ui: &Ui) -> f32 {
+    [
+        swoop_i18n::tr!("断点续传"),
+        swoop_i18n::tr!("剩余时间"),
+        swoop_i18n::tr!("已下载"),
+        swoop_i18n::tr!("失败原因"),
+        swoop_i18n::tr!("连接"),
+        swoop_i18n::tr!("完成于"),
+    ]
+    .into_iter()
+    .map(|label| {
+        ui.painter().layout_no_wrap(label.into(), FontId::proportional(12.5), ui.visuals().text_color()).size().x + 10.0
+    })
+    .fold(LABEL_W, f32::max)
+    .min(ui.available_width() * 0.48)
 }
 
 // ───────────────────────── 速度曲线 ─────────────────────────
@@ -226,9 +281,13 @@ fn speed_card(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) {
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("当前速度").size(11.5).color(p.text_muted));
+                ui.label(RichText::new(swoop_i18n::tr!("当前速度")).size(11.5).color(p.text_muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(format!("最近 {} 分钟", SPEED_HISTORY_LEN / 60)).size(11.5).color(p.text_muted));
+                    ui.label(
+                        RichText::new(swoop_i18n::trf!("最近 {} 分钟", SPEED_HISTORY_LEN / 60))
+                            .size(11.5)
+                            .color(p.text_muted),
+                    );
                 });
             });
             let current = if t.status == TaskStatus::Downloading { format::speed(t.speed_bps) } else { "—".into() };
@@ -243,10 +302,10 @@ fn speed_card(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) {
                 let peak = history.iter().copied().fold(0.0, f64::max);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    ui.label(RichText::new("平均").size(11.5).color(p.text_muted));
+                    ui.label(RichText::new(swoop_i18n::tr!("平均")).size(11.5).color(p.text_muted));
                     ui.label(RichText::new(format::speed(avg)).size(11.5).color(p.text));
                     ui.add_space(10.0);
-                    ui.label(RichText::new("峰值").size(11.5).color(p.text_muted));
+                    ui.label(RichText::new(swoop_i18n::tr!("峰值")).size(11.5).color(p.text_muted));
                     ui.label(RichText::new(format::speed(peak)).size(11.5).color(p.text));
                 });
             }
@@ -283,7 +342,8 @@ fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Col
     painter.hline(rect.x_range(), rect.bottom(), base);
 
     if history.len() < 2 {
-        let hint = if active { "正在采样…" } else { "下载时显示速度曲线" };
+        let hint =
+            if active { swoop_i18n::tr!("正在采样…") } else { swoop_i18n::tr!("下载时显示速度曲线") };
         painter.text(rect.center(), Align2::CENTER_CENTER, hint, FontId::proportional(12.0), p.text_muted);
         return;
     }
@@ -300,7 +360,13 @@ fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Col
         let y = y_of(v);
         painter.extend(Shape::dashed_line(&[pos2(plot.left(), y), pos2(plot.right(), y)], base, 3.0, 3.0));
     }
-    painter.text(pos2(plot.left(), y_of(top) - 2.0), Align2::LEFT_BOTTOM, axis_label(top_n, unit), FontId::proportional(10.5), p.text_muted);
+    painter.text(
+        pos2(plot.left(), y_of(top) - 2.0),
+        Align2::LEFT_BOTTOM,
+        axis_label(top_n, unit),
+        FontId::proportional(10.5),
+        p.text_muted,
+    );
 
     // 最新的点贴右边，按每秒固定间距往左排；不满 2 分钟时左侧留空
     let step = plot.width() / (SPEED_HISTORY_LEN - 1) as f32;
@@ -338,7 +404,8 @@ fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Col
             let pt = pts[n - 1 - back];
             painter.vline(pt.x, plot.y_range(), Stroke::new(1.0, p.text_muted.gamma_multiply(0.5)));
             painter.circle_filled(pt, 3.5, color);
-            let when = if back == 0 { "最新".to_string() } else { format!("{back} 秒前") };
+            let when =
+                if back == 0 { swoop_i18n::tr!("最新").to_string() } else { swoop_i18n::trf!("{back} 秒前") };
             resp.on_hover_text_at_pointer(format!("{when} · {}", format::speed(history[n - 1 - back])));
         }
     }
@@ -353,7 +420,13 @@ fn segment_row(ui: &mut Ui, p: &Palette, idx: usize, seg: &SegmentSnapshot, colo
     }
     let painter = ui.painter();
     let small = FontId::proportional(11.5);
-    painter.text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, format!("#{}", idx + 1), small.clone(), p.text_muted);
+    painter.text(
+        pos2(rect.left(), rect.center().y),
+        Align2::LEFT_CENTER,
+        format!("#{}", idx + 1),
+        small.clone(),
+        p.text_muted,
+    );
 
     let known = seg.end != u64::MAX;
     let len = seg.end.saturating_sub(seg.start);
@@ -361,7 +434,10 @@ fn segment_row(ui: &mut Ui, p: &Palette, idx: usize, seg: &SegmentSnapshot, colo
     let right_text = if known { format!("{:.0}%", frac * 100.0) } else { format::bytes(seg.pos) };
     painter.text(pos2(rect.right(), rect.center().y), Align2::RIGHT_CENTER, &right_text, small, p.text_muted);
 
-    let bar = Rect::from_min_max(pos2(rect.left() + 30.0, rect.center().y - 2.0), pos2(rect.right() - 46.0, rect.center().y + 2.0));
+    let bar = Rect::from_min_max(
+        pos2(rect.left() + 30.0, rect.center().y - 2.0),
+        pos2(rect.right() - 46.0, rect.center().y + 2.0),
+    );
     let r = CornerRadius::same(2);
     painter.rect_filled(bar, r, p.track);
     let fill_w = if known { bar.width() * frac } else { bar.width() };
@@ -370,21 +446,25 @@ fn segment_row(ui: &mut Ui, p: &Palette, idx: usize, seg: &SegmentSnapshot, colo
         painter.rect_filled(Rect::from_min_size(bar.min, vec2(fill_w, bar.height())), r, c);
     }
     if active && seg.state == SegmentState::Active && known && frac < 1.0 {
-        painter.circle_filled(pos2(bar.left() + fill_w, bar.center().y), 3.0, color.lerp_to_gamma(Color32::WHITE, 0.45));
+        painter.circle_filled(
+            pos2(bar.left() + fill_w, bar.center().y),
+            3.0,
+            color.lerp_to_gamma(Color32::WHITE, 0.45),
+        );
     }
 
     if resp.hovered() {
         let range = if known {
             format!("{} – {}", format::bytes(seg.start), format::bytes(seg.end))
         } else {
-            format!("{} 起，大小未知", format::bytes(seg.start))
+            swoop_i18n::trf!("{} 起，大小未知", format::bytes(seg.start))
         };
         let state = match seg.state {
-            SegmentState::Pending => "等待",
-            SegmentState::Active => "下载中",
-            SegmentState::Done => "完成",
+            SegmentState::Pending => swoop_i18n::tr!("等待"),
+            SegmentState::Active => swoop_i18n::tr!("下载中"),
+            SegmentState::Done => swoop_i18n::tr!("完成"),
         };
-        resp.on_hover_text(format!("{range}\n已下 {}  ·  {state}", format::bytes(seg.pos)));
+        resp.on_hover_text(swoop_i18n::trf!("{range}\n已下 {}  ·  {state}", format::bytes(seg.pos)));
     }
 }
 

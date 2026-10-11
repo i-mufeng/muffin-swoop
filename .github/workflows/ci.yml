@@ -1,0 +1,122 @@
+name: Desktop validation
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      upload_artifacts:
+        description: Upload unsigned desktop packages and extension bundles to this workflow run
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Test and package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: 1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust and Clippy
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Configure native Windows static CRT
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = & rustc -vV
+          if ($LASTEXITCODE -ne 0) { throw "rustc failed: $LASTEXITCODE" }
+          $target = ($version | Where-Object { $_ -like 'host: *' }) -replace '^host: ', ''
+          "CARGO_BUILD_TARGET=$target" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          'RUSTFLAGS=-C target-feature=+crt-static' | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Install Python for real FTP fixtures
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Install FTP fixture dependencies
+        run: python -m pip install -r crates/ftp/tests/requirements.txt
+      - name: Test Rust workspace
+        env:
+          SWOOP_FTP_TEST_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: cargo test --workspace --all-targets --locked
+      - name: Check Rust documentation examples
+        run: cargo test --workspace --doc --locked
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build Rust workspace
+        run: cargo build --workspace --locked --release
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+      - name: Verify CLI stdout and exit codes without a GUI
+        run: >-
+          node -e 'const cp=require("node:child_process"),fs=require("node:fs"),os=require("node:os"),path=require("node:path");
+          const exe=path.resolve("target",process.env.CARGO_BUILD_TARGET||"","release",process.platform==="win32"?"swoop-cli.exe":"swoop-cli");
+          const dir=path.join(fs.mkdtempSync(path.join(os.tmpdir(),"swoop-cli-")),"uncreated");
+          for(const [args,code] of [[["--json","--version"],0],[["pause","0"],2],[["--data-dir",dir,"status"],3]]){
+          const r=cp.spawnSync(exe,args,{encoding:"utf8"});if(r.status!==code)throw new Error(JSON.stringify({args,status:r.status,stdout:r.stdout,stderr:r.stderr,error:r.error}));JSON.parse(r.stdout);}
+          if(fs.existsSync(dir))throw new Error("CLI created a data directory without an instance");console.log("CLI stdout and exit codes passed");'
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Typecheck extension
+        working-directory: extension
+        run: npm run typecheck
+      - name: Build extension
+        working-directory: extension
+        run: npm run build
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: bash scripts/package-macos.sh --profile release --skip-build
+      - name: Package Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Profile release
+      - name: Verify packaged Windows icons match A
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -Path target/packages -Directory -Filter 'Swoop-*-windows-*-release')
+          if ($packages.Count -ne 1) { throw 'Expected exactly one packaged Windows release.' }
+          $gui = Join-Path $packages[0].FullName 'swoop.exe'
+          $cli = Join-Path $packages[0].FullName 'swoop-cli.exe'
+          python scripts/verify-windows-icon.py $gui $cli
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged executable icons do not match A.' }
+      - name: Upload explicitly requested validation artifacts
+        if: github.event_name == 'workflow_dispatch' && inputs.upload_artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Swoop-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: |
+            target/packages/*.zip
+            target/packages/*.sha256
+            extension/dist/
+            extension/dist-firefox/
+          if-no-files-found: error
+          retention-days: 7

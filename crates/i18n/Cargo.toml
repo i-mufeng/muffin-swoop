@@ -1,0 +1,10 @@
+[package]
+name = "swoop-i18n"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+swoop-i18n-macros = { path = "../i18n-macros" }
+serde = { workspace = true }

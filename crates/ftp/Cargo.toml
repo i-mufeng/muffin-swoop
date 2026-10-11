@@ -1,0 +1,22 @@
+[package]
+name = "swoop-ftp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Cancellable FTP/FTPS transport with bounded delivery and verified TLS"
+
+[dependencies]
+bytes = "1"
+curl = { version = "0.4", features = ["static-curl", "static-ssl", "apple-sectrust", "protocol-ftp"] }
+curl-sys = { version = "0.4", features = ["static-curl", "protocol-ftp"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
+url = "2"
+percent-encoding = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tempfile = "3"
+serde_json = "1"

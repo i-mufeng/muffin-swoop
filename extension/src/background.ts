@@ -1,26 +1,39 @@
+import { browser, isFirefox } from "./browser";
 // Service worker：接管浏览器下载、右键菜单、心跳与徽标。
 //
 // 交接协议（docs/browser-extension.md §3）：先暂停浏览器下载，Swoop 确认接手（200）才取消；
 // 其它任何情况都恢复浏览器下载，用户无感。
 
-import { ping, sendTask, type HandoffResult, type TaskBody } from "./api";
+import { ping, sendTask, supportsMedia, type HandoffResult, type TaskBody } from "./api";
 import { badgeFor } from "./badge";
 import { cookieHeader } from "./cookies";
-import { knownSize, shouldIntercept } from "./rules";
+import { knownSize, shouldIntercept, manualDownloadBlock } from "./rules";
+import { loadPageBatch, openPageLinks, savePageResult } from "./page-tasks";
+import { contextHeaders, safeReferrer } from "./request-context";
 import { loadSettings, loadState, saveState, type LastResult } from "./settings";
+import { MediaCatalog } from "./media-catalog";
+import { translate } from "./i18n";
 
 const HEARTBEAT_ALARM = "swoop-heartbeat";
 const MENU_ID = "swoop-download";
+const PAGE_MENU_ID = "swoop-page-links";
+const mediaCatalog = new MediaCatalog();
+
+browser.webRequest.onHeadersReceived.addListener((response) => {
+  void mediaCatalog.capture(response);
+}, { urls: ["http://*/*", "https://*/*"] }, ["responseHeaders"]);
+browser.tabs.onRemoved.addListener((tabId) => { void mediaCatalog.clearTab(tabId); });
+browser.tabs.onUpdated.addListener((tabId, change) => { if (change.url) void mediaCatalog.clearTab(tabId); });
 
 // ---- 心跳与徽标 ----
 
 async function refreshBadge(): Promise<void> {
   const [settings, state] = await Promise.all([loadSettings(), loadState()]);
-  const badge = badgeFor(state, settings.enabled);
+  const badge = badgeFor(state, settings.enabled, settings.language);
   await Promise.all([
-    chrome.action.setBadgeText({ text: badge.text }),
-    chrome.action.setBadgeBackgroundColor({ color: badge.color }),
-    chrome.action.setTitle({ title: badge.title }),
+    browser.action.setBadgeText({ text: badge.text }),
+    browser.action.setBadgeBackgroundColor({ color: badge.color }),
+    browser.action.setTitle({ title: badge.title }),
   ]);
 }
 
@@ -29,37 +42,64 @@ async function heartbeat(): Promise<boolean> {
   const connected = settings.enabled && (await ping(settings.port));
   await saveState({ connected });
   await refreshBadge();
+  await mediaCatalog.cleanup().catch(() => {});
   return connected;
 }
 
+// 连续设置事件必须串行更新，避免 removeAll 与另一轮 create 交错。
+let menuRefresh: Promise<void> = Promise.resolve();
+function refreshMenus(): Promise<void> {
+  menuRefresh = menuRefresh.catch(() => {}).then(async () => {
+    const { language } = await loadSettings();
+    await browser.contextMenus.removeAll();
+    await browser.contextMenus.create({ id: MENU_ID, title: translate("用 Swoop 下载", language), contexts: ["link", "image", "video", "audio"] });
+    await browser.contextMenus.create({ id: PAGE_MENU_ID, title: translate("用 Swoop 下载本页链接…", language), contexts: ["page", "link", "image", "video", "audio"] });
+  });
+  return menuRefresh;
+}
 function setup(): void {
   // MV3 的 service worker 空闲会被回收，setInterval 不可靠；alarms 最短 30 秒
-  void chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 0.5 });
+  void browser.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: isFirefox ? 1 : 0.5 });
   void heartbeat();
+  void refreshMenus().catch((error: unknown) => console.warn("Swoop context menu refresh failed", error));
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: MENU_ID,
-      title: "用 Swoop 下载",
-      contexts: ["link", "image", "video", "audio"],
-    });
-  });
-  setup();
-});
-chrome.runtime.onStartup.addListener(setup);
-chrome.alarms.onAlarm.addListener((alarm) => {
+browser.runtime.onInstalled.addListener(setup);
+browser.runtime.onStartup.addListener(setup);
+browser.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === HEARTBEAT_ALARM) void heartbeat();
 });
 // 设置页改了端口/开关：立刻重新探测
-chrome.storage.onChanged.addListener((_changes, area) => {
+browser.storage.onChanged.addListener((changes, area) => {
   if (area === "sync") void heartbeat();
+  if (area === "sync" && changes.language) {
+    void refreshMenus().catch((error: unknown) => console.warn("Swoop context menu refresh failed", error));
+  }
 });
-// popup 打开时请求刷新
-chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
-  if ((msg as { type?: string } | null)?.type === "refresh") {
+// 仅扩展自己的页面可请求读取 / 提交，内容页面不能伪造来源页。
+browser.runtime.onMessage.addListener((msg: unknown, sender, sendResponse) => {
+  if (!sender.url?.startsWith(browser.runtime.getURL(""))) return false;
+  const request = msg as { type?: string; tabId?: number; batchId?: string; url?: string } | null;
+  if (request?.type === "refresh") {
     void heartbeat().then(sendResponse);
+    return true;
+  }
+  if (request?.type === "collect-page" && Number.isInteger(request.tabId)) {
+    void openPageLinks(request.tabId!).then(sendResponse);
+    return true;
+  }
+  if (request?.type === "open-media" && Number.isInteger(request.tabId)) {
+    void mediaCatalog.open(request.tabId!).then(sendResponse);
+    return true;
+  }
+  if (request?.type === "media-count" && Number.isInteger(request.tabId)) {
+    void mediaCatalog.read(request.tabId!).then(({ candidates }) => sendResponse({ ok: true, count: candidates.length }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : "无法读取媒体" }));
+    return true;
+  }
+  if (request?.type === "submit-page-link" && typeof request.batchId === "string" && typeof request.url === "string") {
+    void submitPageLink(request.batchId, request.url)
+      .then(sendResponse).catch(() => sendResponse({ ok: false, error: "提交失败，请先检查 Swoop 任务列表再重试" }));
     return true;
   }
   return false;
@@ -67,14 +107,19 @@ chrome.runtime.onMessage.addListener((msg: unknown, _sender, sendResponse) => {
 
 // ---- 交接 ----
 
-async function buildTask(url: string, referrer: string | undefined, withCookies: boolean): Promise<TaskBody> {
-  const headers: [string, string][] = [["User-Agent", navigator.userAgent]];
-  const cookie = withCookies ? await cookieHeader(url) : undefined;
-  if (cookie) headers.push(["Cookie", cookie]);
-  return { url, referrer: referrer || undefined, headers };
+async function buildTask(url: string, referrer: string | undefined, withCookies: boolean, tabId?: number, referrerPolicy?: string): Promise<TaskBody> {
+  // FTP 使用独立协议认证；不能把网页会话、Referer 或 UA 交给 FTP 服务。
+  const parsed = new URL(url);
+  if (/^ftps?:$/.test(parsed.protocol)) return { url: parsed.href, headers: [] };
+  const cookie = withCookies ? await cookieHeader(url, tabId) : undefined;
+  return { url, referrer: safeReferrer(url, referrer, referrerPolicy), headers: contextHeaders(navigator.userAgent, cookie) };
 }
 
 async function record(url: string, result: HandoffResult, fellBack: boolean): Promise<void> {
+  // 被拒绝的手动 FTP 凭据链接也不能留在扩展会话记录中。
+  if (/^ftps?:/i.test(url.trimStart())) {
+    try { const safe = new URL(url); safe.username = ""; safe.password = ""; url = safe.href; } catch { url = ""; }
+  }
   const lastResult: LastResult = result.ok
     ? { ok: true, url, fileName: result.fileName, size: result.size, fellBack: false, at: Date.now() }
     : { ok: false, url, error: result.error, fellBack, at: Date.now() };
@@ -95,7 +140,7 @@ async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<v
   }
 
   try {
-    await chrome.downloads.pause(item.id);
+    await browser.downloads.pause(item.id);
   } catch {
     // 小文件可能已经下完，交给浏览器即可
     return;
@@ -108,35 +153,84 @@ async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<v
   const result = await sendTask(settings.port, body);
 
   if (result.ok) {
-    await chrome.downloads.cancel(item.id).catch(() => {});
-    await chrome.downloads.erase({ id: item.id }).catch(() => {});
+    await browser.downloads.cancel(item.id).catch(() => {});
+    await browser.downloads.erase({ id: item.id }).catch(() => {});
   } else {
-    await chrome.downloads.resume(item.id).catch(() => {});
+    await browser.downloads.resume(item.id).catch(() => {});
   }
   await record(item.url, result, true);
 }
 
-chrome.downloads.onCreated.addListener((item) => {
+browser.downloads.onCreated.addListener((item) => {
   void onDownloadCreated(item);
 });
 
-async function onMenuClicked(info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab): Promise<void> {
-  if (info.menuItemId !== MENU_ID) return;
-  const url = info.linkUrl ?? info.srcUrl;
-  if (!url || !/^https?:/i.test(url)) {
-    await record(url ?? "", { ok: false, error: "只支持 http/https 链接" }, false);
-    return;
-  }
+async function submitManual(url: string, referrer: string | undefined, incognito: boolean, tabId?: number, referrerPolicy?: string,
+  hint?: Pick<TaskBody, "mime" | "size" | "media">): Promise<HandoffResult> {
   const settings = await loadSettings();
-  if (!(await ping(settings.port))) {
-    await record(url, { ok: false, error: "Swoop 未运行，请先启动 Swoop" }, false);
-    return;
+  const blocked = manualDownloadBlock(url, settings);
+  if (blocked) return { ok: false, error: blocked };
+  if (/^ftps?:$/.test(new URL(url).protocol) && !/^https?:\/\//i.test(referrer ?? "")) {
+    return { ok: false, error: "请在普通网页上使用此功能" };
   }
-  // 用户主动选的，不受开关和过滤规则限制；隐身窗口不带 Cookie，避免写进 Swoop 的数据库
-  const body = await buildTask(url, info.frameUrl ?? info.pageUrl, !tab?.incognito);
-  await record(url, await sendTask(settings.port, body), false);
+  if (!(await ping(settings.port))) return { ok: false, error: "Swoop 未运行，请先启动 Swoop" };
+  // 隐身下载沿用原有边界：主动提交 URL，但不向桌面应用传递隐身 Cookie。
+  const body = await buildTask(url, referrer, !incognito, tabId, referrerPolicy);
+  Object.assign(body, hint);
+  // Cookie / 探测期间用户也可能关闭接管，发送前再检查一次。
+  const current = await loadSettings();
+  const changed = manualDownloadBlock(url, current);
+  if (changed) return { ok: false, error: changed };
+  if (hint?.media && !(await supportsMedia(current.port))) return { ok: false, error: "当前 Swoop 尚不支持媒体接收，请更新后重试" };
+  return sendTask(current.port, body);
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+const pageSubmissions = new Map<string, Promise<HandoffResult>>();
+function submitPageLink(batchId: string, url: string): Promise<HandoffResult> {
+  const key = JSON.stringify([batchId, url]);
+  const existing = pageSubmissions.get(key);
+  if (existing) return existing;
+  const pending = doSubmitPageLink(batchId, url).finally(() => pageSubmissions.delete(key));
+  pageSubmissions.set(key, pending);
+  return pending;
+}
+
+async function doSubmitPageLink(batchId: string, url: string): Promise<HandoffResult> {
+  const batch = await loadPageBatch(batchId);
+  if (!batch) return { ok: false, error: "此链接列表已过期，请返回原网页重新提取" };
+  const link = batch.links.find((link) => link.url === url);
+  if (!link) return { ok: false, error: "链接不在本页列表中" };
+  const previous = batch.results?.[url];
+  if (previous?.ok) return previous;
+  if (batch.kind === "media" && !(await loadSettings()).detectMedia) return { ok: false, error: "媒体检测已关闭" };
+  try {
+    const tab = await browser.tabs.get(batch.tabId);
+    // 不允许原标签跳到另一个页面后继续使用旧会话上下文。
+    if (tab.url !== batch.pageUrl || tab.incognito !== batch.incognito) {
+      return { ok: false, error: "原网页已变化，请重新提取链接" };
+    }
+  } catch { return { ok: false, error: "原网页已关闭，请重新打开后提取链接" }; }
+  const result = await submitManual(url, batch.pageUrl, batch.incognito, batch.tabId, link.referrerPolicy,
+    { mime: link.mime, size: link.size, media: link.media });
+  await savePageResult(batch, url, result);
+  await record(url, result, false);
+  return result;
+}
+
+async function onMenuClicked(info: chrome.contextMenus.OnClickData, tab?: chrome.tabs.Tab): Promise<void> {
+  if (info.menuItemId === PAGE_MENU_ID) {
+    if (tab?.id !== undefined) {
+      const opened = await openPageLinks(tab.id);
+      if (!opened.ok) await record(info.pageUrl ?? "", opened, false);
+    }
+    return;
+  }
+  if (info.menuItemId !== MENU_ID) return;
+  const url = info.linkUrl ?? info.srcUrl ?? "";
+  const result = await submitManual(url, info.frameUrl ?? info.pageUrl, tab?.incognito ?? false, tab?.id);
+  await record(url, result, false);
+}
+
+browser.contextMenus.onClicked.addListener((info, tab) => {
   void onMenuClicked(info, tab);
 });

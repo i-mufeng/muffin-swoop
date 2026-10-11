@@ -1,0 +1,23 @@
+[package]
+name = "swoop-updater"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+url = { workspace = true }
+sha2 = "0.10"
+ed25519-dalek = "3"
+semver = "1"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+uuid = { version = "1", features = ["v4"] }
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,12 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6d8cff"/>
-      <stop offset="1" stop-color="#4a6cf2"/>
-    </linearGradient>
-  </defs>
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#g)"/>
-  <!-- 俯冲的弧线 + 落点箭头 -->
-  <path d="M30 32 C 52 34, 64 52, 64 88" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
-  <path d="M44 72 L64 93 L84 72" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Swoop 折光，一个单元旋转180度复用"><defs><path id="fold-unit" d="M170.6656 24.3448 A0.8 0.8 0 0 0 169.5621 23.2095 L71.3766 94.2187 A8 8 0 0 0 71.6563 107.3768 L112.4854 134.3394 A1.2 1.2 0 0 0 114.3153 133.0654 L108.7525 109.2251 A7 7 0 0 1 110.0162 103.3728 Z"/></defs><rect x="4" y="4" width="232" height="232" rx="59" fill="#4A6CF2"/><g transform="translate(34 34) scale(.716667)"><g class="part-a" transform="translate(0 0)"><use href="#fold-unit" fill="#FFFFFF"/></g><g class="part-b" transform="translate(0 0) rotate(180 120 120)"><use href="#fold-unit" fill="#FFFFFF"/></g></g></svg>

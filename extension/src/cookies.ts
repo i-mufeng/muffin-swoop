@@ -1,3 +1,4 @@
+import { browser } from "./browser";
 // 取下载链接的 Cookie（含 HttpOnly），拼成 Cookie 请求头。登录后的下载靠它才能在 Swoop 里成功。
 
 export interface CookieLike {
@@ -15,9 +16,13 @@ export function formatCookies(list: readonly CookieLike[]): string | undefined {
     .join("; ");
 }
 
-export async function cookieHeader(url: string): Promise<string | undefined> {
+export async function cookieHeader(url: string, tabId?: number): Promise<string | undefined> {
   try {
-    return formatCookies(await chrome.cookies.getAll({ url }));
+    const stores = tabId === undefined ? [] : await browser.cookies.getAllCookieStores();
+    const storeId = stores.find((store) => store.tabIds.includes(tabId!))?.id;
+    // 未找到原标签的容器时不混用默认会话。
+    if (tabId !== undefined && !storeId) return undefined;
+    return formatCookies(await browser.cookies.getAll({ url, ...(storeId ? { storeId } : {}) }));
   } catch {
     return undefined;
   }

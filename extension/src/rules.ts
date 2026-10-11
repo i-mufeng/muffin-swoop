@@ -60,3 +60,71 @@ export function parseDomainList(text: string): string[] {
   }
   return out;
 }
+
+export interface PageLink {
+  url: string;
+  title: string;
+  extension: string;
+  referrerPolicy?: string;
+  mime?: string;
+  size?: number;
+  media?: "hls" | "dash";
+}
+
+/** 页面链接去重；片段不发送到服务器，保留查询参数与顺序。 */
+export function normalizePageLinks(raw: readonly { url: string; title: string; referrerPolicy?: string }[], pageUrl: string, limit: number): { links: PageLink[]; truncated: boolean } {
+  const seen = new Set<string>();
+  const links: PageLink[] = [];
+  let current: string;
+  try { const page = new URL(pageUrl); page.hash = ""; current = page.href; } catch { current = pageUrl; }
+  for (const candidate of raw) {
+    let parsed: URL;
+    try { parsed = new URL(candidate.url, pageUrl); } catch { continue; }
+    parsed.hash = "";
+    if (manualUrlBlock(parsed, candidate.url)) continue;
+    if (parsed.href === current || seen.has(parsed.href)) continue;
+    seen.add(parsed.href);
+    if (links.length >= limit) return { links, truncated: true };
+    let name = parsed.pathname.split("/").pop() ?? "";
+    try { name = decodeURIComponent(name); } catch { /* 保留编码不完整的文件名 */ }
+    const extension = /\.([a-z0-9]{1,12})$/i.exec(name)?.[1]?.toLowerCase() ?? "";
+    links.push({ url: parsed.href, title: candidate.title.trim().slice(0, 300) || name || parsed.hostname, extension,
+      ...(candidate.referrerPolicy ? { referrerPolicy: candidate.referrerPolicy } : {}),
+    });
+  }
+  return { links, truncated: false };
+}
+
+export function filterPageLinks(links: readonly PageLink[], query: string, extension: string): PageLink[] {
+  const needle = query.trim().toLocaleLowerCase();
+  return links.filter((link) =>
+    (extension === "*" || (extension === "-" ? !link.extension : link.extension === extension)) &&
+    (!needle || `${link.title}\n${link.url}`.toLocaleLowerCase().includes(needle)),
+  );
+}
+
+/** 手动下载遵守总开关和域名排除；页面未提供文件大小，不猜测大小阈值。 */
+export function manualDownloadBlock(url: string, settings: Settings): string | undefined {
+  if (!settings.enabled) return "接管已关闭，请先在扩展弹窗中开启";
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return "无效链接"; }
+  const blocked = manualUrlBlock(parsed, url);
+  if (blocked) return blocked;
+  if (settings.excludedDomains.some((domain) => matchesDomain(parsed.hostname, domain))) return "此域名已在扩展设置中排除";
+  return undefined;
+}
+
+function manualUrlBlock(parsed: URL, original: string): string | undefined {
+  if (/^https?:$/.test(parsed.protocol)) return undefined;
+  if (!/^ftps?:$/.test(parsed.protocol)) return "只支持 HTTP(S) / FTP(S) 链接";
+  if (parsed.username || parsed.password || /^ftps?:\/\/[^/?#]*@/i.test(original.trimStart())) {
+    return "FTP 账号请在 Swoop 中填写，不要放在链接中";
+  }
+  if (!parsed.hostname || !parsed.pathname || parsed.pathname.endsWith("/") || parsed.search || parsed.hash || /;type=/i.test(parsed.pathname)) {
+    return "请输入 FTP 文件链接";
+  }
+  try {
+    if (/[\u0000-\u001f\u007f-\u009f]/u.test(decodeURIComponent(parsed.pathname))) return "无效 FTP 文件链接";
+  } catch { return "无效 FTP 文件链接"; }
+  return undefined;
+}
