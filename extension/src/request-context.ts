@@ -21,3 +21,14 @@ export function contextHeaders(userAgent: string, cookie?: string): [string, str
   if (cookie && valid(cookie)) headers.push(["Cookie", cookie]);
   return headers;
 }
+
+/** 浏览器下载跳到了别的源（如登录后从 download.* 跳到 edelivery.*）时返回跳转目标；同源或非 HTTP(S) 返回 undefined。 */
+export function redirectTarget(url: string, finalUrl?: string): string | undefined {
+  if (!finalUrl) return undefined;
+  try {
+    const from = new URL(url);
+    const to = new URL(finalUrl);
+    if (!/^https?:$/.test(to.protocol) || from.origin === to.origin) return undefined;
+    return to.href;
+  } catch { return undefined; }
+}

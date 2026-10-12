@@ -28,8 +28,13 @@ pub fn write_at(file: &File, buf: &[u8], pos: u64) -> (usize, io::Result<()>) {
     (written, Ok(()))
 }
 
-/// 文件名去掉路径分隔符等危险字符。
+/// 常见文件系统单个文件名上限 255 字节（UTF-16 的 NTFS 是 255 个单元），留出 " (n)" 去重后缀的余量
+const MAX_FILE_NAME_BYTES: usize = 240;
+
+/// 文件名去掉路径分隔符等危险字符，过长时截断主名、保留扩展名。
 pub fn sanitize_file_name(name: &str) -> String {
+    let name = truncate_file_name(name);
+    let name = name.as_str();
     let cleaned: String = name
         .chars()
         .map(|c| match c {
@@ -53,6 +58,21 @@ pub fn sanitize_file_name(name: &str) -> String {
             trimmed.to_string()
         }
     }
+}
+
+fn truncate_file_name(name: &str) -> String {
+    if name.len() <= MAX_FILE_NAME_BYTES {
+        return name.to_string();
+    }
+    let ext = match name.rfind('.') {
+        Some(i) if i > 0 && name.len() - i <= 16 => &name[i..],
+        _ => "",
+    };
+    let mut cut = MAX_FILE_NAME_BYTES - ext.len();
+    while !name.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{ext}", name[..cut].trim_end())
 }
 
 /// 以 create_new 原子占用名称，包含普通文件、目录、断链和并发任务的冲突。
@@ -112,6 +132,15 @@ pub fn open_resume_file(path: &Path) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_names_keep_extension() {
+        let name = format!("{}.jpg", "壁".repeat(200));
+        let cleaned = super::sanitize_file_name(&name);
+        assert!(cleaned.len() <= super::MAX_FILE_NAME_BYTES, "{}", cleaned.len());
+        assert!(cleaned.ends_with("壁.jpg"));
+        assert_eq!(super::sanitize_file_name("a.zip"), "a.zip");
+    }
+
     use super::*;
 
     #[test]

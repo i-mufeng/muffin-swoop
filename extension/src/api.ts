@@ -8,6 +8,8 @@ export interface TaskBody {
   /** 浏览器看到的 MIME 与大小，Swoop 用来核对重新探测的是不是同一个文件 */
   mime?: string;
   size?: number;
+  /** 下载跳转到的其他源及其 Cookie；Swoop 只在请求该源时带上，原链接的 Cookie 不会跨域发送。 */
+  redirect_cookies?: [string, string][];
   /** 清单候选交给桌面媒体窗口，不作为普通文件下载。 */
   media?: "hls" | "dash";
 }

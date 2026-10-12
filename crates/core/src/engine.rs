@@ -156,6 +156,9 @@ struct TaskShared {
     sync_state: Mutex<crate::sync::SyncState>,
     /// 当次同步的验证器；不会持久化，取消后重新探测。
     sync_probe: Mutex<Option<ProbeInfo>>,
+    /// 调用方刚探测过的结果（浏览器接管时桥接已探测一次），首次运行在有效期内直接用，
+    /// 不再多发一次请求：一次性或限次的下载链接经不起反复请求。
+    prefetched_probe: Mutex<Option<(Instant, ProbeInfo)>>,
     ftp_options: Mutex<Option<FtpTaskOptions>>,
     ftp_credentials: Mutex<Option<FtpCredentials>>,
     conflict_resolution: Mutex<Option<FileConflictPolicy>>,
@@ -411,6 +414,7 @@ impl Engine {
                 source_changed: AtomicBool::new(rec.source_changed),
                 sync_state: Mutex::new(rec.sync_state),
                 sync_probe: Mutex::new(None),
+                prefetched_probe: Mutex::new(None),
                 ftp_options: Mutex::new(ftp_options),
                 ftp_credentials: Mutex::new(None),
                 conflict_resolution: Mutex::new(None),
@@ -562,7 +566,17 @@ impl Engine {
     pub fn enqueue(&self, opts: AddOptions, queue: QueueId) -> Result<TaskId> {
         let url = parse_download_url(&opts.url)?;
         let ftp = is_ftp(&url).then(|| self.ftp_options_for_url(&url)).transpose()?;
-        self.enqueue_transport(opts, queue, ftp, None)
+        self.enqueue_transport(opts, queue, ftp, None, None)
+    }
+
+    /// 同 [`Engine::add`]，但带上刚用 [`Engine::probe_url`] 拿到的探测结果，
+    /// 任务首次开始时（短时间内）复用它而不再探测一次。
+    pub fn add_probed(&self, opts: AddOptions, probe: ProbeInfo) -> Result<TaskId> {
+        let url = parse_download_url(&opts.url)?;
+        if is_ftp(&url) {
+            return self.add(opts);
+        }
+        self.enqueue_transport(opts, MAIN_QUEUE_ID, None, None, Some((Instant::now(), probe)))
     }
 
     /// FTP/FTPS 与普通下载共用队列。凭据只在本次会话内保留。
@@ -580,7 +594,7 @@ impl Engine {
             ftp.username = Some(credentials.username().to_owned());
         }
         ftp.validate(&opts.url)?;
-        self.enqueue_transport(opts, queue, Some(ftp), credentials)
+        self.enqueue_transport(opts, queue, Some(ftp), credentials, None)
     }
 
     fn enqueue_transport(
@@ -589,6 +603,7 @@ impl Engine {
         queue: QueueId,
         ftp_options: Option<FtpTaskOptions>,
         ftp_credentials: Option<FtpCredentials>,
+        prefetched_probe: Option<(Instant, ProbeInfo)>,
     ) -> Result<TaskId> {
         let url = parse_download_url(&opts.url)?;
         if is_ftp(&url) && !opts.headers.is_empty() {
@@ -646,6 +661,7 @@ impl Engine {
             source_changed: AtomicBool::new(false),
             sync_state: Mutex::default(),
             sync_probe: Mutex::new(None),
+            prefetched_probe: Mutex::new(prefetched_probe),
             ftp_options: Mutex::new(ftp_options),
             ftp_credentials: Mutex::new(ftp_credentials),
             conflict_resolution: Mutex::new(None),
@@ -858,6 +874,7 @@ impl Engine {
             source_changed: AtomicBool::new(rec.source_changed),
             sync_state: Mutex::new(rec.sync_state),
             sync_probe: Mutex::new(None),
+            prefetched_probe: Mutex::new(None),
             ftp_options: Mutex::new(rec.ftp_options),
             ftp_credentials: Mutex::new(credentials),
             conflict_resolution: Mutex::new(None),
@@ -998,7 +1015,10 @@ async fn probe_with_retry(
             _ = cancel.cancelled() => return Err(Error::Cancelled),
         };
         match result {
-            Ok(info) => return Ok(info),
+            Ok(info) => match crate::probe::html_instead_of_file(url, &info) {
+                Some(name) => return Err(Error::HtmlInsteadOfFile(name)),
+                None => return Ok(info),
+            },
             Err(error) if attempt < network.policy.retries && retryable(&error) => {
                 attempt += 1;
                 wait_retry(&network.policy, attempt, cancel).await?;
@@ -1036,9 +1056,16 @@ async fn probe_task(network: &RunNetwork, shared: &TaskShared, cancel: &Cancella
     if let Some(ftp) = &network.ftp {
         ftp.probe_with_retry(&network.policy, cancel).await
     } else {
-        probe_with_retry(network, &shared.url, &shared.header_map, cancel).await
+        let prefetched = shared.prefetched_probe.lock().unwrap().take();
+        match prefetched {
+            Some((at, info)) if at.elapsed() < PREFETCHED_PROBE_TTL => Ok(info),
+            _ => probe_with_retry(network, &shared.url, &shared.header_map, cancel).await,
+        }
     }
 }
+
+/// 复用调用方探测结果的有效期；超时说明任务排了队，链接状态可能已变，重新探测
+const PREFETCHED_PROBE_TTL: Duration = Duration::from_secs(30);
 
 fn spawn_run(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: CancellationToken, connections: usize) {
     let handle = inner.handle.clone();

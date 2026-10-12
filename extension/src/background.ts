@@ -9,7 +9,7 @@ import { badgeFor } from "./badge";
 import { cookieHeader } from "./cookies";
 import { knownSize, shouldIntercept, shouldOpenWelcome, manualDownloadBlock } from "./rules";
 import { loadPageBatch, openPageLinks, savePageResult } from "./page-tasks";
-import { contextHeaders, safeReferrer } from "./request-context";
+import { contextHeaders, safeReferrer, redirectTarget } from "./request-context";
 import { loadSettings, loadState, saveState, type LastResult } from "./settings";
 import { MediaCatalog } from "./media-catalog";
 import { translate } from "./i18n";
@@ -153,6 +153,10 @@ async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<v
 
   // 用原始 URL 而不是 finalUrl：重定向后的签名链接往往很快过期，续传时还得从头走一遍
   const body = await buildTask(item.url, item.referrer, true);
+  // 已登录站点常跳到另一个域名再发文件，那个域名的登录 Cookie 也要交给 Swoop
+  const target = redirectTarget(item.url, item.finalUrl);
+  const targetCookie = target ? await cookieHeader(target) : undefined;
+  if (target && targetCookie) body.redirect_cookies = [[new URL(target).origin, targetCookie]];
   body.mime = item.mime || undefined;
   body.size = knownSize(item);
   const result = await sendTask(settings.port, body);

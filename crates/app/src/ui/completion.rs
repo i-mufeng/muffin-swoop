@@ -37,11 +37,13 @@ impl CompletionEditor {
 impl SwoopApp {
     pub(crate) fn poll_completion(&mut self, ctx: &egui::Context) {
         for outcome in self.completion.poll() {
-            if let Err(error) = outcome.result {
-                self.toasts.push_error(
-                    swoop_i18n::tr!("完成动作未成功"),
-                    format!("{}：{error}", outcome.path.file_name().unwrap_or_default().to_string_lossy()),
-                );
+            let name = outcome.path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+            match outcome.result {
+                Err(error) => self.toasts.push_error(swoop_i18n::tr!("完成动作未成功"), format!("{name}：{error}")),
+                Ok(()) if outcome.installed => {
+                    self.toasts.push_info(swoop_i18n::tr!("安装程序已结束，安装包已移到回收站"), name)
+                }
+                Ok(()) => {}
             }
         }
         if let Some(result) = self.completion.poll_shutdown() {
@@ -120,6 +122,17 @@ impl SwoopApp {
                         dialog::row(ui, &p, swoop_i18n::tr!("显示完成窗口"), None, |ui| {
                             super::toggle(ui, &p, &mut editor.settings.show_dialog);
                         });
+                        if crate::completion::AUTO_INSTALL_SUPPORTED {
+                            dialog::row(
+                                ui,
+                                &p,
+                                swoop_i18n::tr!("运行安装包，结束后移到回收站"),
+                                Some(swoop_i18n::tr!("新建下载时默认勾选；只对安装包生效")),
+                                |ui| {
+                                    super::toggle(ui, &p, &mut editor.settings.auto_install);
+                                },
+                            );
+                        }
                         dialog::row(ui, &p, swoop_i18n::tr!("先扫描文件，成功后再打开"), None, |ui| {
                             let mut scan = editor.settings.scanner.is_some();
                             if super::toggle(ui, &p, &mut scan).changed() {

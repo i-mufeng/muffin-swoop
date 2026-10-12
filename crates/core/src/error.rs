@@ -24,6 +24,8 @@ pub enum Error {
     InvalidHeader(String),
     #[error("暂不支持的协议: {0}")]
     UnsupportedScheme(String),
+    #[error("链接应是 {0}，服务器却返回了网页（可能需要登录、验证，或链接已失效）")]
+    HtmlInsteadOfFile(String),
     #[error("服务器不支持断点续传（Range 请求返回了 200）")]
     RangeNotSupported,
     #[error("服务器提前关闭了连接")]

@@ -216,6 +216,43 @@ pub(crate) async fn wait_retry(policy: &NetworkPolicy, retry: u32, cancel: &Canc
 }
 
 /// Engine 的客户端必须禁用自动重定向。跨源后只保留公开的协商头和 Range，且后续跳回源站也不恢复密钥。
+/// 浏览器为跳转目标域名带来的 Cookie，值为 `<origin> <cookie>`（如 `https://a.example k=v`）。
+/// 只随任务在进程内携带并持久化，从不原样发出：每一跳发请求前换成当前域名自己的 Cookie 头。
+/// 已登录站点常把下载跳到另一个域名（download.oracle.com → edelivery.oracle.com），
+/// 跨域时原 Cookie 必须丢弃，目标域名的登录态就靠它。
+pub const REDIRECT_COOKIE: &str = "x-swoop-redirect-cookie";
+
+/// 某一跳实际发出的请求头：去掉内部的 [`REDIRECT_COOKIE`]，没有 Cookie 时补上当前域名的那份
+fn outgoing_headers(url: &Url, headers: &HeaderMap) -> HeaderMap {
+    let origin = url.origin().ascii_serialization();
+    let scoped = headers.get_all(REDIRECT_COOKIE).iter().find_map(|value| {
+        let (o, cookie) = value.to_str().ok()?.split_once(' ')?;
+        (o == origin).then(|| header::HeaderValue::from_str(cookie.trim()).ok()).flatten()
+    });
+    let mut out = headers.clone();
+    out.remove(REDIRECT_COOKIE);
+    if let Some(cookie) = scoped
+        && !out.contains_key(header::COOKIE)
+    {
+        out.insert(header::COOKIE, cookie);
+    }
+    out
+}
+
+/// 跨域跳转只保留无害的头；Cookie、Authorization、Referer 等都不带到别的站点
+fn cross_origin_headers(headers: &HeaderMap) -> HeaderMap {
+    let mut safe = HeaderMap::new();
+    for key in [header::RANGE, header::USER_AGENT, header::ACCEPT, header::ACCEPT_ENCODING, header::ACCEPT_LANGUAGE] {
+        for value in headers.get_all(&key) {
+            safe.append(key.clone(), value.clone());
+        }
+    }
+    for value in headers.get_all(REDIRECT_COOKIE) {
+        safe.append(REDIRECT_COOKIE, value.clone());
+    }
+    safe
+}
+
 pub(crate) async fn get_following_redirects(
     client: &Client,
     url: &Url,
@@ -224,7 +261,7 @@ pub(crate) async fn get_following_redirects(
     let mut current = url.clone();
     let mut headers = headers.clone();
     for hop in 0..=10 {
-        let response = client.get(current.clone()).headers(headers.clone()).send().await?;
+        let response = client.get(current.clone()).headers(outgoing_headers(&current, &headers)).send().await?;
         if !matches!(
             response.status(),
             StatusCode::MOVED_PERMANENTLY
@@ -246,15 +283,7 @@ pub(crate) async fn get_following_redirects(
             return Err(Error::UnsupportedScheme(next.scheme().into()));
         }
         if current.origin() != next.origin() {
-            let allowed =
-                [header::RANGE, header::USER_AGENT, header::ACCEPT, header::ACCEPT_ENCODING, header::ACCEPT_LANGUAGE];
-            let mut safe = HeaderMap::new();
-            for key in allowed {
-                for value in headers.get_all(&key) {
-                    safe.append(key.clone(), value.clone());
-                }
-            }
-            headers = safe;
+            headers = cross_origin_headers(&headers);
         }
         current = next;
     }
@@ -333,14 +362,16 @@ impl NetworkRuntime {
                         policy,
                         self.user_agent.clone(),
                         current.clone(),
-                        headers.clone(),
+                        outgoing_headers(&current, &headers),
                         if auth_allowed { site.clone() } else { None },
                         proxy_secret.clone(),
                     )
                     .await?,
                 )
             } else {
-                NetworkResponse::Http(self.client.get(current.clone()).headers(headers.clone()).send().await?)
+                NetworkResponse::Http(
+                    self.client.get(current.clone()).headers(outgoing_headers(&current, &headers)).send().await?,
+                )
             };
             if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
                 return Ok(response);
@@ -360,22 +391,35 @@ impl NetworkRuntime {
             }
             if current.origin() != next.origin() {
                 auth_allowed = false;
-                let mut safe = HeaderMap::new();
-                for key in [
-                    header::RANGE,
-                    header::USER_AGENT,
-                    header::ACCEPT,
-                    header::ACCEPT_ENCODING,
-                    header::ACCEPT_LANGUAGE,
-                ] {
-                    for value in headers.get_all(&key) {
-                        safe.append(key.clone(), value.clone());
-                    }
-                }
-                headers = safe;
+                headers = cross_origin_headers(&headers);
             }
             current = next;
         }
         unreachable!("bounded redirect loop")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redirect_cookies_only_reach_their_own_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::COOKIE, "a=1".parse().unwrap());
+        headers.append(REDIRECT_COOKIE, "https://edelivery.example k=v".parse().unwrap());
+        let first = Url::parse("https://download.example/f.zip").unwrap();
+        let out = outgoing_headers(&first, &headers);
+        assert_eq!(out[header::COOKIE], "a=1");
+        assert!(!out.contains_key(REDIRECT_COOKIE), "内部头不能发出去");
+
+        let crossed = cross_origin_headers(&headers);
+        let target = Url::parse("https://edelivery.example/akam/f.zip?AuthParam=1").unwrap();
+        assert_eq!(outgoing_headers(&target, &crossed)[header::COOKIE], "k=v");
+        for other in ["https://evil.example/", "http://edelivery.example/"] {
+            let out = outgoing_headers(&Url::parse(other).unwrap(), &crossed);
+            assert!(!out.contains_key(header::COOKIE), "{other}");
+            assert!(!out.contains_key(REDIRECT_COOKIE));
+        }
     }
 }

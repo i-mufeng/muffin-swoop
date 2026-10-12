@@ -71,9 +71,12 @@ impl AddDialog {
         self.open_with(Some(url));
     }
 
+    /// 关闭即丢弃草稿：取消（按钮、Esc、关窗）和提交成功都走这里
     fn close(&mut self) {
         self.open = false;
         self.pos = None;
+        self.text.clear();
+        self.preview = None;
         self.error = None;
         self.browser_headers.clear();
         self.browser_names.clear();
@@ -321,6 +324,18 @@ impl SwoopApp {
                     });
                 });
 
+                if crate::completion::AUTO_INSTALL_SUPPORTED {
+                    ui.add_space(6.0);
+                    let mut install = self.completion.settings.auto_install;
+                    if super::checkbox(ui, &mut install, swoop_i18n::tr!("运行安装包，结束后移到回收站"))
+                        .on_hover_text(swoop_i18n::tr!("下载完成后由 Swoop 运行安装包；只对安装包生效"))
+                        .changed()
+                        && let Err(error) = self.completion.settings.set_auto_install(&self.store, install)
+                    {
+                        self.add_dialog.error = Some(error);
+                    }
+                }
+
                 if self.categories.enabled {
                     ui.label(RichText::new(swoop_i18n::tr!("已启用分类保存规则")).size(12.0).color(p.text_muted));
                     if let Some(Ok(urls)) = &self.add_dialog.preview {
@@ -431,6 +446,15 @@ impl SwoopApp {
                 }
             }
         }
+        if crate::completion::AUTO_INSTALL_SUPPORTED && self.completion.settings.auto_install && !started.is_empty() {
+            for id in &started {
+                self.completion.mark_install(&self.store, *id);
+            }
+            self.toasts.push_info(
+                swoop_i18n::tr!("下载完成后会运行安装包"),
+                swoop_i18n::tr!("安装程序结束后，安装包会移到回收站"),
+            );
+        }
         // 只为单个、立即开始的下载弹进度窗口；批量或等待队列的不弹
         let queue_running = self.engine.queues().iter().any(|q| q.id == self.add_dialog.queue && q.running);
         if let [id] = started[..]
@@ -445,7 +469,6 @@ impl SwoopApp {
 
         if failed.is_empty() {
             self.add_dialog.close();
-            self.add_dialog.text.clear();
         } else {
             // 保留失败项，用户再次提交时不会重复创建之前成功的任务。
             self.add_dialog.retain_failed(retry, failed);
@@ -493,6 +516,18 @@ mod tests {
         assert_eq!(dialog.text, "ftp://second.example.test/private.bin");
         assert!(dialog.preview.is_none());
         assert!(dialog.error.is_none());
+    }
+
+    #[test]
+    fn cancel_discards_draft_text_and_login() {
+        let mut dialog = private_draft();
+        dialog.open = true;
+        dialog.close();
+        assert!(!dialog.open);
+        assert!(dialog.text.is_empty());
+        assert!(dialog.preview.is_none());
+        assert!(dialog.error.is_none());
+        assert_no_credentials_for_other_server(&dialog);
     }
 
     #[test]

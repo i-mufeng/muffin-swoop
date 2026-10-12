@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { contextHeaders, safeReferrer } from "./request-context";
+import { contextHeaders, redirectTarget, safeReferrer } from "./request-context";
 
 describe("提交请求的上下文", () => {
   it("同源保留路径但删除凭据和片段，跨源仅保留来源站点", () => {
@@ -21,5 +21,14 @@ describe("提交请求的上下文", () => {
     expect(safeReferrer("https://example.com/file", "https://example.com/page", "no-referrer")).toBeUndefined();
     expect(safeReferrer("https://cdn.example.com/file", "https://example.com/page", "same-origin")).toBeUndefined();
     expect(safeReferrer("https://example.com/file", "https://example.com/page", "origin")).toBe("https://example.com/");
+  });
+  it("下载跳到其他源时才返回跳转目标", () => {
+    const zip = "https://download.oracle.com/otn/jdk.zip";
+    expect(redirectTarget(zip, "https://edelivery.oracle.com/akam/otn/jdk.zip?AuthParam=1"))
+      .toBe("https://edelivery.oracle.com/akam/otn/jdk.zip?AuthParam=1");
+    expect(redirectTarget(zip, "https://download.oracle.com/other.zip")).toBeUndefined();
+    expect(redirectTarget(zip, undefined)).toBeUndefined();
+    expect(redirectTarget(zip, "ftp://edelivery.oracle.com/jdk.zip")).toBeUndefined();
+    expect(redirectTarget(zip, "invalid")).toBeUndefined();
   });
 });

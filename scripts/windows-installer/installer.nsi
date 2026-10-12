@@ -650,6 +650,9 @@ Section Uninstall
     !endif
   {{/each}}
 
+  ; Swoop 运行时登记的通知标识（crates/app/src/notifications.rs）
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\com.muffin.swoop"
+
   ; Delete uninstaller
   Delete "$INSTDIR\uninstall.exe"
 

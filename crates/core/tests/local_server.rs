@@ -208,6 +208,25 @@ fn falls_back_to_single_connection_without_range() {
     assert!(got == *body);
 }
 
+/// 桥接先 probe_url 再 add_probed：引擎不再重复探测，链接只多被请求一次
+#[test]
+fn add_probed_reuses_probe_without_another_request() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = Arc::new(make_body(256 * 1024 + 5));
+    let server = start_server(body.clone(), false, "once.bin");
+    let dir = tempfile::tempdir().unwrap();
+
+    let engine = Engine::new(rt.handle().clone(), Config { connections: 1, ..Config::default() });
+    let info = rt.block_on(engine.probe_url(&server.url, &[])).unwrap();
+    assert_eq!(server.requests.lock().unwrap().len(), 1);
+    let options = AddOptions { url: server.url.clone(), dir: dir.path().to_path_buf(), ..Default::default() };
+    let id = engine.add_probed(options, info).unwrap();
+    assert_eq!(wait_done(&engine, id, Duration::from_secs(30)), TaskStatus::Completed);
+
+    assert_eq!(server.requests.lock().unwrap().len(), 2, "探测 1 次 + 下载 1 次");
+    assert!(std::fs::read(dir.path().join("once.bin")).unwrap() == *body);
+}
+
 /// 持久化：任务完成后用同一个 store 重建引擎，记录应完整恢复
 #[test]
 fn persisted_tasks_survive_restart() {

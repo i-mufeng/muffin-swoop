@@ -293,6 +293,9 @@ struct TaskRequest {
     size: Option<u64>,
     #[serde(default)]
     media: Option<MediaFormat>,
+    /// 下载跳转到的其他域名及其 Cookie：`[[origin, cookie], …]`，见 `swoop_core::network::REDIRECT_COOKIE`
+    #[serde(default)]
+    redirect_cookies: Vec<(String, String)>,
     // suggested_name：协议里有，但 onCreated 时浏览器通常还没定文件名，v0.3 以探测结果为准
 }
 
@@ -301,6 +304,23 @@ struct TaskRequest {
 enum MediaFormat {
     Hls,
     Dash,
+}
+
+/// 只接受 HTTP(S) 的其他源和不含控制字符的 Cookie，规范成 `<origin> <cookie>` 的内部头
+fn redirect_cookie_headers(url: &str, cookies: &[(String, String)]) -> Vec<(String, String)> {
+    let own = url::Url::parse(url).map(|u| u.origin().ascii_serialization()).ok();
+    cookies
+        .iter()
+        .filter_map(|(origin, cookie)| {
+            let parsed = url::Url::parse(origin).ok().filter(|u| matches!(u.scheme(), "http" | "https"))?;
+            let origin = parsed.origin().ascii_serialization();
+            let cookie = cookie.trim();
+            let valid = !cookie.is_empty() && !cookie.chars().any(char::is_control);
+            (valid && own.as_deref() != Some(origin.as_str()))
+                .then(|| (swoop_core::network::REDIRECT_COOKIE.to_string(), format!("{origin} {cookie}")))
+        })
+        .take(8)
+        .collect()
 }
 
 /// 浏览器那次下载可能是 POST 表单或一次性链接，Swoop 用 GET 重新请求拿到的未必是同一个东西。
@@ -354,6 +374,7 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         shared.emit(BridgeEvent::Media { source });
         return reply(StatusCode::OK, json!({ "id": null, "file_name": name, "size": null }));
     }
+    headers.extend(redirect_cookie_headers(&task.url, &task.redirect_cookies));
     let info = match tokio::time::timeout(PROBE_TIMEOUT, shared.engine.probe_url(&task.url, &headers)).await {
         Ok(Ok(info)) => info,
         Ok(Err(e)) => {
@@ -372,7 +393,8 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         BridgeMode::Silent => {
             let dir = shared.dir.lock().unwrap().clone();
             let dir = shared.categories.lock().unwrap().target(&dir, &task.url, Some(&info.file_name));
-            match shared.engine.add(AddOptions { url: task.url, dir, file_name: None, headers }) {
+            // 复用刚才的探测，少请求一次：一次性/限次链接经不起反复请求
+            match shared.engine.add_probed(AddOptions { url: task.url, dir, file_name: None, headers }, info.clone()) {
                 Ok(id) => {
                     shared.emit(BridgeEvent::Added { id, file_name: info.file_name.clone() });
                     reply(StatusCode::OK, json!({ "id": id.0, "file_name": info.file_name, "size": info.size }))
@@ -409,6 +431,18 @@ mod tests {
     use swoop_core::{Config, TaskStatus};
 
     use super::*;
+
+    #[test]
+    fn redirect_cookies_are_scoped_and_validated() {
+        let cookies = vec![
+            ("https://edelivery.oracle.com/akam/x.zip?a=1".to_string(), "s=1".to_string()),
+            ("https://download.oracle.com/".to_string(), "same=1".to_string()),
+            ("ftp://x.example/".to_string(), "f=1".to_string()),
+            ("https://bad.example/".to_string(), "a=1\r\nX: y".to_string()),
+        ];
+        let headers = redirect_cookie_headers("https://download.oracle.com/otn/jdk.zip", &cookies);
+        assert_eq!(headers, vec![(swoop_core::network::REDIRECT_COOKIE.into(), "https://edelivery.oracle.com s=1".into())]);
+    }
 
     #[test]
     fn authorize_rules() {

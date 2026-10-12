@@ -836,5 +836,22 @@
   "下载记录": "Downloads",
   "把网站镜像为可离线浏览的本地副本": "Mirror a website as a local copy you can browse offline",
   "项目进度": "Progress",
-  "{} 已保存 · {} 失败 · {}": "{} saved · {} failed · {}"
+  "{} 已保存 · {} 失败 · {}": "{} saved · {} failed · {}",
+  "下载完成后会运行安装包": "The installer will run when the download finishes",
+  "下载完成后由 Swoop 运行安装包；只对安装包生效": "Swoop runs the installer after the download finishes; applies to installers only",
+  "不是本系统的安装包，未运行": "Not an installer for this system; not run",
+  "安装程序已结束，安装包已移到回收站": "Installer finished; moved the installer to the Trash",
+  "安装程序结束后，安装包会移到回收站": "After the installer exits, the file is moved to the Trash",
+  "新建下载时默认勾选；只对安装包生效": "Checked by default for new downloads; applies to installers only",
+  "磁盘映像未挂载，安装包未删除": "The disk image was not mounted; installer kept",
+  "等待安装程序超时，安装包未删除": "Timed out waiting for the installer; installer kept",
+  "运行安装包，结束后移到回收站": "Run installer, then move it to the Trash",
+  "无法启动安装线程：{error}": "Could not start the installer thread: {error}",
+  "无法查询磁盘映像：{e}": "Could not query disk images: {e}",
+  "无法移到废纸篓：{}": "Could not move to the Trash: {}",
+  "系统无法运行安装包（{}）": "The system could not run the installer ({})",
+  "无法跟踪安装程序进程，安装包未删除": "Could not track the installer process; installer kept",
+  "无法等待安装程序结束（{other}）": "Could not wait for the installer to exit ({other})",
+  "无法移到回收站（{result}）": "Could not move to the Recycle Bin ({result})",
+  "当前系统不支持自动运行安装包": "Running installers automatically is not supported on this system"
 }

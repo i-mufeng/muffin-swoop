@@ -69,9 +69,12 @@ onCreated(item)
   "referrer": "https://example.com/page",
   "headers": [["Cookie", "a=1; b=2"], ["User-Agent", "Mozilla/5.0 ..."]],
   "mime": "application/zip",
-  "size": 1234
+  "size": 1234,
+  "redirect_cookies": [["https://cdn.example.com", "s=1"]]
 }
 ```
+
+- `redirect_cookies`（可选）：浏览器下载跳转到其他源时（`DownloadItem.finalUrl`），附带那个源的 Cookie。已登录站点常这样跳（download.oracle.com → edelivery.oracle.com）。Swoop 跨域跳转时照旧丢弃原 Cookie，只在请求对应源时带上它自己的 Cookie；任务里以内部头 `x-swoop-redirect-cookie: <origin> <cookie>` 持久化，从不原样发出。
 
 - FTP(S) 仅通过手动入口发送，例如 `{ "url": "ftp://files.example.com/archive.zip", "headers": [] }`，不带 `referrer`。桌面按 FTP 默认配置探测并接收匿名下载；`ftps://` 使用隐式 TLS 且验证证书。需要账号的站点应在桌面新建任务中填写独立 FTP 凭据，不能把用户名或密码放进 URL。扩展不接受 FTP 目录、查询参数、控制字符或 `;type=` 指令；被拒绝的凭据 URL 不写入链接列表，最近结果也会清除用户名和密码。
 - `mime` / `size` 可选，来自 `DownloadItem`。Swoop 用 GET 重探后核对：浏览器下的不是网页、Swoop 却拿到 `text/html`（POST 表单、未登录跳转页），或两边大小都已知但不相等，就返回 422，浏览器继续下。右键菜单不传这两个字段。

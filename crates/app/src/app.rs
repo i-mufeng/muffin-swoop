@@ -389,10 +389,12 @@ impl SwoopApp {
                                     task.path.clone(),
                                 );
                             }
+                            let install = self.completion.take_install(&self.store, id)
+                                && task.as_ref().is_some_and(|t| crate::completion::is_installer(&t.path));
                             if !self.quitting
                                 && let Some(task) = task
                                 && let Err(error) =
-                                    self.completion.submit(task.path, !self.task_windows.contains(task.id))
+                                    self.completion.submit(task.path, !self.task_windows.contains(task.id), install)
                             {
                                 self.toasts.push_error(swoop_i18n::tr!("完成动作未执行"), error);
                             }
@@ -404,6 +406,9 @@ impl SwoopApp {
                     }
                 }
                 Ok(Event::FileConflict(_)) if !self.quitting => self.show_window(ctx),
+                Ok(Event::Removed(id)) => {
+                    self.completion.take_install(&self.store, id);
+                }
                 Ok(_) => {}
                 Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(_) => break,
@@ -777,7 +782,7 @@ impl eframe::App for SwoopApp {
                 }
                 if !self.quitting
                     && let Some(path) = path
-                    && let Err(error) = self.completion.submit(path, true)
+                    && let Err(error) = self.completion.submit(path, true, false)
                 {
                     self.toasts.push_error(swoop_i18n::tr!("完成动作未执行"), error);
                 }

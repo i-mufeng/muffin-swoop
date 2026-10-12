@@ -5,6 +5,12 @@ const APP: &[u8] = include_bytes!("../../../assets/brand/swoop/png/swoop-app-256
 #[cfg(any(target_os = "macos", target_os = "windows", test))]
 const TRAY: &[u8] = include_bytes!("../../../assets/brand/swoop/png/swoop-tray-44.png");
 
+/// Windows 通知的 IconUri 需要磁盘上的图片文件
+#[cfg(windows)]
+pub fn app_png() -> &'static [u8] {
+    APP
+}
+
 pub fn window_icon() -> egui::IconData {
     eframe::icon_data::from_png_bytes(APP).expect("embedded Swoop app icon must be valid PNG")
 }

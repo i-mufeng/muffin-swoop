@@ -256,12 +256,76 @@ fn show_actionable(message: DesktopNotification, path: PathBuf, responder: &Resp
         .map_err(|error| error.to_string())
 }
 
+/// 通知来源显示为 Swoop：未注册的桌面程序只能借 PowerShell 的 AppUserModelID 发通知，
+/// 系统会把来源显示成 "Windows PowerShell"。在当前用户下登记自己的 ID（名称 + 图标）即可，
+/// 不需要开始菜单快捷方式；卸载程序会删掉这个键。
+#[cfg(windows)]
+const WINDOWS_APP_ID: &str = "com.muffin.swoop";
+
+#[cfg(windows)]
+fn windows_app_id() -> &'static str {
+    static ID: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    ID.get_or_init(|| match register_windows_app_id() {
+        Ok(()) => WINDOWS_APP_ID,
+        Err(error) => {
+            tracing::warn!(%error, "登记通知标识失败，改用 PowerShell 标识");
+            tauri_winrt_notification::Toast::POWERSHELL_APP_ID
+        }
+    })
+}
+
+#[cfg(windows)]
+fn register_windows_app_id() -> Result<(), String> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::*;
+    let dir = crate::instance::data_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let icon = dir.join("notification-icon.png");
+    if std::fs::read(&icon).ok().as_deref() != Some(crate::brand::app_png()) {
+        std::fs::write(&icon, crate::brand::app_png()).map_err(|e| e.to_string())?;
+    }
+    let wide = |v: &std::ffi::OsStr| -> Vec<u16> {
+        use std::os::windows::ffi::OsStrExt;
+        v.encode_wide().chain(Some(0)).collect()
+    };
+    let key = wide(format!(r"Software\Classes\AppUserModelId\{WINDOWS_APP_ID}").as_ref());
+    let mut handle = std::ptr::null_mut();
+    let open = unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            0,
+            std::ptr::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            std::ptr::null(),
+            &mut handle,
+            std::ptr::null_mut(),
+        )
+    };
+    if open != ERROR_SUCCESS {
+        return Err(format!("RegCreateKeyExW {open}"));
+    }
+    let mut result = ERROR_SUCCESS;
+    for (name, value) in [("DisplayName", wide("Swoop".as_ref())), ("IconUri", wide(icon.as_os_str()))] {
+        let name = wide(name.as_ref());
+        let status =
+            unsafe { RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32) };
+        if status != ERROR_SUCCESS {
+            result = status;
+        }
+    }
+    unsafe {
+        RegCloseKey(handle);
+    }
+    if result == ERROR_SUCCESS { Ok(()) } else { Err(format!("RegSetValueExW {result}")) }
+}
+
 #[cfg(windows)]
 fn show_actionable(message: DesktopNotification, path: PathBuf, responder: &Responder) -> Result<(), String> {
     use tauri_winrt_notification::{Sound, Toast};
     let responder = responder.clone();
-    // 与 notify-rust 一致：未注册 AppUserModelID 时借用 PowerShell 的标识。
-    Toast::new(Toast::POWERSHELL_APP_ID)
+    Toast::new(windows_app_id())
         .title(message.summary)
         .text1(&message.body)
         .sound(message.sound.then_some(Sound::Default))
@@ -287,6 +351,8 @@ fn show_plain(message: DesktopNotification) -> Result<(), String> {
     let body = message.body;
     let mut notification = notify_rust::Notification::new();
     notification.appname("Swoop").summary(message.summary).body(&body);
+    #[cfg(windows)]
+    notification.app_id(windows_app_id());
     if message.sound {
         #[cfg(target_os = "macos")]
         notification.sound_name("Glass");
