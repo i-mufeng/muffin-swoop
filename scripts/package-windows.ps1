@@ -94,11 +94,7 @@ try {
         throw "Package output is locked; use another -OutputDir or inspect this lock: $candidateLock"
     }
     $lockDir = $candidateLock
-    foreach ($path in @($packageDir, $archive, "$archive.sha256", $installer, "$installer.sha256")) {
-        if (Test-Path -LiteralPath $path) {
-            throw "Output already exists; use another -OutputDir: $path"
-        }
-    }
+    $outputs = @($packageDir, $archive, "$archive.sha256", $installer, "$installer.sha256")
 
     $stageDir = Join-Path $OutputDir ('.swoop-package-' + [Guid]::NewGuid().ToString('N'))
     $stagedPackage = Join-Path $stageDir $packageName
@@ -217,6 +213,12 @@ authenticode_signature=none
     Compress-Archive -LiteralPath $stagedPackage -DestinationPath $stagedArchive -CompressionLevel Optimal
     $archiveHash = (Get-FileHash -LiteralPath $stagedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$archiveHash  $packageName.zip" | Set-Content -LiteralPath "$stagedArchive.sha256" -Encoding ASCII
+    # Replace an earlier package only after the new one is complete, so a failed build keeps it.
+    foreach ($path in $outputs) {
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
     Move-Item -LiteralPath $stagedPackage -Destination $packageDir
     Move-Item -LiteralPath $stagedArchive -Destination $archive
     Move-Item -LiteralPath "$stagedArchive.sha256" -Destination "$archive.sha256"

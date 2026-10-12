@@ -87,10 +87,6 @@ cleanup() {
   rmdir "$lock_dir" 2>/dev/null || true
 }
 trap cleanup EXIT
-for path in "$package_dir" "$archive" "$archive.sha256" "$dmg" "$dmg.sha256"; do
-  [[ ! -e "$path" && ! -L "$path" ]] || fail "Output already exists; use another --output-dir: $path"
-done
-
 stage_dir=$(mktemp -d "$output_dir/.swoop-package.XXXXXX")
 # Swoop.app 与 DMG 都由 cargo-packager 生成，ZIP 复用同一个 .app，保证两种包内容一致。
 packager_dir="$stage_dir/packager"
@@ -178,6 +174,8 @@ EOF
 # 先在临时目录中完成 zip，再移动完整产物；EXIT 只清理本脚本创建的临时目录。
 ditto -c -k --sequesterRsrc --keepParent "$stage_dir/$package_name" "$stage_dir/$package_name.zip"
 (cd "$stage_dir" && shasum -a 256 "$package_name.zip" > "$package_name.zip.sha256")
+# 新包完整生成后才替换同名旧包，打包失败时旧包保持不动。
+rm -rf "$package_dir" "$archive" "$archive.sha256" "$dmg" "$dmg.sha256"
 mv "$stage_dir/$package_name" "$package_dir"
 mv "$stage_dir/$package_name.zip" "$archive"
 mv "$stage_dir/$package_name.zip.sha256" "$archive.sha256"
