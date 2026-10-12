@@ -17,8 +17,10 @@ name = "swoop-cli"
 path = "src/cli_main.rs"
 
 [features]
-# 开发用：SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=shot.png 自动截图后退出（wgpu 后端不支持截图）
-screenshot = ["eframe/glow", "eframe/__screenshot"]
+# 开发用截图，两种方式：
+# - scripts/screenshot.sh <视图>：打开指定界面（含弹窗、吐司）后截主窗口，见 src/shot.rs
+# - SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=shot.png：eframe 自带，只抓首帧（wgpu 后端不支持）
+screenshot = ["eframe/glow", "eframe/__screenshot", "dep:image"]
 
 [dependencies]
 swoop-core = { workspace = true }
@@ -53,6 +55,8 @@ uuid = { version = "1", features = ["v4"] }
 reqwest = { workspace = true }
 zeroize = "1"
 raw-window-handle = "0.6"
+# 仅截图功能用来写 PNG；与 eframe 用的是同一份
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Ole", "Win32_System_Memory", "Win32_System_DataExchange", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

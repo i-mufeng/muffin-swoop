@@ -4817,6 +4817,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "image",
  "mac-notification-sys",
  "notify-rust",
  "objc2 0.6.5",

@@ -722,6 +722,8 @@ pub fn looks_like_url(s: &str) -> bool {
 impl eframe::App for SwoopApp {
     /// 每帧 ui 之前调用；窗口隐藏到菜单栏时 eframe 不跑 ui，只要有 repaint 请求就还会调这里
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        #[cfg(feature = "screenshot")]
+        crate::shot::tick(self, ctx);
         // Process close intent before a ready update helper can authorize shutdown.
         self.handle_close(ctx);
         self.startup.poll();

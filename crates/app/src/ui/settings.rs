@@ -44,6 +44,29 @@ impl Tab {
     }
 }
 
+/// 当前分类存在 egui 内存里，关掉再打开设置页时保留
+fn tab_id() -> egui::Id {
+    egui::Id::new("settings_tab")
+}
+
+#[cfg(feature = "screenshot")]
+impl SwoopApp {
+    /// 开发截图：打开设置页并切到指定分类；名称不认识时返回 false
+    pub(crate) fn show_settings_tab(&mut self, ctx: &egui::Context, name: &str) -> bool {
+        let tab = match name {
+            "general" => Tab::General,
+            "download" => Tab::Download,
+            "notify" => Tab::Notify,
+            "integration" => Tab::Integration,
+            "about" => Tab::About,
+            _ => return false,
+        };
+        self.show_settings = true;
+        ctx.data_mut(|d| d.insert_temp(tab_id(), tab));
+        true
+    }
+}
+
 /// 本帧设置页里发生的变更，统一在关闭 Modal 后处理
 #[derive(Default)]
 struct Changes {
@@ -62,7 +85,7 @@ impl SwoopApp {
         }
         let p = self.palette;
         let mut changes = Changes::default();
-        let tab_id = egui::Id::new("settings_tab");
+        let tab_id = tab_id();
         let mut tab = ctx.data(|d| d.get_temp::<Tab>(tab_id)).unwrap_or(Tab::General);
 
         let modal = dialog::modal("settings", &p).show(ctx, |ui| {

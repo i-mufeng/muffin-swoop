@@ -20,6 +20,8 @@ mod native_drag;
 mod network_settings;
 mod notifications;
 mod settings;
+#[cfg(feature = "screenshot")]
+mod shot;
 mod startup;
 mod task_transfer;
 mod theme;

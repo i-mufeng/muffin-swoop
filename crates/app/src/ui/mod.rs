@@ -86,10 +86,16 @@ pub fn icon_text(glyph: &str, size: f32, color: Color32) -> RichText {
     RichText::new(glyph).size(size).color(color)
 }
 
-/// 是否处于自动截图模式（EFRAME_SCREENSHOT_TO）
+/// 是否处于自动截图模式（EFRAME_SCREENSHOT_TO，或 `screenshot` 功能的 SWOOP_SHOT）
 fn screenshot_mode() -> bool {
     static SHOT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SHOT.get_or_init(|| std::env::var_os("EFRAME_SCREENSHOT_TO").is_some())
+    *SHOT.get_or_init(|| {
+        #[cfg(feature = "screenshot")]
+        if crate::shot::active() {
+            return true;
+        }
+        std::env::var_os("EFRAME_SCREENSHOT_TO").is_some()
+    })
 }
 
 /// 动画时长；截图模式下近似为 0，让第 2 帧就呈现最终状态。

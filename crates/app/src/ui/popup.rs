@@ -65,6 +65,11 @@ pub fn show(
     p: &Palette,
     add_contents: impl FnOnce(&mut Ui),
 ) -> bool {
+    #[cfg(feature = "screenshot")]
+    if crate::shot::active() {
+        show_inline(ctx, id, &builder, p, add_contents);
+        return false;
+    }
     if !ensure_window(ctx, id, &builder, p) {
         return false;
     }
@@ -80,6 +85,28 @@ pub fn show(
         );
         ui.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape))
     })
+}
+
+/// 截图模式：把独立窗口的内容画在主窗口中央，模拟同尺寸的原生窗口，好与主窗口一起截下来
+#[cfg(feature = "screenshot")]
+fn show_inline(
+    ctx: &egui::Context,
+    id: ViewportId,
+    builder: &ViewportBuilder,
+    p: &Palette,
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    let size = builder.inner_size.unwrap_or(vec2(440.0, 300.0));
+    egui::Area::new(id.0).order(egui::Order::Foreground).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
+        ctx,
+        |ui| {
+            crate::ui::dialog::frame(p).inner_margin(Margin::same(20)).show(ui, |ui| {
+                ui.set_width(size.x - 40.0);
+                ui.set_height(size.y - 40.0);
+                add_contents(ui);
+            });
+        },
+    );
 }
 
 #[derive(Default)]
