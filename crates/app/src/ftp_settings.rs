@@ -143,13 +143,9 @@ impl FtpEditor {
     pub fn ui(&mut self, ui: &mut egui::Ui, implicit: bool) {
         ui.horizontal(|ui| {
             ui.label(swoop_i18n::tr!("用户名"));
-            ui.add(
-                egui::TextEdit::singleline(&mut self.username)
-                    .hint_text(swoop_i18n::tr!("留空为匿名"))
-                    .desired_width(150.0),
-            );
+            ui.add(crate::ui::field(&mut self.username).hint_text(swoop_i18n::tr!("留空为匿名")).desired_width(150.0));
             ui.label(swoop_i18n::tr!("密码"));
-            ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(130.0));
+            ui.add(crate::ui::field(&mut self.password).password(true).desired_width(130.0));
         });
         egui::CollapsingHeader::new(swoop_i18n::tr!("FTP 连接设置")).show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -181,12 +177,12 @@ impl FtpEditor {
                 ui.horizontal(|ui| {
                     ui.label(swoop_i18n::tr!("本机地址"));
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.active_address)
+                        crate::ui::field(&mut self.active_address)
                             .hint_text(swoop_i18n::tr!("自动"))
                             .desired_width(160.0),
                     );
                     let mut fixed = active.port_range.is_some();
-                    if ui.checkbox(&mut fixed, swoop_i18n::tr!("限定端口")).changed() {
+                    if crate::ui::checkbox(ui, &mut fixed, swoop_i18n::tr!("限定端口")).changed() {
                         active.port_range = fixed.then_some((41000, 41010));
                     }
                 });
@@ -240,11 +236,11 @@ impl FtpEditor {
                                 ui.selectable_value(&mut proxy.kind, kind, label);
                             }
                         });
-                    ui.add(egui::TextEdit::singleline(&mut proxy.host).desired_width(130.0));
+                    ui.add(crate::ui::field(&mut proxy.host).desired_width(130.0));
                     ui.add(egui::DragValue::new(&mut proxy.port).range(1..=65535));
                 });
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.bypass)
+                    crate::ui::field(&mut self.bypass)
                         .hint_text(swoop_i18n::tr!("不走代理的主机，以逗号分隔"))
                         .desired_width(f32::INFINITY),
                 );
@@ -264,7 +260,7 @@ impl FtpEditor {
                 );
             });
             ui.add(
-                egui::TextEdit::singleline(&mut self.ca)
+                crate::ui::field(&mut self.ca)
                     .hint_text(swoop_i18n::tr!("自定义 CA 证书路径（可选）"))
                     .desired_width(f32::INFINITY),
             );

@@ -34,7 +34,7 @@ impl ProxyLoginForm {
             self.clear_password();
         }
         ui.label(swoop_i18n::tr!("代理认证"));
-        if ui.checkbox(&mut self.enabled, swoop_i18n::tr!("仅本次会话")).changed() {
+        if crate::ui::checkbox(ui, &mut self.enabled, swoop_i18n::tr!("仅本次会话")).changed() {
             self.clear_password();
         }
         ui.end_row();

@@ -1,6 +1,7 @@
+use super::dialog;
 use crate::app::SwoopApp;
 use crate::completion::{CompletionSettings, FileAction, IdleAction, Scanner};
-use egui::{Frame, Margin, RichText};
+use egui::{Margin, RichText};
 use std::time::Instant;
 
 pub struct CompletionEditor {
@@ -92,100 +93,122 @@ impl SwoopApp {
         let p = self.palette;
         if let Some(editor) = &mut self.completion_editor {
             let mut save = false;
-            let modal = egui::Modal::new(egui::Id::new("completion_settings"))
-                .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-                .show(ctx, |ui| {
-                    ui.set_width(500.0);
-                    ui.label(RichText::new(swoop_i18n::tr!("下载完成后")).size(18.0).strong());
-                    ui.add_space(12.0);
-                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 200.0).max(160.0)).show(
-                        ui,
-                        |ui| {
-                            ui.label(swoop_i18n::tr!("每个文件完成"));
-                            ui.horizontal(|ui| {
-                                for (action, label) in [
+            let mut close = false;
+            let modal = dialog::modal("completion_settings", &p).show(ctx, |ui| {
+                ui.set_width(580.0);
+                close |= dialog::header(
+                    ui,
+                    &p,
+                    egui_phosphor::regular::CHECK_SQUARE_OFFSET,
+                    swoop_i18n::tr!("下载完成后"),
+                    None,
+                );
+                dialog::body(ui, "completion_body", |ui| {
+                    dialog::group(ui, &p, None, |ui| {
+                        dialog::row(ui, &p, swoop_i18n::tr!("每个文件完成"), None, |ui| {
+                            super::segmented(
+                                ui,
+                                &p,
+                                &mut editor.settings.file_action,
+                                &[
                                     (FileAction::None, swoop_i18n::tr!("不打开")),
                                     (FileAction::Reveal, swoop_i18n::tr!("打开所在目录")),
                                     (FileAction::Open, swoop_i18n::tr!("打开文件")),
-                                ] {
-                                    ui.selectable_value(&mut editor.settings.file_action, action, label);
-                                }
-                            });
-                            if editor.settings.file_action == FileAction::Open {
-                                ui.label(
-                                    RichText::new(swoop_i18n::tr!("可执行文件也会交给系统打开"))
-                                        .size(12.0)
-                                        .color(p.tint_amber),
-                                );
-                            }
-                            ui.checkbox(&mut editor.settings.show_dialog, swoop_i18n::tr!("显示完成窗口"));
+                                ],
+                            );
+                        });
+                        dialog::row(ui, &p, swoop_i18n::tr!("显示完成窗口"), None, |ui| {
+                            super::toggle(ui, &p, &mut editor.settings.show_dialog);
+                        });
+                        dialog::row(ui, &p, swoop_i18n::tr!("先扫描文件，成功后再打开"), None, |ui| {
                             let mut scan = editor.settings.scanner.is_some();
-                            if ui.checkbox(&mut scan, swoop_i18n::tr!("先扫描文件，成功后再打开")).changed()
-                            {
+                            if super::toggle(ui, &p, &mut scan).changed() {
                                 editor.toggle_scanner(scan);
                             }
-                            if let Some(scanner) = &mut editor.settings.scanner {
+                        });
+                    });
+                    if editor.settings.file_action == FileAction::Open {
+                        ui.label(
+                            RichText::new(swoop_i18n::tr!("可执行文件也会交给系统打开")).size(12.0).color(p.tint_amber),
+                        );
+                        ui.add_space(8.0);
+                    }
+                    if let Some(scanner) = &mut editor.settings.scanner {
+                        dialog::group(ui, &p, Some(swoop_i18n::tr!("扫描程序")), |ui| {
+                            dialog::row_stack(ui, &p, swoop_i18n::tr!("扫描程序"), None, |ui| {
                                 let mut program = scanner.program.to_string_lossy().into_owned();
-                                ui.label(swoop_i18n::tr!("扫描程序"));
                                 if ui
                                     .add(
-                                        egui::TextEdit::singleline(&mut program)
-                                            .desired_width(470.0)
+                                        super::field(&mut program)
+                                            .desired_width(ui.available_width())
                                             .hint_text(swoop_i18n::tr!("程序的完整路径")),
                                     )
                                     .changed()
                                 {
                                     scanner.program = program.into();
                                 }
-                                ui.label(swoop_i18n::tr!("参数 · 每行一个，{file} 表示下载文件"));
-                                if ui
-                                    .add(
-                                        egui::TextEdit::multiline(&mut editor.arguments)
-                                            .desired_width(470.0)
-                                            .desired_rows(3),
-                                    )
-                                    .changed()
-                                {
-                                    scanner.arguments = editor.arguments.lines().map(str::to_string).collect();
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.label(swoop_i18n::tr!("扫描超时"));
-                                    ui.add(
-                                        egui::DragValue::new(&mut scanner.timeout_secs)
-                                            .range(1..=86400)
-                                            .suffix(swoop_i18n::tr!(" 秒")),
-                                    );
-                                });
-                            }
-                            ui.add_space(16.0);
-                            ui.label(swoop_i18n::tr!("全部下载成功后"));
-                            ui.horizontal(|ui| {
-                                for action in [IdleAction::None, IdleAction::Quit, IdleAction::Shutdown] {
-                                    ui.selectable_value(&mut editor.settings.idle_action, action, action.label());
-                                }
                             });
-                            if editor.settings.idle_action != IdleAction::None {
-                                ui.horizontal(|ui| {
-                                    ui.label(swoop_i18n::tr!("可取消的倒计时"));
-                                    ui.add(
-                                        egui::DragValue::new(&mut editor.settings.countdown_secs)
-                                            .range(10..=3600)
-                                            .suffix(swoop_i18n::tr!(" 秒")),
-                                    );
-                                });
-                            }
-                            if let Some(error) = &editor.error {
-                                ui.colored_label(p.danger, error);
-                            }
-                        },
-                    );
-                    if self.completion.busy() && ui.button(swoop_i18n::tr!("停止当前扫描与打开动作")).clicked()
+                            dialog::row_stack(
+                                ui,
+                                &p,
+                                swoop_i18n::tr!("参数 · 每行一个，{file} 表示下载文件"),
+                                None,
+                                |ui| {
+                                    if ui
+                                        .add(
+                                            egui::TextEdit::multiline(&mut editor.arguments)
+                                                .desired_width(ui.available_width())
+                                                .desired_rows(3)
+                                                .margin(Margin::symmetric(10, 8)),
+                                        )
+                                        .changed()
+                                    {
+                                        scanner.arguments = editor.arguments.lines().map(str::to_string).collect();
+                                    }
+                                },
+                            );
+                            dialog::row(ui, &p, swoop_i18n::tr!("扫描超时"), None, |ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut scanner.timeout_secs)
+                                        .range(1..=86400)
+                                        .suffix(swoop_i18n::tr!(" 秒")),
+                                );
+                            });
+                        });
+                    }
+                    dialog::group(ui, &p, None, |ui| {
+                        dialog::row(ui, &p, swoop_i18n::tr!("全部下载成功后"), None, |ui| {
+                            super::segmented(
+                                ui,
+                                &p,
+                                &mut editor.settings.idle_action,
+                                &[IdleAction::None, IdleAction::Quit, IdleAction::Shutdown].map(|a| (a, a.label())),
+                            );
+                        });
+                        if editor.settings.idle_action != IdleAction::None {
+                            dialog::row(ui, &p, swoop_i18n::tr!("可取消的倒计时"), None, |ui| {
+                                ui.add(
+                                    egui::DragValue::new(&mut editor.settings.countdown_secs)
+                                        .range(10..=3600)
+                                        .suffix(swoop_i18n::tr!(" 秒")),
+                                );
+                            });
+                        }
+                    });
+                    if let Some(error) = &editor.error {
+                        dialog::error(ui, &p, error);
+                    }
+                    if self.completion.busy()
+                        && super::ghost_button(ui, &p, swoop_i18n::tr!("停止当前扫描与打开动作")).clicked()
                     {
                         self.completion.cancel_all();
                     }
-                    ui.add_space(14.0);
-                    save = super::primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked();
                 });
+                dialog::footer(ui, &p, |ui| {
+                    save = super::primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked();
+                    close |= super::ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked();
+                });
+            });
             if save {
                 editor.sync_arguments();
                 match editor.settings.save(&self.store) {
@@ -198,29 +221,24 @@ impl SwoopApp {
                     }
                     Err(error) => editor.error = Some(error),
                 }
-            } else if modal.should_close() {
+            } else if close || modal.should_close() {
                 self.completion_editor = None;
             }
             return;
         }
         if let Some(seconds) = self.completion.countdown.remaining(Instant::now()) {
-            let modal = egui::Modal::new(egui::Id::new("completion_countdown"))
-                .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-                .show(ctx, |ui| {
-                    ui.set_width(360.0);
-                    ui.label(
-                        RichText::new(swoop_i18n::trf!(
-                            "{seconds} 秒后{}",
-                            self.completion.settings.idle_action.label()
-                        ))
-                        .size(18.0)
-                        .strong(),
-                    );
-                    ui.add_space(14.0);
+            let modal = dialog::modal("completion_countdown", &p).show(ctx, |ui| {
+                ui.set_width(400.0);
+                let title = swoop_i18n::trf!("{seconds} 秒后{}", self.completion.settings.idle_action.label());
+                if dialog::header(ui, &p, egui_phosphor::regular::TIMER, &title, None) {
+                    self.completion.countdown.cancel();
+                }
+                dialog::footer(ui, &p, |ui| {
                     if super::primary_button(ui, &p, swoop_i18n::tr!("取消本次动作")).clicked() {
                         self.completion.countdown.cancel();
                     }
                 });
+            });
             if modal.should_close() {
                 self.completion.countdown.cancel();
             }
@@ -236,19 +254,39 @@ impl SwoopApp {
         let mut action = None;
         let mut close_clicked = false;
         let mut close = super::popup::show(ctx, egui::ViewportId::from_hash_of("swoop-completed"), builder, &p, |ui| {
-            ui.label(RichText::new(swoop_i18n::tr!("下载完成")).size(18.0).strong().color(p.success));
-            ui.add(
-                egui::Label::new(RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).color(p.text))
-                    .truncate(),
-            );
-            if let Some(dir) = path.parent() {
-                ui.add(
-                    egui::Label::new(RichText::new(dir.display().to_string()).size(12.0).color(p.text_muted))
-                        .truncate(),
+            ui.horizontal(|ui| {
+                let (tile, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+                ui.painter().rect_filled(tile, egui::CornerRadius::same(12), p.success_soft);
+                ui.painter().text(
+                    tile.center(),
+                    egui::Align2::CENTER_CENTER,
+                    egui_phosphor::fill::CHECK_CIRCLE,
+                    crate::fonts::icon_fill(22.0),
+                    p.success,
                 );
-            }
+                ui.add_space(6.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(path.file_name().unwrap_or_default().to_string_lossy())
+                                .size(15.0)
+                                .strong()
+                                .color(p.text),
+                        )
+                        .truncate(),
+                    );
+                    if let Some(dir) = path.parent() {
+                        ui.add(
+                            egui::Label::new(RichText::new(dir.display().to_string()).size(12.0).color(p.text_muted))
+                                .truncate(),
+                        );
+                    }
+                });
+            });
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Max), |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
                     if super::primary_button(ui, &p, swoop_i18n::tr!("打开")).clicked() {
                         action = Some(FileAction::Open);
                     }

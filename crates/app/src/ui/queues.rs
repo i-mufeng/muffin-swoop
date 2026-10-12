@@ -1,8 +1,8 @@
 use chrono::{Local, NaiveDateTime, TimeZone};
-use egui::{Align, Frame, Layout, Margin, RichText};
+use egui::{Align, Layout};
 use swoop_core::{MAIN_QUEUE_ID, MAX_QUEUE_CONCURRENCY, QueueId, QueueSchedule, QueueSnapshot};
 
-use super::{ghost_button, icon_button, primary_button};
+use super::{danger_button, dialog, ghost_button, icon_button, primary_button, toggle};
 use crate::app::SwoopApp;
 
 pub struct QueueEditor {
@@ -125,111 +125,112 @@ impl SwoopApp {
         let mut toggle_running = false;
         let mut sync_now = false;
         let mut order = None;
-        let modal = egui::Modal::new(egui::Id::new("queue_editor"))
-            .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-            .show(ctx, |ui| {
-                ui.set_width(590.0);
+        let modal = dialog::modal("queue_editor", &p).show(ctx, |ui| {
+            ui.set_width(600.0);
+            close |= dialog::header(
+                ui,
+                &p,
+                egui_phosphor::regular::STACK,
+                swoop_i18n::tr!("队列与计划"),
+                Some(&swoop_i18n::trf!("{} 下载中 · {} 等待", queue.active_count, queue.waiting_count)),
+            );
+            dialog::body_fixed(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(swoop_i18n::tr!("队列与计划")).size(18.0).strong().color(p.text));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ghost_button(ui, &p, swoop_i18n::tr!("新建队列")).clicked() {
-                            create = true;
-                        }
-                    });
-                });
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("queue_select").selected_text(super::queue_name(queue)).show_ui(
-                        ui,
-                        |ui| {
+                    egui::ComboBox::from_id_salt("queue_select")
+                        .selected_text(super::queue_name(queue))
+                        .width(220.0)
+                        .show_ui(ui, |ui| {
                             for item in &queues {
                                 if ui.selectable_label(item.id == queue.id, super::queue_name(item)).clicked() {
                                     self.queue_editor.selected = item.id;
                                     self.queue_editor.loaded = None;
                                 }
                             }
-                        },
-                    );
-                    ui.label(
-                        RichText::new(swoop_i18n::trf!("{} 下载中 · {} 等待", queue.active_count, queue.waiting_count))
-                            .color(p.text_muted),
-                    );
-                    if ghost_button(
-                        ui,
-                        &p,
-                        if queue.running { swoop_i18n::tr!("停止队列") } else { swoop_i18n::tr!("启动队列") },
-                    )
-                    .clicked()
-                    {
-                        toggle_running = true;
-                    }
+                        });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ghost_button(
+                            ui,
+                            &p,
+                            &format!("{}  {}", egui_phosphor::regular::PLUS, swoop_i18n::tr!("新建队列")),
+                        )
+                        .clicked()
+                        {
+                            create = true;
+                        }
+                        let (icon, label) = if queue.running {
+                            (egui_phosphor::regular::PAUSE, swoop_i18n::tr!("停止队列"))
+                        } else {
+                            (egui_phosphor::regular::PLAY, swoop_i18n::tr!("启动队列"))
+                        };
+                        if ghost_button(ui, &p, &format!("{icon}  {label}")).clicked() {
+                            toggle_running = true;
+                        }
+                    });
                 });
                 ui.add_space(12.0);
-                egui::ScrollArea::vertical()
-                    .id_salt("queue_scroll")
-                    .max_height((ctx.content_rect().height() - 230.0).max(180.0))
-                    .show(ui, |ui| {
-                        egui::Grid::new("queue_options").num_columns(2).spacing([18.0, 12.0]).show(ui, |ui| {
-                            ui.label(swoop_i18n::tr!("名称"));
-                            ui.text_edit_singleline(&mut self.queue_editor.name);
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("同时下载"));
-                            ui.add(
-                                egui::DragValue::new(&mut self.queue_editor.concurrency)
-                                    .range(1..=MAX_QUEUE_CONCURRENCY)
-                                    .suffix(swoop_i18n::tr!(" 个任务")),
-                            );
-                            ui.end_row();
-                            ui.checkbox(&mut self.queue_editor.sync_enabled, swoop_i18n::tr!("同步已完成文件"))
-                                .on_hover_text(swoop_i18n::tr!(
-                                    "每次启动时检查更新；下载成功后替换，保留手动修改过的文件"
-                                ));
+            });
+            dialog::body(ui, "queue_scroll", |ui| {
+                let editor = &mut self.queue_editor;
+                dialog::group(ui, &p, None, |ui| {
+                    dialog::row(ui, &p, swoop_i18n::tr!("名称"), None, |ui| {
+                        ui.add(super::field(&mut editor.name).desired_width(260.0));
+                    });
+                    dialog::row(ui, &p, swoop_i18n::tr!("同时下载"), None, |ui| {
+                        ui.add(
+                            egui::DragValue::new(&mut editor.concurrency)
+                                .range(1..=MAX_QUEUE_CONCURRENCY)
+                                .suffix(swoop_i18n::tr!(" 个任务")),
+                        );
+                    });
+                    dialog::row(
+                        ui,
+                        &p,
+                        swoop_i18n::tr!("同步已完成文件"),
+                        Some(swoop_i18n::tr!("每次启动时检查更新；下载成功后替换，保留手动修改过的文件")),
+                        |ui| {
+                            toggle(ui, &p, &mut editor.sync_enabled);
+                            ui.add_space(4.0);
                             if ghost_button(ui, &p, swoop_i18n::tr!("立即同步")).clicked() {
                                 sync_now = true;
                             }
-                            ui.end_row();
-                            ui.checkbox(&mut self.queue_editor.start_enabled, swoop_i18n::tr!("定时开始"));
-                            ui.add_enabled(
-                                self.queue_editor.start_enabled,
-                                egui::TextEdit::singleline(&mut self.queue_editor.start),
-                            );
-                            ui.end_row();
-                            ui.checkbox(&mut self.queue_editor.stop_enabled, swoop_i18n::tr!("定时停止"));
-                            ui.add_enabled(
-                                self.queue_editor.stop_enabled,
-                                egui::TextEdit::singleline(&mut self.queue_editor.stop),
-                            );
-                            ui.end_row();
-                            ui.checkbox(&mut self.queue_editor.repeat, swoop_i18n::tr!("重复执行"));
-                            ui.add_enabled(
-                                self.queue_editor.repeat,
-                                egui::DragValue::new(&mut self.queue_editor.repeat_minutes)
-                                    .range(1..=525600)
-                                    .prefix(swoop_i18n::tr!("每 "))
-                                    .suffix(swoop_i18n::tr!(" 分钟")),
-                            );
-                            ui.end_row();
-                        });
-                        ui.add_space(16.0);
-                        ui.label(RichText::new(swoop_i18n::tr!("任务顺序")).strong());
-                        if queue.task_ids.is_empty() {
-                            ui.label(RichText::new(swoop_i18n::tr!("新建下载时可选择此队列")).color(p.text_muted));
-                        }
+                        },
+                    );
+                });
+
+                dialog::group(ui, &p, Some(swoop_i18n::tr!("计划")), |ui| {
+                    dialog::row(ui, &p, swoop_i18n::tr!("定时开始"), None, |ui| {
+                        toggle(ui, &p, &mut editor.start_enabled);
+                        ui.add_space(4.0);
+                        ui.add_enabled(editor.start_enabled, super::field(&mut editor.start).desired_width(170.0));
+                    });
+                    dialog::row(ui, &p, swoop_i18n::tr!("定时停止"), None, |ui| {
+                        toggle(ui, &p, &mut editor.stop_enabled);
+                        ui.add_space(4.0);
+                        ui.add_enabled(editor.stop_enabled, super::field(&mut editor.stop).desired_width(170.0));
+                    });
+                    dialog::row(ui, &p, swoop_i18n::tr!("重复执行"), None, |ui| {
+                        toggle(ui, &p, &mut editor.repeat);
+                        ui.add_space(4.0);
+                        ui.add_enabled(
+                            editor.repeat,
+                            egui::DragValue::new(&mut editor.repeat_minutes)
+                                .range(1..=525600)
+                                .prefix(swoop_i18n::tr!("每 "))
+                                .suffix(swoop_i18n::tr!(" 分钟")),
+                        );
+                    });
+                });
+
+                dialog::group_title(ui, &p, swoop_i18n::tr!("任务顺序"));
+                if queue.task_ids.is_empty() {
+                    dialog::note(ui, &p, swoop_i18n::tr!("新建下载时可选择此队列"));
+                } else {
+                    dialog::group(ui, &p, None, |ui| {
                         for (index, id) in queue.task_ids.iter().enumerate() {
                             let Some(task) = self.tasks.iter().find(|t| t.id == *id) else { continue };
                             ui.push_id(id.0, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(format!("{}", index + 1));
-                                    let name = if task.file_name.is_empty() { &task.url } else { &task.file_name };
-                                    ui.add_sized([400.0, 24.0], egui::Label::new(name).truncate());
-                                    if icon_button(ui, &p, egui_phosphor::regular::ARROW_UP, swoop_i18n::tr!("上移"))
-                                        .clicked()
-                                        && index > 0
-                                    {
-                                        let mut next = queue.task_ids.clone();
-                                        next.swap(index, index - 1);
-                                        order = Some(next);
-                                    }
+                                let name = if task.file_name.is_empty() { &task.url } else { &task.file_name };
+                                dialog::row_with(ui, &p, &format!("{}.  {name}", index + 1), None, 0.8, |ui| {
                                     if icon_button(ui, &p, egui_phosphor::regular::ARROW_DOWN, swoop_i18n::tr!("下移"))
                                         .clicked()
                                         && index + 1 < queue.task_ids.len()
@@ -238,38 +239,47 @@ impl SwoopApp {
                                         next.swap(index, index + 1);
                                         order = Some(next);
                                     }
+                                    if icon_button(ui, &p, egui_phosphor::regular::ARROW_UP, swoop_i18n::tr!("上移"))
+                                        .clicked()
+                                        && index > 0
+                                    {
+                                        let mut next = queue.task_ids.clone();
+                                        next.swap(index, index - 1);
+                                        order = Some(next);
+                                    }
                                 });
                             });
                         }
                     });
-                if let Some(error) = &self.queue_editor.error {
-                    ui.label(RichText::new(error).color(p.danger));
                 }
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    if queue.id != MAIN_QUEUE_ID {
+                if let Some(error) = &self.queue_editor.error {
+                    dialog::error(ui, &p, error);
+                }
+            });
+            dialog::footer(ui, &p, |ui| {
+                if primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked() {
+                    save = true;
+                }
+                if ghost_button(ui, &p, swoop_i18n::tr!("关闭")).clicked() {
+                    close = true;
+                }
+                if queue.id != MAIN_QUEUE_ID {
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         if self.queue_editor.confirm_delete {
-                            ui.label(swoop_i18n::tr!("任务将移回主队列"));
-                            if ui.button(swoop_i18n::tr!("确认删除")).clicked() {
+                            if danger_button(ui, &p, swoop_i18n::tr!("确认删除")).clicked() {
                                 delete = true;
                             }
-                            if ui.button(swoop_i18n::tr!("取消")).clicked() {
+                            if ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked() {
                                 self.queue_editor.confirm_delete = false;
                             }
-                        } else if ui.button(swoop_i18n::tr!("删除队列")).clicked() {
+                            dialog::note(ui, &p, swoop_i18n::tr!("任务将移回主队列"));
+                        } else if danger_button(ui, &p, swoop_i18n::tr!("删除队列")).clicked() {
                             self.queue_editor.confirm_delete = true;
                         }
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked() {
-                            save = true;
-                        }
-                        if ghost_button(ui, &p, swoop_i18n::tr!("关闭")).clicked() {
-                            close = true;
-                        }
                     });
-                });
+                }
             });
+        });
         let result = if save {
             match self.queue_editor.schedule() {
                 Ok(schedule) => self

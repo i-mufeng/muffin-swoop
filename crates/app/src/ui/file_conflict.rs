@@ -89,39 +89,61 @@ impl SwoopApp {
         };
         let p = self.palette;
         let mut choice = None;
-        let modal = egui::Modal::new(egui::Id::new(("file_conflict", prompt.target.key())))
-            .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-            .show(ctx, |ui| {
-                ui.set_width(440.0);
-                ui.horizontal(|ui| {
-                    ui.label(super::icon_text(egui_phosphor::regular::FILES, 22.0, p.tint_amber));
-                    ui.label(RichText::new(swoop_i18n::tr!("已存在同名文件")).size(18.0).strong().color(p.text));
-                });
-                ui.add_space(14.0);
-                ui.label(RichText::new(path.file_name().unwrap_or_default().to_string_lossy()).strong().color(p.text));
-                if let Some(directory) = path.parent() {
-                    ui.label(RichText::new(directory.to_string_lossy()).size(12.0).color(p.text_muted));
-                }
-                ui.add_space(14.0);
-                ui.checkbox(&mut prompt.remember, swoop_i18n::tr!("记住选择"));
+        // 点关闭与按 Esc 一样只跳过本次，不记住选择
+        let mut dismissed = false;
+        let modal = super::dialog::modal(("file_conflict", prompt.target.key()), &p).show(ctx, |ui| {
+            use super::dialog;
+            ui.set_width(480.0);
+            let directory = path.parent().map(|d| d.to_string_lossy().into_owned());
+            if dialog::header_tinted(
+                ui,
+                &p,
+                egui_phosphor::regular::FILES,
+                p.tint_amber,
+                swoop_i18n::tr!("已存在同名文件"),
+                directory.as_deref(),
+            ) {
+                dismissed = true;
+            }
+            dialog::body_fixed(ui, |ui| {
+                Frame::new()
+                    .fill(p.group)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(egui::CornerRadius::same(10))
+                    .inner_margin(Margin::symmetric(14, 12))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy();
+                            super::file_tile(ui, &p, super::filekind::FileKind::from_name(&name), 34.0);
+                            ui.add_space(4.0);
+                            ui.add(egui::Label::new(RichText::new(name).strong().color(p.text)).truncate());
+                        });
+                    });
+                ui.add_space(10.0);
+                crate::ui::checkbox(ui, &mut prompt.remember, swoop_i18n::tr!("记住选择"));
                 if let Some(error) = &prompt.error {
-                    ui.colored_label(p.danger, error);
+                    ui.add_space(6.0);
+                    dialog::error(ui, &p, error);
                 }
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    if ui.button(RichText::new(swoop_i18n::tr!("覆盖")).color(p.danger)).clicked() {
+                ui.add_space(6.0);
+            });
+            dialog::footer(ui, &p, |ui| {
+                if super::primary_button(ui, &p, swoop_i18n::tr!("重命名")).clicked() {
+                    choice = Some(FileConflictPolicy::Rename);
+                }
+                if super::ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked() {
+                    choice = Some(FileConflictPolicy::Skip);
+                }
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if super::danger_button(ui, &p, swoop_i18n::tr!("覆盖")).clicked() {
                         choice = Some(FileConflictPolicy::Overwrite);
-                    }
-                    if super::primary_button(ui, &p, swoop_i18n::tr!("重命名")).clicked() {
-                        choice = Some(FileConflictPolicy::Rename);
-                    }
-                    if ui.button(swoop_i18n::tr!("取消")).clicked() {
-                        choice = Some(FileConflictPolicy::Skip);
                     }
                 });
             });
+        });
         let remember = choice.is_some() && prompt.remember;
-        if choice.is_none() && modal.should_close() {
+        if choice.is_none() && (dismissed || modal.should_close()) {
             choice = Some(FileConflictPolicy::Skip);
         }
         if let Some(policy) = choice {

@@ -62,6 +62,26 @@ impl FileKind {
         }
     }
 
+    /// 线框图标（侧栏等小尺寸处）
+    pub fn outline_icon(self) -> &'static str {
+        use egui_phosphor::regular as o;
+        match self {
+            Self::Archive => o::FILE_ZIP,
+            Self::Disk => o::DISC,
+            Self::Pdf => o::FILE_PDF,
+            Self::Doc => o::FILE_DOC,
+            Self::Sheet => o::FILE_XLS,
+            Self::Slides => o::FILE_PPT,
+            Self::Video => o::FILE_VIDEO,
+            Self::Audio => o::FILE_AUDIO,
+            Self::Image => o::FILE_IMAGE,
+            Self::Code => o::FILE_CODE,
+            Self::Package => o::PACKAGE,
+            Self::Text => o::FILE_TEXT,
+            Self::Other => o::FOLDER_SIMPLE,
+        }
+    }
+
     pub fn tint(self, p: &Palette) -> Color32 {
         match self {
             Self::Archive => p.tint_amber,

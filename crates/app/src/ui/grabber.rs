@@ -1,3 +1,4 @@
+use super::dialog;
 use crate::app::SwoopApp;
 use crate::grabber_tasks::ProjectAction;
 use egui::{RichText, TextEdit};
@@ -11,98 +12,113 @@ impl SwoopApp {
         let busy = self.grabber.busy();
         let mut open = true;
         let mut action = None;
-        let max_height = ctx.content_rect().height() - 40.0;
-        egui::Window::new(swoop_i18n::tr!("站点抓取"))
-            .open(&mut open)
-            .default_width(700.0)
-            .max_width(ctx.content_rect().width() - 40.0)
-            // 带 vscroll 的窗口高度不随内容增长（默认 420 且会被持久化），给足表单高度。
-            .min_height(max_height.min(760.0))
-            .max_height(max_height)
-            .vscroll(true)
+        dialog::window(swoop_i18n::tr!("站点抓取"), &p)
+            .auto_sized()
             .show(ctx, |ui| {
+                ui.set_width((ctx.content_rect().width() - 40.0).min(720.0));
+                if dialog::header(
+                    ui,
+                    &p,
+                    egui_phosphor::regular::GLOBE,
+                    swoop_i18n::tr!("站点抓取"),
+                    Some(swoop_i18n::tr!("把网站镜像为可离线浏览的本地副本")),
+                ) {
+                    open = false;
+                }
+                dialog::body(ui, "grabber_body", |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     let config = &mut self.grabber.config;
-                    egui::Grid::new("grabber_config").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-                        ui.label(swoop_i18n::tr!("起始网址"));
-                        ui.add(
-                            TextEdit::singleline(&mut config.start_url)
-                                .desired_width(520.0)
-                                .hint_text("https://example.com/"),
-                        );
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("项目目录"));
-                        let mut dir = config.output_dir.display().to_string();
-                        if ui.add(TextEdit::singleline(&mut dir).desired_width(520.0)).changed() {
-                            config.output_dir = super::add_dialog::expand_tilde(&dir);
-                        }
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("抓取深度"));
-                        ui.add(egui::DragValue::new(&mut config.max_depth).range(0..=100));
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("页面与资源上限"));
-                        ui.add(egui::DragValue::new(&mut config.max_pages).range(1..=100_000));
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("同时抓取"));
-                        ui.add(egui::DragValue::new(&mut config.concurrency).range(1..=16));
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("流量上限"));
-                        let mut mib = config.max_total_bytes / (1024 * 1024);
-                        if ui.add(egui::DragValue::new(&mut mib).range(1..=1024 * 1024).suffix(" MiB")).changed() {
-                            config.max_total_bytes = mib * 1024 * 1024;
-                        }
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("单文件上限"));
-                        let mut mib = config.max_file_bytes / (1024 * 1024);
-                        if ui.add(egui::DragValue::new(&mut mib).range(1..=256).suffix(" MiB")).changed() {
-                            config.max_file_bytes = mib * 1024 * 1024;
-                        }
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("请求超时"));
-                        ui.add(egui::DragValue::new(&mut config.request_timeout_secs).range(1..=120).suffix(swoop_i18n::tr!(" 秒")));
-                        ui.end_row();
+                    const LABEL_W: f32 = 72.0;
+                    dialog::group(ui, &p, None, |ui| {
+                        dialog::field_row(ui, &p, swoop_i18n::tr!("起始网址"), LABEL_W, |ui| {
+                            ui.add(
+                                super::field(&mut config.start_url)
+                                    .desired_width(ui.available_width())
+                                    .hint_text("https://example.com/"),
+                            );
+                        });
+                        dialog::field_row(ui, &p, swoop_i18n::tr!("项目目录"), LABEL_W, |ui| {
+                            let mut dir = config.output_dir.display().to_string();
+                            if ui.add(super::field(&mut dir).desired_width(ui.available_width())).changed() {
+                                config.output_dir = super::add_dialog::expand_tilde(&dir);
+                            }
+                        });
                         for (label, hint, text) in [
                             (swoop_i18n::tr!("额外域名"), swoop_i18n::tr!("默认仅当前站点"), &mut self.grabber.domains_text),
                             (swoop_i18n::tr!("资源扩展名"), swoop_i18n::tr!("留空下载全部直接资源"), &mut self.grabber.extensions_text),
                         ] {
-                            ui.label(label);
-                            ui.add(TextEdit::singleline(text).desired_width(520.0).hint_text(hint));
-                            ui.end_row();
+                            dialog::field_row(ui, &p, label, LABEL_W, |ui| {
+                                ui.add(super::field(text).desired_width(ui.available_width()).hint_text(hint));
+                            });
                         }
-                        ui.label(swoop_i18n::tr!("重定向上限"));
-                        ui.add(egui::DragValue::new(&mut config.max_redirects).range(0..=20));
-                        ui.end_row();
-                        ui.label(swoop_i18n::tr!("站点规则"));
-                        ui.checkbox(&mut config.respect_robots, swoop_i18n::tr!("遵循 robots.txt"));
-                        ui.end_row();
                     });
-                    ui.collapsing(swoop_i18n::tr!("资源与排除规则"), |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.checkbox(&mut config.capture.scripts, swoop_i18n::tr!("脚本文件"));
-                            ui.checkbox(&mut config.capture.media, swoop_i18n::tr!("音视频与字幕"));
-                            ui.checkbox(&mut config.capture.embedded_documents, swoop_i18n::tr!("嵌入页面与文档"));
-                            ui.checkbox(&mut config.capture.manifests, swoop_i18n::tr!("网页清单"));
-                            ui.checkbox(&mut config.capture.lazy_images, swoop_i18n::tr!("懒加载图片"));
+
+                    dialog::group_title(ui, &p, swoop_i18n::tr!("限制"));
+                    egui::Frame::new()
+                        .fill(p.group)
+                        .stroke(egui::Stroke::new(1.0, p.border))
+                        .corner_radius(egui::CornerRadius::same(10))
+                        .inner_margin(egui::Margin::same(14))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            let label = |text: &str| RichText::new(text).color(p.text);
+                            egui::Grid::new("grabber_limits").num_columns(4).spacing([16.0, 12.0]).min_col_width(60.0).show(ui, |ui| {
+                                ui.label(label(swoop_i18n::tr!("抓取深度")));
+                                ui.add(egui::DragValue::new(&mut config.max_depth).range(0..=100));
+                                ui.label(label(swoop_i18n::tr!("页面与资源上限")));
+                                ui.add(egui::DragValue::new(&mut config.max_pages).range(1..=100_000));
+                                ui.end_row();
+                                ui.label(label(swoop_i18n::tr!("同时抓取")));
+                                ui.add(egui::DragValue::new(&mut config.concurrency).range(1..=16));
+                                ui.label(label(swoop_i18n::tr!("请求超时")));
+                                ui.add(egui::DragValue::new(&mut config.request_timeout_secs).range(1..=120).suffix(swoop_i18n::tr!(" 秒")));
+                                ui.end_row();
+                                ui.label(label(swoop_i18n::tr!("流量上限")));
+                                let mut mib = config.max_total_bytes / (1024 * 1024);
+                                if ui.add(egui::DragValue::new(&mut mib).range(1..=1024 * 1024).suffix(" MiB")).changed() {
+                                    config.max_total_bytes = mib * 1024 * 1024;
+                                }
+                                ui.label(label(swoop_i18n::tr!("单文件上限")));
+                                let mut mib = config.max_file_bytes / (1024 * 1024);
+                                if ui.add(egui::DragValue::new(&mut mib).range(1..=256).suffix(" MiB")).changed() {
+                                    config.max_file_bytes = mib * 1024 * 1024;
+                                }
+                                ui.end_row();
+                                ui.label(label(swoop_i18n::tr!("重定向上限")));
+                                ui.add(egui::DragValue::new(&mut config.max_redirects).range(0..=20));
+                                ui.label(label(swoop_i18n::tr!("站点规则")));
+                                crate::ui::checkbox(ui, &mut config.respect_robots, swoop_i18n::tr!("遵循 robots.txt"));
+                                ui.end_row();
+                            });
                         });
-                        ui.checkbox(&mut config.capture.strip_scripts_from_mirror, swoop_i18n::tr!("从镜像移除 script 元素"))
+                    ui.add_space(8.0);
+                    egui::CollapsingHeader::new(RichText::new(swoop_i18n::tr!("资源与排除规则")).color(p.text_muted)).id_salt("grabber_rules").show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            crate::ui::checkbox(ui, &mut config.capture.scripts, swoop_i18n::tr!("脚本文件"));
+                            crate::ui::checkbox(ui, &mut config.capture.media, swoop_i18n::tr!("音视频与字幕"));
+                            crate::ui::checkbox(ui, &mut config.capture.embedded_documents, swoop_i18n::tr!("嵌入页面与文档"));
+                            crate::ui::checkbox(ui, &mut config.capture.manifests, swoop_i18n::tr!("网页清单"));
+                            crate::ui::checkbox(ui, &mut config.capture.lazy_images, swoop_i18n::tr!("懒加载图片"));
+                        });
+                        crate::ui::checkbox(ui, &mut config.capture.strip_scripts_from_mirror, swoop_i18n::tr!("从镜像移除 script 元素"))
                             .on_hover_text(swoop_i18n::tr!("仅移除 script 标签，不是 HTML 安全过滤器；事件属性等仍会保留。"));
-                        ui.add(TextEdit::multiline(&mut self.grabber.exclusions_text).desired_rows(2).desired_width(640.0)
+                        ui.add(TextEdit::multiline(&mut self.grabber.exclusions_text).desired_rows(2).desired_width(f32::INFINITY).margin(egui::Margin::symmetric(10, 8))
                             .hint_text(swoop_i18n::tr!("排除 URL，每行一条，例如 /logout* 或 */tracking/*")))
                             .on_hover_text(swoop_i18n::tr!("* 匹配任意字符，? 匹配一个字节。以 / 开头匹配路径与查询，其他规则匹配完整 URL。"));
                     });
-                    ui.collapsing(swoop_i18n::tr!("动态页面"), |ui| {
-                        ui.checkbox(&mut config.render.enabled, swoop_i18n::tr!("使用隔离浏览器渲染"))
+                    egui::CollapsingHeader::new(RichText::new(swoop_i18n::tr!("动态页面")).color(p.text_muted)).id_salt("grabber_render").show(ui, |ui| {
+                        crate::ui::checkbox(ui, &mut config.render.enabled, swoop_i18n::tr!("使用隔离浏览器渲染"))
                             .on_hover_text(swoop_i18n::tr!("运行所选 Chromium 浏览器，使用临时用户目录，不读取已登录浏览器的数据。浏览器流量单独计数。HTTPS 仅限制目标域与端口，无法检查加密请求路径的 robots 或排除规则。"));
                         if config.render.enabled {
                             egui::Grid::new("grabber_render_config").num_columns(2).spacing([16.0, 8.0]).show(ui, |ui| {
                                 ui.label("Chrome / Edge / Chromium");
                                 let mut executable = config.render.executable.display().to_string();
-                                if ui.add(TextEdit::singleline(&mut executable).desired_width(430.0).hint_text(swoop_i18n::tr!("浏览器可执行文件的完整路径"))).changed() {
+                                if ui.add(super::field(&mut executable).desired_width(430.0).hint_text(swoop_i18n::tr!("浏览器可执行文件的完整路径"))).changed() {
                                     config.render.executable = super::add_dialog::expand_tilde(&executable);
                                 }
                                 ui.end_row();
                                 ui.label(swoop_i18n::tr!("渲染范围"));
-                                ui.checkbox(&mut config.render.every_html_page, swoop_i18n::tr!("每个 HTML 页面（关闭时仅首页）"));
+                                crate::ui::checkbox(ui, &mut config.render.every_html_page, swoop_i18n::tr!("每个 HTML 页面（关闭时仅首页）"));
                                 ui.end_row();
                                 ui.label(swoop_i18n::tr!("加载等待"));
                                 ui.add(egui::DragValue::new(&mut config.render.virtual_time_ms).range(100..=60_000).suffix(" ms"));
@@ -133,18 +149,35 @@ impl SwoopApp {
                             });
                         }
                     });
+                    ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if super::primary_button(ui, &p, swoop_i18n::tr!("新建并开始")).clicked() {
+                        ui.spacing_mut().item_spacing.x = 10.0;
+                        if super::primary_button(
+                            ui,
+                            &p,
+                            &format!("{}  {}", egui_phosphor::regular::PLAY, swoop_i18n::tr!("新建并开始")),
+                        )
+                        .clicked()
+                        {
                             action = Some(ProjectAction::Create);
                         }
-                        if ui.button(swoop_i18n::tr!("打开已有项目")).clicked() {
+                        if super::ghost_button(ui, &p, swoop_i18n::tr!("打开已有项目")).clicked() {
                             action = Some(ProjectAction::Open);
                         }
-                        if ui.add_enabled(self.grabber.snapshot.is_some(), egui::Button::new(swoop_i18n::tr!("继续抓取"))).clicked()
-                        {
-                            action = Some(ProjectAction::Run);
-                        }
-                        ui.menu_button(swoop_i18n::tr!("最近项目"), |ui| {
+                        ui.add_enabled_ui(self.grabber.snapshot.is_some(), |ui| {
+                            if super::ghost_button(ui, &p, swoop_i18n::tr!("继续抓取")).clicked() {
+                                action = Some(ProjectAction::Run);
+                            }
+                        });
+                        let recent = super::tool_button(
+                            ui,
+                            &p,
+                            egui_phosphor::regular::CLOCK_COUNTER_CLOCKWISE,
+                            Some(swoop_i18n::tr!("最近项目")),
+                            true,
+                        );
+                        egui::Popup::menu(&recent).show(|ui| {
+                            ui.set_min_width(260.0);
                             for path in &self.grabber.recent {
                                 if ui.button(path.display().to_string()).clicked() {
                                     self.grabber.config.output_dir = path.clone();
@@ -155,11 +188,12 @@ impl SwoopApp {
                         });
                     });
                 });
-                if busy && ui.button(swoop_i18n::tr!("停止抓取")).clicked() {
+                ui.add_space(8.0);
+                if busy && super::danger_button(ui, &p, &format!("{}  {}", egui_phosphor::regular::STOP, swoop_i18n::tr!("停止抓取"))).clicked() {
                     self.grabber.stop();
                 }
                 if let Some(error) = &self.grabber.error {
-                    ui.colored_label(p.danger, error);
+                    dialog::error(ui, &p, error);
                 }
                 if let Some(snapshot) = &self.grabber.snapshot {
                     use swoop_grabber::ProjectStatus;
@@ -170,26 +204,47 @@ impl SwoopApp {
                         ProjectStatus::Cancelled => swoop_i18n::tr!("已停止"),
                         ProjectStatus::Limited => swoop_i18n::tr!("已达限制"),
                     };
-                    ui.separator();
-                    ui.label(swoop_i18n::trf!(
-                        "{status} · {} 已保存 · {} 失败 · {}",
-                        snapshot.downloaded(),
-                        snapshot.failed(),
-                        super::format::bytes(snapshot.received_bytes)
-                    ));
+                    ui.add_space(4.0);
+                    dialog::group_title(ui, &p, swoop_i18n::tr!("项目进度"));
+                    egui::Frame::new()
+                        .fill(p.group)
+                        .stroke(egui::Stroke::new(1.0, p.border))
+                        .corner_radius(egui::CornerRadius::same(10))
+                        .inner_margin(egui::Margin::same(14))
+                        .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let color = match snapshot.status {
+                            ProjectStatus::Running => p.accent,
+                            ProjectStatus::Complete => p.success,
+                            ProjectStatus::Limited => p.tint_amber,
+                            _ => p.text_muted,
+                        };
+                        super::pill(ui, status, p.soft(color), color);
+                        ui.label(RichText::new(swoop_i18n::trf!(
+                            "{} 已保存 · {} 失败 · {}",
+                            snapshot.downloaded(),
+                            snapshot.failed(),
+                            super::format::bytes(snapshot.received_bytes)
+                        )).color(p.text));
+                    });
                     if snapshot.rendered_network_bytes > 0 {
-                        ui.label(swoop_i18n::trf!("浏览器流量：{}", super::format::bytes(snapshot.rendered_network_bytes)));
+                        dialog::note(ui, &p, &swoop_i18n::trf!("浏览器流量：{}", super::format::bytes(snapshot.rendered_network_bytes)));
                     }
                     if let Some(entry) = &snapshot.entry_path {
-                        if ui.button(swoop_i18n::tr!("显示离线首页")).clicked() {
-                            super::task_list::reveal_in_file_manager(entry);
-                        }
-                        ui.add(
-                            egui::Label::new(RichText::new(entry.display().to_string()).size(12.0).color(p.text_muted))
-                                .truncate(),
-                        );
+                        ui.add_space(4.0);
+                        ui.horizontal(|ui| {
+                            if super::ghost_button(ui, &p, swoop_i18n::tr!("显示离线首页")).clicked() {
+                                super::task_list::reveal_in_file_manager(entry);
+                            }
+                            ui.add(
+                                egui::Label::new(RichText::new(entry.display().to_string()).size(12.0).color(p.text_muted))
+                                    .truncate(),
+                            );
+                        });
                     }
-                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.4).max(160.0)).show(ui, |ui| {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.3).max(140.0)).show(ui, |ui| {
                         for page in snapshot.pages.iter().rev().take(100) {
                             let state = match &page.state {
                                 swoop_grabber::PageState::Pending => swoop_i18n::tr!("等待"),
@@ -197,7 +252,17 @@ impl SwoopApp {
                                 swoop_grabber::PageState::Failed(_) => swoop_i18n::tr!("失败"),
                                 swoop_grabber::PageState::Skipped(_) => swoop_i18n::tr!("跳过"),
                             };
-                            let response = ui.add(egui::Label::new(format!("{state}  {}", page.url)).truncate());
+                            let color = match &page.state {
+                                swoop_grabber::PageState::Downloaded => p.success,
+                                swoop_grabber::PageState::Failed(_) => p.danger,
+                                _ => p.text_muted,
+                            };
+                            let response = ui
+                                .horizontal(|ui| {
+                                    super::pill(ui, state, p.soft(color), color);
+                                    ui.add(egui::Label::new(RichText::new(&page.url).size(12.5).color(p.text)).truncate());
+                                })
+                                .response;
                             if let swoop_grabber::PageState::Failed(error) | swoop_grabber::PageState::Skipped(error) =
                                 &page.state
                             {
@@ -205,7 +270,9 @@ impl SwoopApp {
                             }
                         }
                     });
+                        });
                 }
+                });
             });
         self.grabber.open = open;
         if let Some(action) = action {

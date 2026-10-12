@@ -38,10 +38,18 @@ pub fn builder(title: &str, size: egui::Vec2, pos: Option<Pos2>) -> ViewportBuil
 /// eframe 0.36 只有在带事件循环的回调里才能为立即视口建窗口；定时重绘帧（winit `new_events`）
 /// 里建不出来，egui 会因回调未被调用而 panic。所以新窗口先登记成延迟视口，由 eframe 在下一帧开头
 /// （`initialized_all_windows`）建好窗口，之后再按立即视口画。返回 false 表示窗口还没建好。
-fn ensure_window(ctx: &egui::Context, id: ViewportId, builder: &ViewportBuilder, fill: egui::Color32) -> bool {
+fn ensure_window(ctx: &egui::Context, id: ViewportId, builder: &ViewportBuilder, p: &Palette) -> bool {
+    // 窗口建好后把原生标题栏切到应用主题；窗口每次重建都会先经过未就绪的帧，届时清掉标记
+    let themed = id.0.with("native_theme");
     if ctx.input(|i| i.raw.viewports.get(&id).is_some_and(|info| info.native_pixels_per_point.is_some())) {
+        if ctx.data(|d| d.get_temp::<crate::theme::Mode>(themed)) != Some(p.mode) {
+            ctx.send_viewport_cmd_to(id, ViewportCommand::SetTheme(p.system_theme()));
+            ctx.data_mut(|d| d.insert_temp(themed, p.mode));
+        }
         return true;
     }
+    ctx.data_mut(|d| d.remove::<crate::theme::Mode>(themed));
+    let fill = p.surface;
     ctx.show_viewport_deferred(id, builder.clone(), move |ui, _| {
         egui::CentralPanel::default().frame(Frame::new().fill(fill)).show(ui, |_| {});
     });
@@ -57,7 +65,7 @@ pub fn show(
     p: &Palette,
     add_contents: impl FnOnce(&mut Ui),
 ) -> bool {
-    if !ensure_window(ctx, id, &builder, p.surface) {
+    if !ensure_window(ctx, id, &builder, p) {
         return false;
     }
     let mut add_contents = Some(add_contents);

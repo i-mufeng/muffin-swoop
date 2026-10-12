@@ -45,6 +45,16 @@ pub struct Palette {
     /// 卡片、输入框
     pub surface: Color32,
     pub surface_hover: Color32,
+    /// 弹窗内的分组卡片
+    pub group: Color32,
+    /// 输入框底色
+    pub input: Color32,
+    /// 凹陷的轨道（分段控件底槽）
+    pub inset: Color32,
+    /// 轨道里凸起的选中块
+    pub raised: Color32,
+    /// 开关关闭时的底色
+    pub toggle_off: Color32,
     pub border: Color32,
     pub text: Color32,
     pub text_muted: Color32,
@@ -76,6 +86,11 @@ impl Palette {
             panel: Color32::from_rgb(0x10, 0x13, 0x1a),
             surface: Color32::from_rgb(0x16, 0x1a, 0x23),
             surface_hover: Color32::from_rgb(0x1d, 0x22, 0x2e),
+            group: Color32::from_rgb(0x1a, 0x1e, 0x28),
+            input: Color32::from_rgb(0x0f, 0x12, 0x19),
+            inset: Color32::from_rgb(0x0f, 0x12, 0x19),
+            raised: Color32::from_rgb(0x2a, 0x30, 0x3f),
+            toggle_off: Color32::from_rgb(0x36, 0x3d, 0x4d),
             border: Color32::from_rgb(0x25, 0x2b, 0x38),
             text: Color32::from_rgb(0xee, 0xf0, 0xf5),
             text_muted: Color32::from_rgb(0x8f, 0x98, 0xab),
@@ -104,6 +119,11 @@ impl Palette {
             panel: Color32::from_rgb(0xee, 0xf0, 0xf5),
             surface: Color32::WHITE,
             surface_hover: Color32::from_rgb(0xf3, 0xf5, 0xf9),
+            group: Color32::from_rgb(0xf7, 0xf8, 0xfb),
+            input: Color32::WHITE,
+            inset: Color32::from_rgb(0xe9, 0xec, 0xf2),
+            raised: Color32::WHITE,
+            toggle_off: Color32::from_rgb(0xd3, 0xd8, 0xe2),
             border: Color32::from_rgb(0xe1, 0xe5, 0xee),
             text: Color32::from_rgb(0x16, 0x1a, 0x24),
             text_muted: Color32::from_rgb(0x63, 0x6b, 0x7e),
@@ -134,6 +154,14 @@ impl Palette {
         Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
     }
 
+    /// 原生窗口（标题栏、系统对话框）使用的主题
+    pub fn system_theme(&self) -> egui::SystemTheme {
+        match self.mode {
+            Mode::Dark => egui::SystemTheme::Dark,
+            Mode::Light => egui::SystemTheme::Light,
+        }
+    }
+
     pub fn apply(&self, ctx: &egui::Context) {
         let mut v = match self.mode {
             Mode::Dark => Visuals::dark(),
@@ -143,6 +171,7 @@ impl Palette {
         v.window_fill = self.surface;
         v.extreme_bg_color = self.bg;
         v.faint_bg_color = self.surface;
+        v.text_edit_bg_color = Some(self.input);
         v.override_text_color = Some(self.text);
         v.hyperlink_color = self.accent;
         v.window_corner_radius = CornerRadius::same(14);
@@ -188,17 +217,27 @@ impl Palette {
         w.open.fg_stroke = Stroke::new(1.0, self.text);
         w.open.corner_radius = r;
 
-        ctx.set_visuals(v);
+        // egui 按系统主题在 dark/light 两套样式间切换，`set_visuals` 只改当前那套：
+        // 系统是浅色而应用选深色时，控件会用回 egui 默认的浅色样式。两套都写同一份，并锁定主题。
+        ctx.set_theme(match self.mode {
+            Mode::Dark => egui::Theme::Dark,
+            Mode::Light => egui::Theme::Light,
+        });
+        ctx.set_visuals_of(egui::Theme::Dark, v.clone());
+        ctx.set_visuals_of(egui::Theme::Light, v);
+        // 原生标题栏（Windows）跟随应用主题而非系统主题；独立弹窗在 `popup::show` 里各自设置
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::SetTheme(self.system_theme()));
         ctx.all_styles_mut(|s| {
             s.spacing.item_spacing = vec2(8.0, 6.0);
-            s.spacing.button_padding = vec2(12.0, 6.0);
-            s.spacing.interact_size.y = 28.0;
+            s.spacing.button_padding = vec2(14.0, 7.0);
+            s.spacing.interact_size.y = 32.0;
             s.spacing.window_margin = egui::Margin::same(18);
             s.spacing.menu_margin = egui::Margin::same(8);
             s.spacing.icon_width = 16.0;
-            // 滚动条常驻一条细把手（仅内容溢出时出现），提示弹窗下方还有内容；悬停时照常展开。
+            // 滚动条平时隐藏，悬停或滚动时才浮出细把手
             s.spacing.scroll.floating_width = 4.0;
-            s.spacing.scroll.dormant_handle_opacity = 0.5;
+            s.spacing.scroll.dormant_handle_opacity = 0.0;
+            s.spacing.scroll.dormant_background_opacity = 0.0;
             s.interaction.selectable_labels = false;
             s.text_styles.insert(TextStyle::Heading, FontId::proportional(20.0));
             s.text_styles.insert(TextStyle::Body, FontId::proportional(14.0));

@@ -79,8 +79,8 @@ impl NativeDrag {
     }
     pub fn settings_ui(&mut self, ui: &mut egui::Ui, store: &Store) {
         let mut config = self.config.clone();
-        ui.checkbox(&mut config.allow_drop_in, swoop_i18n::tr!("拖入链接和链接文件"));
-        ui.checkbox(&mut config.allow_drag_out, swoop_i18n::tr!("将已完成文件拖到其他应用"));
+        crate::ui::checkbox(ui, &mut config.allow_drop_in, swoop_i18n::tr!("拖入链接和链接文件"));
+        crate::ui::checkbox(ui, &mut config.allow_drag_out, swoop_i18n::tr!("将已完成文件拖到其他应用"));
         if config != self.config {
             match serde_json::to_string(&config)
                 .map_err(|error| error.to_string())

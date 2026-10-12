@@ -24,6 +24,10 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 
 ## UI 约定
 
+- 弹窗统一用 `ui/dialog.rs` 骨架：`dialog::modal`（非模态用 `dialog::window`）+ `header` + `body` + `group`/`row` + `footer`；footer 是右到左布局，主按钮先加（在最右），删除/覆盖等用 `danger_button` 放左侧。`popup::show` 的独立窗口有系统标题栏，用 `dialog::heading`。
+- 控件：复选框用 `ui::checkbox` / `ui::Check`（egui 自带的沿用控件圆角，16px 方框会被画成圆）；成组单选用 `ui::segmented`，开关用 `ui::toggle`，整行导航用 `ui::nav_item`，顶栏按钮用 `ui::tool_button` 配 `egui::Popup::menu`。
+- 主题只通过 `Palette::apply` 切换：它同时写 egui 的 dark/light 两套样式、锁定主题并同步原生标题栏；不要直接 `ctx.set_visuals`（只改当前那套，系统主题与应用主题不同时控件会用回 egui 默认样式）。
+- 侧栏只放任务筛选、队列、分类和设置；媒体下载、站点抓取等进阶入口放顶栏「更多操作」（可在「视图 → 工具栏」固定到顶栏）。
 - 吐司在 `ui/toast.rs`，右下角 `Area`；引擎事件（完成/失败）和剪贴板链接都走它，不要再加第二套应用内提示机制。系统通知（`notifications.rs`）只在窗口不在前台时补充提醒，不替代吐司。
 - 自动截图（`--features screenshot`）抓的是首帧，看不到任何 `Area`（吐司、Modal），验证它们要实际运行。
 - `SWOOP_DEMO=1` 混入假任务与假吐司，只在 UI 层拼 `TaskSnapshot`，不经过引擎。

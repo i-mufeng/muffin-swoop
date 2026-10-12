@@ -138,7 +138,7 @@ impl SwoopApp {
         let mut export = false;
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!busy, |ui| {
-                if ui.checkbox(&mut all, swoop_i18n::tr!("全选当前结果")).changed() {
+                if crate::ui::checkbox(ui, &mut all, swoop_i18n::tr!("全选当前结果")).changed() {
                     self.task_transfer.select_visible(tasks, all);
                 }
             });

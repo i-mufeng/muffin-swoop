@@ -1,5 +1,4 @@
 use crate::app::SwoopApp;
-use egui::{Frame, Margin, RichText};
 use swoop_core::{TaskId, TaskProperties, TaskStatus};
 
 pub struct TaskEditor {
@@ -50,24 +49,32 @@ impl SwoopApp {
         let mut save = false;
         let mut update_url = false;
         let mut save_ftp = false;
-        let modal = egui::Modal::new(egui::Id::new("task_properties"))
-            .frame(Frame::window(&ctx.style_of(ctx.theme())).fill(p.surface).inner_margin(Margin::same(22)))
-            .show(ctx, |ui| {
-                ui.set_width(530.0);
-                ui.label(RichText::new(swoop_i18n::tr!("下载属性")).size(18.0).strong());
-                ui.add(egui::Label::new(&task.file_name).truncate());
-                ui.add_space(12.0);
-                // 操作按钮分散在各段里，整块随窗口高度滚动。
-                super::modal_body(ui, "task_properties_body", 160.0, |ui| {
-                    ui.label(swoop_i18n::tr!("描述"));
-                    ui.add(
-                        egui::TextEdit::multiline(&mut editor.description)
-                            .desired_width(f32::INFINITY)
-                            .desired_rows(3)
-                            .char_limit(4096),
-                    );
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut editor.limited, swoop_i18n::tr!("任务限速"));
+        let mut close = false;
+        let editable = matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
+        let modal = super::dialog::modal("task_properties", &p).show(ctx, |ui| {
+            use super::dialog;
+            ui.set_width(560.0);
+            close |= dialog::header(
+                ui,
+                &p,
+                egui_phosphor::regular::NOTE_PENCIL,
+                swoop_i18n::tr!("下载属性"),
+                Some(&task.file_name),
+            );
+            dialog::body(ui, "task_properties_body", |ui| {
+                dialog::group(ui, &p, None, |ui| {
+                    dialog::row_stack(ui, &p, swoop_i18n::tr!("描述"), None, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut editor.description)
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(3)
+                                .margin(egui::Margin::symmetric(10, 8))
+                                .char_limit(4096),
+                        );
+                    });
+                    dialog::row(ui, &p, swoop_i18n::tr!("任务限速"), None, |ui| {
+                        super::toggle(ui, &p, &mut editor.limited);
+                        ui.add_space(4.0);
                         ui.add_enabled(
                             editor.limited,
                             egui::DragValue::new(&mut editor.kib_per_second)
@@ -75,42 +82,50 @@ impl SwoopApp {
                                 .suffix(" KiB/s"),
                         );
                     });
-                    save = super::primary_button(ui, &p, swoop_i18n::tr!("保存属性")).clicked();
-                    if let Some(ftp) = &mut editor.ftp {
-                        ui.separator();
-                        let editable =
-                            matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
-                        ui.add_enabled_ui(editable, |ui| {
-                            ftp.ui(ui, task.url.starts_with("ftps:"));
-                            save_ftp = ui.button(swoop_i18n::tr!("应用 FTP 设置与登录")).clicked();
-                        });
-                    }
-                    ui.add_space(12.0);
-                    ui.separator();
-                    ui.label(swoop_i18n::tr!("下载地址"));
-                    ui.add(egui::TextEdit::singleline(&mut editor.url).desired_width(f32::INFINITY));
-                    let editable =
-                        matches!(task.status, TaskStatus::Paused | TaskStatus::Failed(_) | TaskStatus::Queued);
-                    update_url = ui
-                        .add_enabled(
-                            editable && editor.url.trim() != task.url,
-                            egui::Button::new(swoop_i18n::tr!("更新地址")),
-                        )
-                        .clicked();
-                    ui.label(
-                        RichText::new(if editable {
+                });
+
+                dialog::group(ui, &p, None, |ui| {
+                    dialog::row_stack(
+                        ui,
+                        &p,
+                        swoop_i18n::tr!("下载地址"),
+                        Some(if editable {
                             swoop_i18n::tr!("更新后重新检查续传条件")
                         } else {
                             swoop_i18n::tr!("暂停下载后可更新地址")
-                        })
-                        .size(12.0)
-                        .color(p.text_muted),
+                        }),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.add(super::field(&mut editor.url).desired_width(ui.available_width() - 110.0));
+                                ui.add_enabled_ui(editable && editor.url.trim() != task.url, |ui| {
+                                    update_url = super::ghost_button(ui, &p, swoop_i18n::tr!("更新地址")).clicked();
+                                });
+                            });
+                        },
                     );
-                    if let Some(error) = &editor.error {
-                        ui.colored_label(p.danger, error);
-                    }
                 });
+
+                if let Some(ftp) = &mut editor.ftp {
+                    dialog::group(ui, &p, None, |ui| {
+                        dialog::row_stack(ui, &p, "FTP", None, |ui| {
+                            ui.add_enabled_ui(editable, |ui| {
+                                ftp.ui(ui, task.url.starts_with("ftps:"));
+                                ui.add_space(4.0);
+                                save_ftp =
+                                    super::ghost_button(ui, &p, swoop_i18n::tr!("应用 FTP 设置与登录")).clicked();
+                            });
+                        });
+                    });
+                }
+                if let Some(error) = &editor.error {
+                    dialog::error(ui, &p, error);
+                }
             });
+            dialog::footer(ui, &p, |ui| {
+                save = super::primary_button(ui, &p, swoop_i18n::tr!("保存属性")).clicked();
+                close |= super::ghost_button(ui, &p, swoop_i18n::tr!("关闭")).clicked();
+            });
+        });
         if save {
             let properties = TaskProperties {
                 description: editor.description.clone(),
@@ -162,7 +177,7 @@ impl SwoopApp {
                 Err(error) => editor.error = Some(error),
             }
         }
-        if modal.should_close() {
+        if close || modal.should_close() {
             self.task_editor = None;
         }
     }

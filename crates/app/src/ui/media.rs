@@ -1,3 +1,4 @@
+use super::dialog;
 use crate::app::SwoopApp;
 use crate::media_tasks::{MediaNetworkMode, MediaPreferences, MediaStatus};
 use egui::{Align, Layout, RichText, TextEdit};
@@ -100,7 +101,7 @@ impl LoginForm {
     }
     fn ui(&mut self, ui: &mut egui::Ui, source: &str) -> bool {
         self.bind_source(source);
-        let mut changed = ui.checkbox(&mut self.enabled, swoop_i18n::tr!("本次登录")).changed();
+        let mut changed = crate::ui::checkbox(ui, &mut self.enabled, swoop_i18n::tr!("本次登录")).changed();
         if !self.enabled {
             return changed;
         }
@@ -152,7 +153,7 @@ impl LoginForm {
             ui.horizontal(|ui| {
                 ui.label(swoop_i18n::tr!("Cookie 路径"));
                 changed |= ui.add(TextEdit::singleline(&mut self.cookie_path).desired_width(160.0)).changed();
-                changed |= ui.checkbox(&mut self.cookie_secure, swoop_i18n::tr!("仅 HTTPS")).changed();
+                changed |= crate::ui::checkbox(ui, &mut self.cookie_secure, swoop_i18n::tr!("仅 HTTPS")).changed();
             });
         }
         ui.weak(swoop_i18n::tr!("仅用于此站点本次媒体下载；退出后需重新输入。"));
@@ -341,7 +342,7 @@ fn legacy_mms(raw: &str) -> bool {
 fn rate_control(ui: &mut egui::Ui, bytes_per_second: &mut u64) {
     ui.horizontal(|ui| {
         let mut enabled = *bytes_per_second != 0;
-        if ui.checkbox(&mut enabled, swoop_i18n::tr!("限制")).changed() {
+        if crate::ui::checkbox(ui, &mut enabled, swoop_i18n::tr!("限制")).changed() {
             *bytes_per_second = if enabled { 256 * 1024 } else { 0 };
         }
         if enabled {
@@ -401,430 +402,489 @@ impl SwoopApp {
         let mut action = None;
         let mut save_preferences = false;
         let mut inspect = false;
-        let max_height = ctx.content_rect().height() - 40.0;
-        egui::Window::new(swoop_i18n::tr!("媒体下载"))
-            .open(&mut open)
-            .default_width(690.0)
-            .max_width(ctx.content_rect().width() - 40.0)
-            // 带 vscroll 的窗口高度不随内容增长（默认 420 且会被持久化），给足表单高度免得底部按钮被截掉。
-            .min_height(max_height.min(760.0))
-            .max_height(max_height)
-            .vscroll(true)
-            .resizable(true)
-            .show(ctx, |ui| {
-                ui.label(RichText::new("HLS / DASH / MMS").strong());
+        dialog::window(swoop_i18n::tr!("媒体下载"), &p).auto_sized().show(ctx, |ui| {
+            // 固定宽度、高度随内容；主体超出窗口时在 `dialog::body` 里滚动
+            ui.set_width((ctx.content_rect().width() - 40.0).min(700.0));
+            if dialog::header(
+                ui,
+                &p,
+                egui_phosphor::regular::FILM_STRIP,
+                swoop_i18n::tr!("媒体下载"),
+                Some("HLS / DASH / MMS"),
+            ) {
+                open = false;
+            }
+            dialog::body(ui, "media_body", |ui| {
                 if !self.media_window.pending.is_empty() {
                     ui.horizontal(|ui| {
-                        ui.label(swoop_i18n::trf!("另有 {} 个媒体链接待处理", self.media_window.pending.len()));
-                        if ui.button(swoop_i18n::tr!("跳过当前")).clicked() {
+                        dialog::note(
+                            ui,
+                            &p,
+                            &swoop_i18n::trf!("另有 {} 个媒体链接待处理", self.media_window.pending.len()),
+                        );
+                        if super::ghost_button(ui, &p, swoop_i18n::tr!("跳过当前")).clicked() {
                             self.media_window.next();
                         }
                     });
+                    ui.add_space(8.0);
                 }
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("链接"));
-                    // 按钮先从右往左排，输入框只占剩余宽度；按钮挤出右缘会让可缩放窗口逐帧变宽。
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if self.media_window.inspection.is_some() {
-                            if ui.button(swoop_i18n::tr!("取消检查")).clicked()
-                                && let Some(inspection) = self.media_window.inspection.take()
-                            {
-                                inspection.cancel.cancel();
-                            }
-                            ui.spinner();
-                        } else {
-                            inspect = ui
-                                .add_enabled(
-                                    !self.media_window.url.trim().is_empty(),
-                                    egui::Button::new(swoop_i18n::tr!("检查清晰度")),
-                                )
-                                .clicked();
-                        }
-                        if ui
-                            .add(
-                                TextEdit::singleline(&mut self.media_window.url)
-                                    .desired_width(ui.available_width())
-                                    .hint_text(swoop_i18n::tr!("https://…/playlist.m3u8、manifest.mpd 或 mms://…")),
-                            )
-                            .changed()
-                        {
-                            // 改地址时不沿用浏览器上下文。
-                            self.media_window.source_edited();
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("清晰度"));
-                    let before = self.media_window.selection.video.clone();
-                    egui::ComboBox::from_id_salt("media_quality")
-                        .width(350.0)
-                        .selected_text(video_label(&before, self.media_window.info.as_ref()))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.media_window.selection.video,
-                                VideoSelection::Best,
-                                swoop_i18n::tr!("自动最佳"),
-                            );
-                            for height in [2160, 1080, 720, 480] {
-                                ui.selectable_value(
-                                    &mut self.media_window.selection.video,
-                                    VideoSelection::MaxHeight(height),
-                                    swoop_i18n::trf!("最高 {height}p"),
-                                );
-                            }
-                            if let Some(info) = &self.media_window.info {
-                                ui.separator();
-                                for variant in &info.variants {
-                                    ui.selectable_value(
-                                        &mut self.media_window.selection.video,
-                                        VideoSelection::Variant(variant.id.clone()),
-                                        variant_label(variant),
-                                    );
-                                }
-                            }
-                        });
-                    if before != self.media_window.selection.video {
-                        self.media_window.selection.audio = AudioSelection::Auto;
-                        self.media_window.selection.subtitle = SubtitleSelection::None;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("音轨"));
-                    egui::ComboBox::from_id_salt("media_audio")
-                        .width(350.0)
-                        .selected_text(audio_label(&self.media_window.selection.audio, self.media_window.info.as_ref()))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.media_window.selection.audio,
-                                AudioSelection::Auto,
-                                swoop_i18n::tr!("自动音轨"),
-                            );
-                            ui.selectable_value(
-                                &mut self.media_window.selection.audio,
-                                AudioSelection::None,
-                                swoop_i18n::tr!("无音轨"),
-                            );
-                            if let Some(info) = &self.media_window.info {
-                                for track in
-                                    info.audio_tracks_for(&self.media_window.selection.video).unwrap_or_default()
+                const LABEL_W: f32 = 64.0;
+                dialog::group(ui, &p, None, |ui| {
+                    dialog::field_row(ui, &p, swoop_i18n::tr!("链接"), LABEL_W, |ui| {
+                        // 按钮先从右往左排，输入框只占剩余宽度；按钮挤出右缘会让可缩放窗口逐帧变宽。
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if self.media_window.inspection.is_some() {
+                                if super::ghost_button(ui, &p, swoop_i18n::tr!("取消检查")).clicked()
+                                    && let Some(inspection) = self.media_window.inspection.take()
                                 {
-                                    let detail = format!(
-                                        "{} · {} · {}",
-                                        track.name,
-                                        track.language.as_deref().unwrap_or(swoop_i18n::tr!("未标注语言")),
-                                        track.codecs.as_deref().unwrap_or(swoop_i18n::tr!("未标注编码"))
-                                    );
-                                    ui.selectable_value(
-                                        &mut self.media_window.selection.audio,
-                                        AudioSelection::Track(track.id.clone()),
-                                        detail,
-                                    );
+                                    inspection.cancel.cancel();
                                 }
-                            }
-                        });
-                    if let Some(info) = &self.media_window.info {
-                        ui.label(if info.is_live { swoop_i18n::tr!("直播") } else { swoop_i18n::tr!("点播") });
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("字幕"));
-                    egui::ComboBox::from_id_salt("media_subtitle")
-                        .width(350.0)
-                        .selected_text(subtitle_label(
-                            &self.media_window.selection.subtitle,
-                            self.media_window.info.as_ref(),
-                        ))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.media_window.selection.subtitle,
-                                SubtitleSelection::None,
-                                swoop_i18n::tr!("关闭"),
-                            );
-                            if let Some(info) = &self.media_window.info {
-                                for track in
-                                    info.subtitle_tracks_for(&self.media_window.selection.video).unwrap_or_default()
-                                {
-                                    let supported = track.format != SubtitleFormat::Unsupported;
-                                    let label = format!(
-                                        "{} · {}{}",
-                                        track.name,
-                                        track.language.as_deref().unwrap_or(swoop_i18n::tr!("未标注语言")),
-                                        if supported { "" } else { swoop_i18n::tr!("（暂不支持）") }
-                                    );
-                                    ui.add_enabled_ui(supported, |ui| {
-                                        ui.selectable_value(
-                                            &mut self.media_window.selection.subtitle,
-                                            SubtitleSelection::Track(track.id.clone()),
-                                            label,
-                                        )
-                                        .on_hover_text(track.codecs.as_deref().unwrap_or(swoop_i18n::tr!("文本字幕")));
-                                    });
-                                }
-                            }
-                        });
-                    if self.media_window.selection.subtitle != SubtitleSelection::None {
-                        ui.label(swoop_i18n::tr!("文本字幕")).on_hover_text(swoop_i18n::tr!(
-                            "MP4 保存为 mov_text，MKV 保存为 SRT；部分原始样式不会保留。"
-                        ));
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("保存到"));
-                    ui.add(
-                        TextEdit::singleline(&mut self.media_window.destination)
-                            .desired_width(f32::INFINITY)
-                            .hint_text(swoop_i18n::tr!("完整 .mp4 或 .mkv 文件路径")),
-                    );
-                });
-                ui.collapsing(swoop_i18n::tr!("高级 · 本次登录"), |ui| {
-                    if self.media_window.login.ui(ui, &self.media_window.url) {
-                        self.media_window.clear_inspection();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label(swoop_i18n::tr!("本任务限速"));
-                    rate_control(ui, &mut self.media_window.speed_limit_bps);
-                });
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.media_window.record, swoop_i18n::tr!("限定时长"));
-                    if self.media_window.record {
-                        ui.add(
-                            egui::DragValue::new(&mut self.media_window.seconds)
-                                .range(1..=86400)
-                                .suffix(swoop_i18n::tr!(" 秒")),
-                        );
-                    }
-                });
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    start = super::primary_button(ui, &p, swoop_i18n::tr!("开始下载")).clicked();
-                    if ui.button(swoop_i18n::tr!("媒体设置")).clicked() {
-                        self.media_window.proxy_login =
-                            super::media_proxy::ProxyLoginForm::from_preferences(&self.media_tasks.preferences);
-                        self.media_window.preferences = Some(self.media_tasks.preferences.clone());
-                    }
-                });
-                if let Some(error) = &self.media_window.error {
-                    ui.colored_label(p.danger, error);
-                }
-                if let Some(error) = &self.media_tasks.network_error {
-                    ui.colored_label(p.danger, error);
-                }
-                if let Some(preferences) = &mut self.media_window.preferences {
-                    ui.separator();
-                    ui.add_enabled_ui(!self.media_tasks.active(), |ui| {
-                        egui::Grid::new("media_preferences").num_columns(2).show(ui, |ui| {
-                            ui.label("FFmpeg");
-                            let mut executable = preferences.ffmpeg.display().to_string();
-                            if ui.add(TextEdit::singleline(&mut executable).desired_width(460.0)).changed() {
-                                preferences.ffmpeg = executable.into();
-                            }
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("媒体网络"));
-                            egui::ComboBox::from_id_salt("media_network_mode")
-                                .selected_text(match preferences.network_mode {
-                                    MediaNetworkMode::Direct => swoop_i18n::tr!("直连"),
-                                    MediaNetworkMode::Global => swoop_i18n::tr!("跟随全局"),
-                                    MediaNetworkMode::Manual => swoop_i18n::tr!("手动代理"),
-                                })
-                                .show_ui(ui, |ui| {
-                                    for (mode, label) in [
-                                        (MediaNetworkMode::Direct, swoop_i18n::tr!("直连")),
-                                        (MediaNetworkMode::Global, swoop_i18n::tr!("跟随全局")),
-                                        (MediaNetworkMode::Manual, swoop_i18n::tr!("手动代理")),
-                                    ] {
-                                        ui.selectable_value(&mut preferences.network_mode, mode, label);
-                                    }
+                                ui.spinner();
+                            } else {
+                                ui.add_enabled_ui(!self.media_window.url.trim().is_empty(), |ui| {
+                                    inspect = super::ghost_button(ui, &p, swoop_i18n::tr!("检查清晰度")).clicked();
                                 });
-                            ui.end_row();
-                            if preferences.network_mode == MediaNetworkMode::Manual {
-                                let proxy = preferences.network.proxy.get_or_insert_with(|| {
-                                    swoop_media::MediaProxyConfig { url: String::new(), bypass: Vec::new() }
-                                });
-                                ui.label(swoop_i18n::tr!("代理地址"));
-                                ui.add(
-                                    TextEdit::singleline(&mut proxy.url)
-                                        .hint_text(swoop_i18n::tr!("http(s):// 或 socks5(h)://"))
-                                        .desired_width(450.0),
-                                );
-                                ui.end_row();
-                                ui.label(swoop_i18n::tr!("直连排除"));
-                                let mut bypass = proxy.bypass.join(", ");
-                                if ui
-                                    .add(
-                                        TextEdit::singleline(&mut bypass)
-                                            .hint_text(swoop_i18n::tr!("主机/IP，以逗号分隔")),
-                                    )
-                                    .changed()
-                                {
-                                    proxy.bypass = bypass
-                                        .split(',')
-                                        .map(str::trim)
-                                        .filter(|value| !value.is_empty())
-                                        .map(str::to_owned)
-                                        .collect();
-                                }
-                                ui.end_row();
                             }
-                            if preferences.network_mode == MediaNetworkMode::Manual {
-                                let endpoint =
-                                    preferences.network.proxy.as_ref().map(|p| p.url.as_str()).unwrap_or_default();
-                                self.media_window.proxy_login.ui(ui, endpoint);
-                            }
-                            ui.label(swoop_i18n::tr!("媒体总限速"));
-                            rate_control(ui, &mut preferences.network.speed_limit_bps);
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("默认任务限速"));
-                            rate_control(ui, &mut preferences.default_speed_limit_bps);
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("网络重试"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.request_retries)
-                                    .range(0..=10)
-                                    .suffix(swoop_i18n::tr!(" 次")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("重试间隔"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.retry_delay_ms)
-                                    .range(0..=30000)
-                                    .suffix(swoop_i18n::tr!(" 毫秒")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("直播刷新间隔"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.live_manifest_refresh_ms)
-                                    .range(50..=30000)
-                                    .suffix(swoop_i18n::tr!(" 毫秒")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("MMS 传输"));
-                            egui::ComboBox::from_id_salt("media_mms_transport")
-                                .selected_text(match preferences.mms_transport {
-                                    swoop_media::MmsTransport::Http => "HTTP (MMSH)",
-                                    swoop_media::MmsTransport::Tcp => "TCP (MMST)",
-                                })
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut preferences.mms_transport,
-                                        swoop_media::MmsTransport::Http,
-                                        "HTTP (MMSH)",
-                                    );
-                                    ui.selectable_value(
-                                        &mut preferences.mms_transport,
-                                        swoop_media::MmsTransport::Tcp,
-                                        "TCP (MMST)",
-                                    );
-                                });
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("默认录制时长"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.default_recording_secs)
-                                    .range(1..=86400)
-                                    .suffix(swoop_i18n::tr!(" 秒")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("直播收尾等待"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.live_finalize_grace_secs)
-                                    .range(0..=300)
-                                    .suffix(swoop_i18n::tr!(" 秒")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("恢复缓存目录"));
-                            let mut directory = preferences
-                                .network
-                                .resume_cache_dir
-                                .as_ref()
-                                .map(|p| p.display().to_string())
-                                .unwrap_or_default();
                             if ui
                                 .add(
-                                    TextEdit::singleline(&mut directory)
-                                        .hint_text(swoop_i18n::tr!("留空关闭分片缓存"))
-                                        .desired_width(450.0),
+                                    super::field(&mut self.media_window.url)
+                                        .desired_width(ui.available_width())
+                                        .hint_text(swoop_i18n::tr!("https://…/playlist.m3u8、manifest.mpd 或 mms://…")),
                                 )
                                 .changed()
                             {
-                                preferences.network.resume_cache_dir =
-                                    (!directory.trim().is_empty()).then(|| std::path::PathBuf::from(directory.trim()));
+                                // 改地址时不沿用浏览器上下文。
+                                self.media_window.source_edited();
                             }
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("分片内续传"));
-                            ui.checkbox(&mut preferences.network.resume_partial_segments, swoop_i18n::tr!("启用"));
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("断点保存间隔"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.partial_flush_bytes)
-                                    .range(16384..=16777216)
-                                    .suffix(" B"),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("缓存容量"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.cache_max_mib)
-                                    .range(16..=8192)
-                                    .suffix(" MiB"),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("单片缓存上限"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.network.cache_resource_mib)
-                                    .range(1..=64)
-                                    .suffix(" MiB"),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("同时下载"));
-                            ui.add(egui::DragValue::new(&mut preferences.concurrency).range(1..=32));
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("网络超时"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.timeout_secs)
-                                    .range(1..=3600)
-                                    .suffix(swoop_i18n::tr!(" 秒")),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("清单大小上限"));
-                            ui.add(
-                                egui::DragValue::new(&mut preferences.max_manifest_kib)
-                                    .range(1..=16 * 1024)
-                                    .suffix(" KiB"),
-                            );
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("子清单上限"));
-                            ui.add(egui::DragValue::new(&mut preferences.max_playlists).range(1..=128));
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("默认清晰度"));
-                            egui::ComboBox::from_id_salt("media_default_quality")
-                                .selected_text(
-                                    preferences
-                                        .default_max_height
-                                        .map(|height| swoop_i18n::trf!("最高 {height}p"))
-                                        .unwrap_or_else(|| swoop_i18n::tr!("自动最佳").into()),
-                                )
-                                .show_ui(ui, |ui| {
+                        });
+                    });
+                    dialog::field_row(ui, &p, swoop_i18n::tr!("清晰度"), LABEL_W, |ui| {
+                        let before = self.media_window.selection.video.clone();
+                        egui::ComboBox::from_id_salt("media_quality")
+                            .width(360.0)
+                            .selected_text(video_label(&before, self.media_window.info.as_ref()))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.media_window.selection.video,
+                                    VideoSelection::Best,
+                                    swoop_i18n::tr!("自动最佳"),
+                                );
+                                for height in [2160, 1080, 720, 480] {
                                     ui.selectable_value(
-                                        &mut preferences.default_max_height,
-                                        None,
-                                        swoop_i18n::tr!("自动最佳"),
+                                        &mut self.media_window.selection.video,
+                                        VideoSelection::MaxHeight(height),
+                                        swoop_i18n::trf!("最高 {height}p"),
                                     );
-                                    for height in [2160, 1080, 720, 480] {
+                                }
+                                if let Some(info) = &self.media_window.info {
+                                    ui.separator();
+                                    for variant in &info.variants {
                                         ui.selectable_value(
-                                            &mut preferences.default_max_height,
-                                            Some(height),
-                                            swoop_i18n::trf!("最高 {height}p"),
+                                            &mut self.media_window.selection.video,
+                                            VideoSelection::Variant(variant.id.clone()),
+                                            variant_label(variant),
                                         );
                                     }
-                                });
-                            ui.end_row();
-                            ui.label(swoop_i18n::tr!("优先音轨语言"));
-                            ui.add(
-                                TextEdit::singleline(&mut preferences.preferred_audio_language)
-                                    .hint_text(swoop_i18n::tr!("例如 zh、en；留空自动")),
+                                }
+                            });
+                        if before != self.media_window.selection.video {
+                            self.media_window.selection.audio = AudioSelection::Auto;
+                            self.media_window.selection.subtitle = SubtitleSelection::None;
+                        }
+                        if let Some(info) = &self.media_window.info {
+                            let kind = if info.is_live { swoop_i18n::tr!("直播") } else { swoop_i18n::tr!("点播") };
+                            let color = if info.is_live { p.danger } else { p.text_muted };
+                            super::pill(ui, kind, p.soft(color), color);
+                        }
+                    });
+                    dialog::field_row(ui, &p, swoop_i18n::tr!("音轨"), LABEL_W, |ui| {
+                        egui::ComboBox::from_id_salt("media_audio")
+                            .width(360.0)
+                            .selected_text(audio_label(
+                                &self.media_window.selection.audio,
+                                self.media_window.info.as_ref(),
+                            ))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.media_window.selection.audio,
+                                    AudioSelection::Auto,
+                                    swoop_i18n::tr!("自动音轨"),
+                                );
+                                ui.selectable_value(
+                                    &mut self.media_window.selection.audio,
+                                    AudioSelection::None,
+                                    swoop_i18n::tr!("无音轨"),
+                                );
+                                if let Some(info) = &self.media_window.info {
+                                    for track in
+                                        info.audio_tracks_for(&self.media_window.selection.video).unwrap_or_default()
+                                    {
+                                        let detail = format!(
+                                            "{} · {} · {}",
+                                            track.name,
+                                            track.language.as_deref().unwrap_or(swoop_i18n::tr!("未标注语言")),
+                                            track.codecs.as_deref().unwrap_or(swoop_i18n::tr!("未标注编码"))
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.media_window.selection.audio,
+                                            AudioSelection::Track(track.id.clone()),
+                                            detail,
+                                        );
+                                    }
+                                }
+                            });
+                    });
+                    dialog::field_row(ui, &p, swoop_i18n::tr!("字幕"), LABEL_W, |ui| {
+                        egui::ComboBox::from_id_salt("media_subtitle")
+                            .width(360.0)
+                            .selected_text(subtitle_label(
+                                &self.media_window.selection.subtitle,
+                                self.media_window.info.as_ref(),
+                            ))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.media_window.selection.subtitle,
+                                    SubtitleSelection::None,
+                                    swoop_i18n::tr!("关闭"),
+                                );
+                                if let Some(info) = &self.media_window.info {
+                                    for track in
+                                        info.subtitle_tracks_for(&self.media_window.selection.video).unwrap_or_default()
+                                    {
+                                        let supported = track.format != SubtitleFormat::Unsupported;
+                                        let label = format!(
+                                            "{} · {}{}",
+                                            track.name,
+                                            track.language.as_deref().unwrap_or(swoop_i18n::tr!("未标注语言")),
+                                            if supported { "" } else { swoop_i18n::tr!("（暂不支持）") }
+                                        );
+                                        ui.add_enabled_ui(supported, |ui| {
+                                            ui.selectable_value(
+                                                &mut self.media_window.selection.subtitle,
+                                                SubtitleSelection::Track(track.id.clone()),
+                                                label,
+                                            )
+                                            .on_hover_text(
+                                                track.codecs.as_deref().unwrap_or(swoop_i18n::tr!("文本字幕")),
+                                            );
+                                        });
+                                    }
+                                }
+                            });
+                        if self.media_window.selection.subtitle != SubtitleSelection::None {
+                            dialog::note(ui, &p, swoop_i18n::tr!("文本字幕"));
+                            ui.label(super::icon_text(egui_phosphor::regular::INFO, 14.0, p.text_muted)).on_hover_text(
+                                swoop_i18n::tr!("MP4 保存为 mov_text，MKV 保存为 SRT；部分原始样式不会保留。"),
                             );
-                            ui.end_row();
+                        }
+                    });
+                    dialog::field_row(ui, &p, swoop_i18n::tr!("保存到"), LABEL_W, |ui| {
+                        ui.add(
+                            super::field(&mut self.media_window.destination)
+                                .desired_width(ui.available_width())
+                                .hint_text(swoop_i18n::tr!("完整 .mp4 或 .mkv 文件路径")),
+                        );
+                    });
+                });
+
+                dialog::group(ui, &p, None, |ui| {
+                    dialog::row(ui, &p, swoop_i18n::tr!("本任务限速"), None, |ui| {
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            rate_control(ui, &mut self.media_window.speed_limit_bps);
                         });
-                        save_preferences = ui.button(swoop_i18n::tr!("保存媒体设置")).clicked();
+                    });
+                    dialog::row(ui, &p, swoop_i18n::tr!("限定时长"), None, |ui| {
+                        super::toggle(ui, &p, &mut self.media_window.record);
+                        if self.media_window.record {
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::DragValue::new(&mut self.media_window.seconds)
+                                    .range(1..=86400)
+                                    .suffix(swoop_i18n::tr!(" 秒")),
+                            );
+                        }
+                    });
+                });
+                egui::CollapsingHeader::new(RichText::new(swoop_i18n::tr!("高级 · 本次登录")).color(p.text_muted))
+                    .id_salt("media_login")
+                    .show(ui, |ui| {
+                        if self.media_window.login.ui(ui, &self.media_window.url) {
+                            self.media_window.clear_inspection();
+                        }
+                    });
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    start = super::primary_button(
+                        ui,
+                        &p,
+                        &format!("{}  {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, swoop_i18n::tr!("开始下载")),
+                    )
+                    .clicked();
+                    let settings_open = self.media_window.preferences.is_some();
+                    if super::ghost_button(
+                        ui,
+                        &p,
+                        &format!(
+                            "{}  {}",
+                            if settings_open { egui_phosphor::regular::CARET_UP } else { egui_phosphor::regular::GEAR },
+                            swoop_i18n::tr!("媒体设置")
+                        ),
+                    )
+                    .clicked()
+                    {
+                        if settings_open {
+                            self.media_window.preferences = None;
+                        } else {
+                            self.media_window.proxy_login =
+                                super::media_proxy::ProxyLoginForm::from_preferences(&self.media_tasks.preferences);
+                            self.media_window.preferences = Some(self.media_tasks.preferences.clone());
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                if let Some(error) = &self.media_window.error {
+                    dialog::error(ui, &p, error);
+                }
+                if let Some(error) = &self.media_tasks.network_error {
+                    dialog::error(ui, &p, error);
+                }
+                if let Some(preferences) = &mut self.media_window.preferences {
+                    dialog::group_title(ui, &p, swoop_i18n::tr!("媒体设置"));
+                    ui.add_enabled_ui(!self.media_tasks.active(), |ui| {
+                        egui::Frame::new()
+                            .fill(p.group)
+                            .stroke(egui::Stroke::new(1.0, p.border))
+                            .corner_radius(egui::CornerRadius::same(10))
+                            .inner_margin(egui::Margin::same(14))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                egui::Grid::new("media_preferences").num_columns(2).spacing([18.0, 10.0]).show(
+                                    ui,
+                                    |ui| {
+                                        ui.label("FFmpeg");
+                                        let mut executable = preferences.ffmpeg.display().to_string();
+                                        if ui.add(TextEdit::singleline(&mut executable).desired_width(460.0)).changed()
+                                        {
+                                            preferences.ffmpeg = executable.into();
+                                        }
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("媒体网络"));
+                                        egui::ComboBox::from_id_salt("media_network_mode")
+                                            .selected_text(match preferences.network_mode {
+                                                MediaNetworkMode::Direct => swoop_i18n::tr!("直连"),
+                                                MediaNetworkMode::Global => swoop_i18n::tr!("跟随全局"),
+                                                MediaNetworkMode::Manual => swoop_i18n::tr!("手动代理"),
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                for (mode, label) in [
+                                                    (MediaNetworkMode::Direct, swoop_i18n::tr!("直连")),
+                                                    (MediaNetworkMode::Global, swoop_i18n::tr!("跟随全局")),
+                                                    (MediaNetworkMode::Manual, swoop_i18n::tr!("手动代理")),
+                                                ] {
+                                                    ui.selectable_value(&mut preferences.network_mode, mode, label);
+                                                }
+                                            });
+                                        ui.end_row();
+                                        if preferences.network_mode == MediaNetworkMode::Manual {
+                                            let proxy = preferences.network.proxy.get_or_insert_with(|| {
+                                                swoop_media::MediaProxyConfig { url: String::new(), bypass: Vec::new() }
+                                            });
+                                            ui.label(swoop_i18n::tr!("代理地址"));
+                                            ui.add(
+                                                TextEdit::singleline(&mut proxy.url)
+                                                    .hint_text(swoop_i18n::tr!("http(s):// 或 socks5(h)://"))
+                                                    .desired_width(450.0),
+                                            );
+                                            ui.end_row();
+                                            ui.label(swoop_i18n::tr!("直连排除"));
+                                            let mut bypass = proxy.bypass.join(", ");
+                                            if ui
+                                                .add(
+                                                    TextEdit::singleline(&mut bypass)
+                                                        .hint_text(swoop_i18n::tr!("主机/IP，以逗号分隔")),
+                                                )
+                                                .changed()
+                                            {
+                                                proxy.bypass = bypass
+                                                    .split(',')
+                                                    .map(str::trim)
+                                                    .filter(|value| !value.is_empty())
+                                                    .map(str::to_owned)
+                                                    .collect();
+                                            }
+                                            ui.end_row();
+                                        }
+                                        if preferences.network_mode == MediaNetworkMode::Manual {
+                                            let endpoint = preferences
+                                                .network
+                                                .proxy
+                                                .as_ref()
+                                                .map(|p| p.url.as_str())
+                                                .unwrap_or_default();
+                                            self.media_window.proxy_login.ui(ui, endpoint);
+                                        }
+                                        ui.label(swoop_i18n::tr!("媒体总限速"));
+                                        rate_control(ui, &mut preferences.network.speed_limit_bps);
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("默认任务限速"));
+                                        rate_control(ui, &mut preferences.default_speed_limit_bps);
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("网络重试"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.request_retries)
+                                                .range(0..=10)
+                                                .suffix(swoop_i18n::tr!(" 次")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("重试间隔"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.retry_delay_ms)
+                                                .range(0..=30000)
+                                                .suffix(swoop_i18n::tr!(" 毫秒")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("直播刷新间隔"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.live_manifest_refresh_ms)
+                                                .range(50..=30000)
+                                                .suffix(swoop_i18n::tr!(" 毫秒")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("MMS 传输"));
+                                        egui::ComboBox::from_id_salt("media_mms_transport")
+                                            .selected_text(match preferences.mms_transport {
+                                                swoop_media::MmsTransport::Http => "HTTP (MMSH)",
+                                                swoop_media::MmsTransport::Tcp => "TCP (MMST)",
+                                            })
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut preferences.mms_transport,
+                                                    swoop_media::MmsTransport::Http,
+                                                    "HTTP (MMSH)",
+                                                );
+                                                ui.selectable_value(
+                                                    &mut preferences.mms_transport,
+                                                    swoop_media::MmsTransport::Tcp,
+                                                    "TCP (MMST)",
+                                                );
+                                            });
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("默认录制时长"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.default_recording_secs)
+                                                .range(1..=86400)
+                                                .suffix(swoop_i18n::tr!(" 秒")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("直播收尾等待"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.live_finalize_grace_secs)
+                                                .range(0..=300)
+                                                .suffix(swoop_i18n::tr!(" 秒")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("恢复缓存目录"));
+                                        let mut directory = preferences
+                                            .network
+                                            .resume_cache_dir
+                                            .as_ref()
+                                            .map(|p| p.display().to_string())
+                                            .unwrap_or_default();
+                                        if ui
+                                            .add(
+                                                TextEdit::singleline(&mut directory)
+                                                    .hint_text(swoop_i18n::tr!("留空关闭分片缓存"))
+                                                    .desired_width(450.0),
+                                            )
+                                            .changed()
+                                        {
+                                            preferences.network.resume_cache_dir = (!directory.trim().is_empty())
+                                                .then(|| std::path::PathBuf::from(directory.trim()));
+                                        }
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("分片内续传"));
+                                        crate::ui::checkbox(
+                                            ui,
+                                            &mut preferences.network.resume_partial_segments,
+                                            swoop_i18n::tr!("启用"),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("断点保存间隔"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.partial_flush_bytes)
+                                                .range(16384..=16777216)
+                                                .suffix(" B"),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("缓存容量"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.cache_max_mib)
+                                                .range(16..=8192)
+                                                .suffix(" MiB"),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("单片缓存上限"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.network.cache_resource_mib)
+                                                .range(1..=64)
+                                                .suffix(" MiB"),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("同时下载"));
+                                        ui.add(egui::DragValue::new(&mut preferences.concurrency).range(1..=32));
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("网络超时"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.timeout_secs)
+                                                .range(1..=3600)
+                                                .suffix(swoop_i18n::tr!(" 秒")),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("清单大小上限"));
+                                        ui.add(
+                                            egui::DragValue::new(&mut preferences.max_manifest_kib)
+                                                .range(1..=16 * 1024)
+                                                .suffix(" KiB"),
+                                        );
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("子清单上限"));
+                                        ui.add(egui::DragValue::new(&mut preferences.max_playlists).range(1..=128));
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("默认清晰度"));
+                                        egui::ComboBox::from_id_salt("media_default_quality")
+                                            .selected_text(
+                                                preferences
+                                                    .default_max_height
+                                                    .map(|height| swoop_i18n::trf!("最高 {height}p"))
+                                                    .unwrap_or_else(|| swoop_i18n::tr!("自动最佳").into()),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut preferences.default_max_height,
+                                                    None,
+                                                    swoop_i18n::tr!("自动最佳"),
+                                                );
+                                                for height in [2160, 1080, 720, 480] {
+                                                    ui.selectable_value(
+                                                        &mut preferences.default_max_height,
+                                                        Some(height),
+                                                        swoop_i18n::trf!("最高 {height}p"),
+                                                    );
+                                                }
+                                            });
+                                        ui.end_row();
+                                        ui.label(swoop_i18n::tr!("优先音轨语言"));
+                                        ui.add(
+                                            TextEdit::singleline(&mut preferences.preferred_audio_language)
+                                                .hint_text(swoop_i18n::tr!("例如 zh、en；留空自动")),
+                                        );
+                                        ui.end_row();
+                                    },
+                                );
+                            });
+                        ui.add_space(8.0);
+                        save_preferences = super::primary_button(ui, &p, swoop_i18n::tr!("保存媒体设置")).clicked();
                     });
                     if self.media_tasks.active() {
                         ui.label(
@@ -832,86 +892,114 @@ impl SwoopApp {
                         );
                     }
                 }
-                ui.separator();
-                egui::ScrollArea::vertical().max_height((ctx.content_rect().height() - 300.0).max(140.0)).show(
-                    ui,
-                    |ui| {
-                        if self.media_tasks.jobs.is_empty() {
-                            ui.label(swoop_i18n::tr!("暂无媒体下载"));
-                        }
-                        for job in self.media_tasks.jobs.iter().rev() {
-                            ui.push_id(job.id, |ui| {
+                dialog::group_title(ui, &p, swoop_i18n::tr!("下载记录"));
+                if self.media_tasks.jobs.is_empty() {
+                    dialog::note(ui, &p, swoop_i18n::tr!("暂无媒体下载"));
+                }
+                for job in self.media_tasks.jobs.iter().rev() {
+                    ui.push_id(job.id, |ui| {
+                        egui::Frame::new()
+                            .fill(p.group)
+                            .stroke(egui::Stroke::new(1.0, p.border))
+                            .corner_radius(egui::CornerRadius::same(10))
+                            .inner_margin(egui::Margin::symmetric(12, 10))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
                                 ui.horizontal(|ui| {
                                     let name = job.destination.file_name().unwrap_or_default().to_string_lossy();
-                                    ui.add(egui::Label::new(RichText::new(name).strong()).truncate());
-                                    ui.label(swoop_i18n::trf!(
-                                        "{} · {} · {} 秒",
-                                        job.status.label(),
-                                        super::format::bytes(job.bytes),
-                                        job.media_seconds
-                                    ));
-                                    ui.label(video_label(&job.selection.video, None));
-                                    if super::icon_button(
-                                        ui,
-                                        &p,
-                                        egui_phosphor::regular::GAUGE,
-                                        swoop_i18n::tr!("任务限速"),
-                                    )
-                                    .clicked()
-                                    {
-                                        self.media_window.rate_editor = Some((job.id, job.speed_limit_bps));
-                                    }
-                                    if job.status.active() {
-                                        if super::icon_button(
-                                            ui,
-                                            &p,
-                                            egui_phosphor::regular::STOP,
-                                            swoop_i18n::tr!("停止"),
-                                        )
-                                        .clicked()
-                                        {
-                                            action = Some((job.id, 0));
-                                        }
-                                    } else {
-                                        if job.auth_required
-                                            && !matches!(job.status, MediaStatus::Completed | MediaStatus::FileConflict)
-                                            && super::icon_button(
+                                    super::file_tile(ui, &p, super::filekind::FileKind::Video, 36.0);
+                                    ui.add_space(4.0);
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if job.status.active() {
+                                            if super::icon_button(
                                                 ui,
                                                 &p,
-                                                egui_phosphor::regular::KEY,
-                                                swoop_i18n::tr!("重新登录后下载"),
+                                                egui_phosphor::regular::STOP,
+                                                swoop_i18n::tr!("停止"),
                                             )
                                             .clicked()
-                                        {
-                                            action = Some((job.id, 3));
-                                        }
-                                        if !matches!(
-                                            job.status,
-                                            MediaStatus::Completed | MediaStatus::FileConflict | MediaStatus::NeedsAuth
-                                        ) && super::icon_button(
-                                            ui,
-                                            &p,
-                                            egui_phosphor::regular::ARROW_CLOCKWISE,
-                                            swoop_i18n::tr!("继续下载"),
-                                        )
-                                        .clicked()
-                                        {
-                                            action = Some((job.id, 1));
+                                            {
+                                                action = Some((job.id, 0));
+                                            }
+                                        } else {
+                                            if super::icon_button(
+                                                ui,
+                                                &p,
+                                                egui_phosphor::regular::TRASH,
+                                                swoop_i18n::tr!("移除记录，保留文件"),
+                                            )
+                                            .clicked()
+                                            {
+                                                action = Some((job.id, 2));
+                                            }
+                                            if !matches!(
+                                                job.status,
+                                                MediaStatus::Completed
+                                                    | MediaStatus::FileConflict
+                                                    | MediaStatus::NeedsAuth
+                                            ) && super::icon_button(
+                                                ui,
+                                                &p,
+                                                egui_phosphor::regular::ARROW_CLOCKWISE,
+                                                swoop_i18n::tr!("继续下载"),
+                                            )
+                                            .clicked()
+                                            {
+                                                action = Some((job.id, 1));
+                                            }
+                                            if job.auth_required
+                                                && !matches!(
+                                                    job.status,
+                                                    MediaStatus::Completed | MediaStatus::FileConflict
+                                                )
+                                                && super::icon_button(
+                                                    ui,
+                                                    &p,
+                                                    egui_phosphor::regular::KEY,
+                                                    swoop_i18n::tr!("重新登录后下载"),
+                                                )
+                                                .clicked()
+                                            {
+                                                action = Some((job.id, 3));
+                                            }
                                         }
                                         if super::icon_button(
                                             ui,
                                             &p,
-                                            egui_phosphor::regular::TRASH,
-                                            swoop_i18n::tr!("移除记录，保留文件"),
+                                            egui_phosphor::regular::GAUGE,
+                                            swoop_i18n::tr!("任务限速"),
                                         )
                                         .clicked()
                                         {
-                                            action = Some((job.id, 2));
+                                            self.media_window.rate_editor = Some((job.id, job.speed_limit_bps));
                                         }
-                                    }
+                                        ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                            ui.spacing_mut().item_spacing.y = 2.0;
+                                            ui.add(
+                                                egui::Label::new(RichText::new(name).strong().color(p.text)).truncate(),
+                                            );
+                                            ui.add(
+                                                egui::Label::new(
+                                                    RichText::new(
+                                                        swoop_i18n::trf!(
+                                                            "{} · {} · {} 秒",
+                                                            job.status.label(),
+                                                            super::format::bytes(job.bytes),
+                                                            job.media_seconds
+                                                        ) + " · "
+                                                            + &video_label(&job.selection.video, None),
+                                                    )
+                                                    .size(12.0)
+                                                    .color(p.text_muted),
+                                                )
+                                                .truncate(),
+                                            );
+                                        });
+                                    });
                                 });
                                 if let MediaStatus::Failed(error) = &job.status {
-                                    ui.colored_label(p.danger, error);
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(error).size(12.0).color(p.danger));
                                 }
                                 ui.add(
                                     egui::Label::new(
@@ -921,12 +1009,12 @@ impl SwoopApp {
                                     )
                                     .truncate(),
                                 );
-                                ui.separator();
                             });
-                        }
-                    },
-                );
+                        ui.add_space(6.0);
+                    });
+                }
             });
+        });
         self.media_window.open = open;
         if !open {
             self.media_window.login = LoginForm::default();
@@ -1021,14 +1109,16 @@ impl SwoopApp {
         let mut login_submit = false;
         if let Some((id, login)) = &mut self.media_window.reauthenticate {
             if let Some(job) = self.media_tasks.jobs.iter().find(|job| job.id == *id) {
-                egui::Window::new(swoop_i18n::tr!("重新登录"))
-                    .open(&mut login_open)
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ctx, |ui| {
-                        login.ui(ui, &job.url);
-                        login_submit = ui.button(swoop_i18n::tr!("登录并重新下载")).clicked();
+                dialog::modal("media_relogin", &p).show(ctx, |ui| {
+                    ui.set_width(460.0);
+                    if dialog::header(ui, &p, egui_phosphor::regular::KEY, swoop_i18n::tr!("重新登录"), None) {
+                        login_open = false;
+                    }
+                    dialog::body_fixed(ui, |ui| login.ui(ui, &job.url));
+                    dialog::footer(ui, &p, |ui| {
+                        login_submit = super::primary_button(ui, &p, swoop_i18n::tr!("登录并重新下载")).clicked();
                     });
+                });
             } else {
                 login_open = false;
             }
@@ -1056,18 +1146,28 @@ impl SwoopApp {
         let mut rate_open = true;
         let mut rate_save = false;
         if let Some((id, rate)) = &mut self.media_window.rate_editor {
-            egui::Window::new(swoop_i18n::tr!("任务限速"))
-                .id(egui::Id::new("media_task_rate"))
-                .open(&mut rate_open)
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
-                    if let Some(job) = self.media_tasks.jobs.iter().find(|job| job.id == *id) {
-                        ui.label(job.destination.file_name().unwrap_or_default().to_string_lossy());
+            dialog::modal("media_task_rate", &p).show(ctx, |ui| {
+                ui.set_width(420.0);
+                let name = self
+                    .media_tasks
+                    .jobs
+                    .iter()
+                    .find(|job| job.id == *id)
+                    .map(|job| job.destination.file_name().unwrap_or_default().to_string_lossy().into_owned());
+                if dialog::header(ui, &p, egui_phosphor::regular::GAUGE, swoop_i18n::tr!("任务限速"), name.as_deref())
+                {
+                    rate_open = false;
+                }
+                if name.is_some() {
+                    dialog::body_fixed(ui, |ui| {
                         rate_control(ui, rate);
-                        rate_save = ui.button(swoop_i18n::tr!("保存")).clicked();
-                    }
-                });
+                        ui.add_space(6.0);
+                    });
+                    dialog::footer(ui, &p, |ui| {
+                        rate_save = super::primary_button(ui, &p, swoop_i18n::tr!("保存")).clicked();
+                    });
+                }
+            });
         }
         if rate_save && let Some((id, rate)) = self.media_window.rate_editor {
             match self.media_tasks.set_speed_limit(id, rate) {

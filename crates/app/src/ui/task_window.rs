@@ -9,7 +9,7 @@ use crate::completion::FileAction;
 
 /// 同时打开的进度窗口上限；批量添加时不会弹出一排窗口
 const MAX_WINDOWS: usize = 8;
-const SIZE: egui::Vec2 = vec2(460.0, 250.0);
+const SIZE: egui::Vec2 = vec2(460.0, 270.0);
 
 pub struct TaskWindow {
     id: TaskId,
@@ -128,17 +128,32 @@ fn task_contents(
 ) {
     ui.spacing_mut().item_spacing.y = 6.0;
     ui.horizontal(|ui| {
-        super::task_list::status_view(ui, p, t, false);
-        ui.add(Label::new(RichText::new(&t.file_name).size(15.0).strong().color(p.text)).truncate());
+        super::file_tile(ui, p, super::filekind::FileKind::from_name(&t.file_name), 40.0);
+        ui.add_space(4.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            super::task_list::status_view(ui, p, t, false);
+            ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add(Label::new(RichText::new(&t.file_name).size(15.0).strong().color(p.text)).truncate());
+                ui.add(Label::new(RichText::new(&t.url).size(12.0).color(p.text_muted)).truncate());
+            });
+        });
     });
-    ui.add(Label::new(RichText::new(&t.url).size(12.0).color(p.text_muted)).truncate());
-    ui.add_space(8.0);
+    ui.add_space(10.0);
     progress::bar(ui, p, t, style);
-    ui.add_space(4.0);
+    ui.add_space(8.0);
 
     let row = |ui: &mut egui::Ui, label: &str, value: String| {
+        ui.spacing_mut().interact_size.y = 22.0;
         ui.horizontal(|ui| {
-            ui.label(RichText::new(label).size(12.5).color(p.text_muted));
+            let (rect, _) = ui.allocate_exact_size(vec2(56.0, 18.0), egui::Sense::hover());
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::proportional(12.5),
+                p.text_muted,
+            );
             ui.add(Label::new(RichText::new(value).size(12.5).color(p.text)).truncate());
         });
     };
@@ -167,6 +182,7 @@ fn task_contents(
     }
 
     ui.with_layout(Layout::bottom_up(Align::Max), |ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| match &t.status {
             TaskStatus::Completed => {
                 if primary_button(ui, p, swoop_i18n::tr!("打开")).clicked() {
