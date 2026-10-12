@@ -92,7 +92,7 @@ Chrome / Edge / Arc / Brave：打开 `chrome://extensions` → 开启「开发�
 
 - Swoop 侧在「设置 → 浏览器集成」里开关、改端口（默认 51230）、选择「直接下载」或「弹出确认」，并能看到扩展是否已连接。
 - 「弹出确认」在窗口隐藏到菜单栏时会唤回窗口，再显示预填好的新建任务对话框。
-- 下载接管监听 `downloads.onCreated`：先暂停浏览器下载，Swoop 探测成功才取消，否则恢复。被动媒体检测只记录候选，不自动开始下载。
+- 下载接管在 Chromium 上监听 `downloads.onDeterminingFilename`（文件名确定前拿住，接手成功就取消，浏览器下载面板不弹出），Firefox 监听 `downloads.onCreated` 先暂停；Swoop 探测成功才取消，否则放行。被动媒体检测只记录候选，不自动开始下载。
 - 右键链接/图片/视频 →「用 Swoop 下载」。
 - 扩展弹窗可打开「本页全部链接」或媒体选择页；缓存上限、检测开关、过期时间、批量并发等均可配置。
 - `npm run package` 产出的 zip 以 `manifest.json` 为包根，可直接上传 Chrome Web Store / AMO；版本取 `package.json`，与 `public/manifest.json` 不一致时报错。同版本重复打包会覆盖，且产物逐字节一致。

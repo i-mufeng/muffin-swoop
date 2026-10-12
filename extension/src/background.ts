@@ -1,8 +1,8 @@
 import { browser, isFirefox } from "./browser";
 // Service worker：接管浏览器下载、右键菜单、心跳与徽标。
 //
-// 交接协议（docs/browser-extension.md §3）：先暂停浏览器下载，Swoop 确认接手（200）才取消；
-// 其它任何情况都恢复浏览器下载，用户无感。
+// 交接协议（docs/browser-extension.md §3）：先拿住浏览器下载（Chromium 不确定文件名，Firefox 暂停），
+// Swoop 确认接手（200）才取消；其它任何情况都放行浏览器下载，用户无感。
 
 import { ping, sendTask, supportsMedia, type HandoffResult, type TaskBody } from "./api";
 import { badgeFor } from "./badge";
@@ -132,25 +132,21 @@ async function record(url: string, result: HandoffResult, fellBack: boolean): Pr
   await refreshBadge();
 }
 
-async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<void> {
+/** 过滤并确认 Swoop 在线；返回 undefined 表示这次下载不碰。 */
+async function readyToTake(item: chrome.downloads.DownloadItem): Promise<number | undefined> {
   const settings = await loadSettings();
-  const decision = shouldIntercept(item, settings);
-  if (!decision.take) return;
-
+  if (!shouldIntercept(item, settings).take) return undefined;
   // Swoop 没开就完全不碰这次下载
   if (!(await ping(settings.port, 800))) {
     await saveState({ connected: false });
     await refreshBadge();
-    return;
+    return undefined;
   }
+  return settings.port;
+}
 
-  try {
-    await browser.downloads.pause(item.id);
-  } catch {
-    // 小文件可能已经下完，交给浏览器即可
-    return;
-  }
-
+/** 提交给 Swoop；接手成功就取消并抹掉浏览器下载，返回 true。 */
+async function handOff(item: chrome.downloads.DownloadItem, port: number): Promise<boolean> {
   // 用原始 URL 而不是 finalUrl：重定向后的签名链接往往很快过期，续传时还得从头走一遍
   const body = await buildTask(item.url, item.referrer, true);
   // 已登录站点常跳到另一个域名再发文件，那个域名的登录 Cookie 也要交给 Swoop
@@ -159,20 +155,47 @@ async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<v
   if (target && targetCookie) body.redirect_cookies = [[new URL(target).origin, targetCookie]];
   body.mime = item.mime || undefined;
   body.size = knownSize(item);
-  const result = await sendTask(settings.port, body);
+  const result = await sendTask(port, body);
 
   if (result.ok) {
     await browser.downloads.cancel(item.id).catch(() => {});
     await browser.downloads.erase({ id: item.id }).catch(() => {});
-  } else {
-    await browser.downloads.resume(item.id).catch(() => {});
   }
-  await record(item.url, result, true);
+  await record(item.url, result, true).catch(() => {});
+  return result.ok;
 }
 
-browser.downloads.onCreated.addListener((item) => {
-  void onDownloadCreated(item);
-});
+// Chromium：浏览器要等文件名确定后才把下载交给下载面板 / 另存为对话框。
+// 在这里拿住回调交给 Swoop，接手成功就直接取消、不 suggest，Edge / Chrome 的下载面板不会弹出；
+// 失败再 suggest 放行，浏览器照常下载。此阶段下载不会完成，所以不需要 pause。
+async function onDeterminingFilename(item: chrome.downloads.DownloadItem): Promise<boolean> {
+  const port = await readyToTake(item);
+  return port !== undefined && handOff(item, port);
+}
+
+// Firefox 没有 onDeterminingFilename：下载已开始，先暂停，确认接手再取消，否则恢复。
+async function onDownloadCreated(item: chrome.downloads.DownloadItem): Promise<void> {
+  const port = await readyToTake(item);
+  if (port === undefined) return;
+  try {
+    await browser.downloads.pause(item.id);
+  } catch {
+    // 小文件可能已经下完，交给浏览器即可
+    return;
+  }
+  if (!(await handOff(item, port))) await browser.downloads.resume(item.id).catch(() => {});
+}
+
+if (browser.downloads.onDeterminingFilename) {
+  browser.downloads.onDeterminingFilename.addListener((item, suggest) => {
+    void onDeterminingFilename(item).catch(() => false).then((taken) => { if (!taken) suggest(); });
+    return true;
+  });
+} else {
+  browser.downloads.onCreated.addListener((item) => {
+    void onDownloadCreated(item);
+  });
+}
 
 async function submitManual(url: string, referrer: string | undefined, incognito: boolean, tabId?: number, referrerPolicy?: string,
   hint?: Pick<TaskBody, "mime" | "size" | "media">): Promise<HandoffResult> {

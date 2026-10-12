@@ -29,26 +29,28 @@
 
 IDM 工作在网络层（响应头 + 扩展名），所以 `Content-Type: application/pdf` 但没有 `Content-Disposition: attachment` 的页内 PDF 也会被抓。
 
-Swoop 扩展只监听 `chrome.downloads.onCreated`。这个事件只在浏览器**已经决定要下载**时触发：`attachment`、用户"另存为"、浏览器无法渲染的类型。页内渲染 PDF、播放视频、显示图片都不经过它，所以机制上不会误抓。用户在 PDF 阅读器里点"保存"，才会产生一次下载事件，这时才交给 Swoop。
+Swoop 扩展在 Chromium 上监听 `chrome.downloads.onDeterminingFilename`，Firefox（没有这个事件）监听 `downloads.onCreated`。两者都只在浏览器**已经决定要下载**时触发：`attachment`、用户"另存为"、浏览器无法渲染的类型。页内渲染 PDF、播放视频、显示图片都不经过它，所以机制上不会误抓。用户在 PDF 阅读器里点"保存"，才会产生一次下载事件，这时才交给 Swoop。
 
 Chrome MV3 已经移除普通扩展的阻塞式 `webRequest`，网络层拦截对我们本来也不可行。
 
-## 3. 交接协议：先暂停，确认成功再取消
+## 3. 交接协议：先拿住下载，确认成功再取消
 
 ```
-onCreated(item)
+Chromium：onDeterminingFilename(item, suggest)  —— 返回 true，异步拿住回调
+Firefox ：onCreated(item) → downloads.pause(item.id)
   ├─ 过滤：总开关 / 仅 http(s) / 排除域名 / 大小阈值 / Swoop 在线
-  ├─ downloads.pause(item.id)
   ├─ POST /tasks {url, headers, referrer, mime, size}
   │     Swoop 侧：探测（上限 10s）→ 成功 200 / 失败 4xx
   ├─ 200 → downloads.cancel + downloads.erase   （浏览器下载消失，Swoop 接管）
-  └─ 4xx / 网络错误 → downloads.resume          （浏览器继续，用户无感）
+  └─ 4xx / 网络错误 → suggest()（Chromium）/ downloads.resume（Firefox）（浏览器继续，用户无感）
 ```
+
+Chromium 要等文件名确定后才把下载交给下载面板和"另存为"对话框，所以在 `onDeterminingFilename` 里接手成功、不调用 `suggest` 就取消，Edge / Chrome 的下载面板不会先弹出来。代价是每个浏览器下载都要等扩展回应：不接管的立即 `suggest`，Swoop 不在线时最多等 `ping` 的 800ms，回退时浏览器面板要等 Swoop 探测结束才出现。这一阶段浏览器下载不会完成，不需要 `pause`。其他扩展也监听这个事件改文件名时可能互相影响。
 
 要点：
 
-- **失败一定可回退**。`pause` 之后浏览器下载还在，只有 Swoop 探测成功才 `cancel`。POST 表单结果、`401`、服务器拒绝 Range 探测等情况都回到浏览器。
-- `blob:` / `data:` 直接放行；`pause` 失败（小文件已完成）直接放行。
+- **失败一定可回退**。拿住（Chromium 未 `suggest` / Firefox `pause`）期间浏览器下载还在，只有 Swoop 探测成功才 `cancel`。POST 表单结果、`401`、服务器拒绝 Range 探测等情况都回到浏览器。
+- `blob:` / `data:` 直接放行；Firefox `pause` 失败（小文件已完成）直接放行。
 - **HTTP(S) 浏览器上下文**：扩展用 `cookies` 权限取该 URL 的 Cookie（含 HttpOnly），连同 `Referer`、浏览器 `User-Agent` 一起传给 Swoop。手动提交匹配原标签的 Cookie store，无法确认容器时不回退到默认会话。隐身手动提交不带 Cookie。自动下载事件没有标签 ID，分区 Cookie 与 Firefox 容器自动接管仍需实测。
 - **手动 FTP(S)**：普通 HTTP(S) 网页的右键链接和本页链接列表可提交 FTP(S) 文件。扩展不查询 Cookie，且不发送 `Referer`、UA 或任何 HTTP 请求头；浏览器下载自动接管与媒体检测仍仅限 HTTP(S)。
 - `Referer` 删除凭据与片段，跨源仅保留来源站点，HTTPS 降级不发送；本页链接还尊重 `noreferrer`、链接属性及页面 meta 中更严格的来源策略（页面响应头策略不在当前提取范围）。UA / Cookie 含控制字符时不发送对应头值。
@@ -78,7 +80,7 @@ onCreated(item)
 
 - FTP(S) 仅通过手动入口发送，例如 `{ "url": "ftp://files.example.com/archive.zip", "headers": [] }`，不带 `referrer`。桌面按 FTP 默认配置探测并接收匿名下载；`ftps://` 使用隐式 TLS 且验证证书。需要账号的站点应在桌面新建任务中填写独立 FTP 凭据，不能把用户名或密码放进 URL。扩展不接受 FTP 目录、查询参数、控制字符或 `;type=` 指令；被拒绝的凭据 URL 不写入链接列表，最近结果也会清除用户名和密码。
 - `mime` / `size` 可选，来自 `DownloadItem`。Swoop 用 GET 重探后核对：浏览器下的不是网页、Swoop 却拿到 `text/html`（POST 表单、未登录跳转页），或两边大小都已知但不相等，就返回 422，浏览器继续下。右键菜单不传这两个字段。
-- `suggested_name` 已从协议中去掉：`onCreated` 时浏览器通常还没确定文件名，文件名以 Swoop 探测结果（Content-Disposition / URL）为准。
+- `suggested_name` 已从协议中去掉：扩展拿到下载时浏览器还没确定文件名，文件名以 Swoop 探测结果（Content-Disposition / URL）为准。
 - `media` 可选，且只能为 `"hls"` 或 `"dash"`：网页媒体候选中的清单必须携带此字段，交给桌面媒体窗口由用户继续操作，不能把清单文本作为普通下载完成。成功仍返回有效的 `file_name`、`size`（可空），表示桌面已接收，不代表下载完成。普通音视频不传此字段。媒体窗口如果拒绝凭据头、受保护内容或不支持的输入，扩展逐项显示实际错误；不擅自丢掉 Cookie 后重试。
 - 发出带 `media` 的任务前，扩展必须确认 `/ping` 的 `media_handoff` 严格为 `true`；未声明的旧桌面仅提示更新，不能依靠旧服务忽略未知 JSON 字段的行为。
 
@@ -122,7 +124,7 @@ extension/
 │   ├── popup.html / options.html / welcome.html
 │   └── icons/
 └── src/
-    ├── background.ts     # service worker：onCreated 流程、右键菜单、ping 心跳
+    ├── background.ts     # service worker：下载接管流程、右键菜单、ping 心跳
     ├── api.ts            # /ping、/tasks 封装
     ├── rules.ts          # 纯函数：是否拦截（协议、排除域名、阈值）
     ├── cookies.ts        # 取 Cookie 拼 header
@@ -133,7 +135,7 @@ extension/
 ```
 
 - `manifest.json` 权限：`downloads`、`cookies`、`contextMenus`、`storage`、`alarms`、`activeTab`、`scripting`、`webRequest`；`host_permissions`：`<all_urls>`（Cookie / 响应元数据）、`http://127.0.0.1/*`。仅在用户点击入口时执行网页链接提取；媒体监听为非阻塞只读，不申请 `webRequestBlocking`。
-- 每次接管前都现 ping 一次（800ms 超时）再决定是否 `pause`，不依赖可能过期的心跳缓存；本机端口未监听时连接被拒是瞬时的。
+- 每次接管前都现 ping 一次（800ms 超时）再决定是否拿住下载，不依赖可能过期的心跳缓存；本机端口未监听时连接被拒是瞬时的。
 - 交给 Swoop 的是 `item.url`（原始链接）而不是 `finalUrl`：重定向后的签名链接常常几分钟就过期，续传时需要从原始链接重新走一遍。
 - 隐身窗口的下载不接管；右键菜单在隐身窗口里可用但不带 Cookie，避免把隐身会话写进 `swoop.db`。
 - 右键菜单"用 Swoop 下载"：`contexts: ["link", "image", "video", "audio"]`，直接 POST，不经过 `downloads`。
@@ -175,17 +177,17 @@ extension/
 
 | 情况 | 处理 |
 | --- | --- |
-| Swoop 未运行 | 心跳失败 → 不 `pause`，浏览器正常下载 |
+| Swoop 未运行 | 心跳失败 → 立即放行（Chromium `suggest` / Firefox 不 `pause`），浏览器正常下载 |
 | 下载来自 POST 表单 | Swoop 用 GET 探测失败 → 4xx → 浏览器 `resume` |
 | 需要登录 | Cookie 已透传；仍 401 → 回退浏览器 |
 | 服务器不支持 Range | 探测成功（200 + 单连接）→ Swoop 单线程下载 |
 | `blob:` / `data:` | 放行 |
 | FTP(S) 文件 | 仅手动右键/本页链接提交，无 HTTP 上下文；自动下载事件放行 |
-| `pause` 报错（已完成） | 放行 |
+| Firefox `pause` 报错（已完成） | 放行 |
 | 同一 URL 已在 Swoop 队列 | 同一页面批次已成功项不重复提交；不同批次、右键与自动接管不作全局去重 |
 | 端口被其它程序占用 | 启动吐司报错，设置页显示原因并可改端口；不把开关写成关闭，下次启动端口空出来会自动恢复 |
 | GET 重探拿到网页 / 大小不符 | 422 → 浏览器 `resume` |
-| 下载在 `pause` 前已完成（本机/极快的小文件） | `pause` 报错 → 放行 |
+| Firefox 下载在 `pause` 前已完成（本机/极快的小文件） | `pause` 报错 → 放行 |
 
 ## 7. 分阶段与验收
 

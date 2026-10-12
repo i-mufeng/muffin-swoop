@@ -47,8 +47,19 @@ const chromeMock = {
     getAll: vi.fn(async () => [{ name: "session", value: "test", path: "/" }]),
   },
   contextMenus: { removeAll: vi.fn(async () => {}), create: vi.fn(), onClicked: { addListener: vi.fn((handler) => { menuClicked = handler; }) } },
-  downloads: { onCreated: { addListener: vi.fn() } },
+  downloads: {
+    onCreated: { addListener: vi.fn((handler) => { created = handler; }) } as { addListener: ReturnType<typeof vi.fn> },
+    onDeterminingFilename: { addListener: vi.fn((handler) => { determining = handler; }) } as { addListener: ReturnType<typeof vi.fn> } | undefined,
+    pause: vi.fn(async () => {}), resume: vi.fn(async () => {}), cancel: vi.fn(async () => {}), erase: vi.fn(async () => []),
+  },
 };
+const onDeterminingFilename = chromeMock.downloads.onDeterminingFilename;
+let created: (item: chrome.downloads.DownloadItem) => void;
+let determining: (item: chrome.downloads.DownloadItem, suggest: () => void) => boolean;
+const download = {
+  id: 7, url: taskUrl, finalUrl: taskUrl, referrer: pageUrl, mime: "application/zip", fileSize: 42, totalBytes: 42, incognito: false,
+} as chrome.downloads.DownloadItem;
+const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST");
 
 function request<T>(body: unknown, url = extUrl + "links.html"): Promise<T> {
   return new Promise((resolve) => { if (!message(body, { url }, (result) => resolve(result as T))) resolve(undefined as T); });
@@ -59,6 +70,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   session = {};
   settings = { ...DEFAULT_SETTINGS };
+  chromeMock.downloads.onDeterminingFilename = onDeterminingFilename;
   vi.stubGlobal("chrome", chromeMock);
   vi.stubGlobal("browser", undefined);
   vi.stubGlobal("navigator", { userAgent: "Browser/1" });
@@ -259,5 +271,47 @@ describe("后台入口与桥接", () => {
     chromeMock.tabs.get.mockResolvedValueOnce({ ...tab, incognito: true });
     capture(response);
     expect(await request({ type: "media-count", tabId: 1 })).toEqual({ ok: true, count: 0 });
+  });
+});
+
+describe("浏览器下载接管", () => {
+  it("Chromium 在确定文件名阶段交给 Swoop，成功后取消且不放行，下载面板不出现", async () => {
+    const suggest = vi.fn();
+    expect(determining(download, suggest)).toBe(true);
+    await vi.waitFor(() => expect(chromeMock.downloads.erase).toHaveBeenCalledWith({ id: 7 }));
+    expect(chromeMock.downloads.cancel).toHaveBeenCalledWith(7);
+    expect(chromeMock.downloads.pause).not.toHaveBeenCalled();
+    expect(JSON.parse(posts()[0]![1]!.body as string)).toMatchObject({ url: taskUrl, mime: "application/zip", size: 42 });
+    await vi.waitFor(() => expect(session.lastResult).toMatchObject({ ok: true, url: taskUrl }));
+    expect(suggest).not.toHaveBeenCalled();
+    expect(chromeMock.downloads.onCreated.addListener).not.toHaveBeenCalled();
+  });
+  it("Swoop 拒绝、未运行或不该接管时立即放行浏览器下载", async () => {
+    vi.mocked(fetch).mockImplementation(async (url) => String(url).endsWith("/ping")
+      ? Response.json({ app: "swoop" }) : Response.json({ error: "登录过期" }, { status: 422 }));
+    const rejected = vi.fn();
+    determining(download, rejected);
+    await vi.waitFor(() => expect(rejected).toHaveBeenCalledTimes(1));
+    vi.mocked(fetch).mockImplementation(async () => { throw new TypeError("connection refused"); });
+    const offline = vi.fn();
+    determining(download, offline);
+    await vi.waitFor(() => expect(offline).toHaveBeenCalledTimes(1));
+    const skipped = vi.fn();
+    determining({ ...download, url: "blob:https://example.com/1" }, skipped);
+    await vi.waitFor(() => expect(skipped).toHaveBeenCalledTimes(1));
+    expect(chromeMock.downloads.cancel).not.toHaveBeenCalled();
+    expect(posts()).toHaveLength(1);
+  });
+  it("没有 onDeterminingFilename 的 Firefox 沿用暂停、失败恢复流程", async () => {
+    chromeMock.downloads.onDeterminingFilename = undefined;
+    vi.resetModules();
+    vi.clearAllMocks();
+    await import("./background");
+    vi.mocked(fetch).mockImplementation(async (url) => String(url).endsWith("/ping")
+      ? Response.json({ app: "swoop" }) : Response.json({ error: "登录过期" }, { status: 422 }));
+    created(download);
+    await vi.waitFor(() => expect(chromeMock.downloads.resume).toHaveBeenCalledWith(7));
+    expect(chromeMock.downloads.pause).toHaveBeenCalledWith(7);
+    expect(chromeMock.downloads.cancel).not.toHaveBeenCalled();
   });
 });
