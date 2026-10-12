@@ -82,6 +82,7 @@ pub struct SwoopApp {
     pub progress_window: bool,
     pub task_windows: crate::ui::task_window::TaskWindows,
     pub popup_host: crate::ui::popup::PopupHost,
+    window_guard: crate::window_state::WindowGuard,
     /// 窗口已隐藏到菜单栏
     pub(crate) hidden: bool,
     /// 用户从菜单选了退出：放行这一次关窗请求
@@ -122,6 +123,7 @@ impl SwoopApp {
             toasts.push_info(swoop_i18n::tr!("下载完成"), "rustup-init");
             toasts.push_links(vec!["https://releases.ubuntu.com/24.04/ubuntu-24.04.3-desktop-amd64.iso".into()]);
         }
+        crate::tray::register_window(cc);
         let ctx = cc.egui_ctx.clone();
         let bridge = Bridge::new(
             handle.clone(),
@@ -138,6 +140,7 @@ impl SwoopApp {
         let native_drag = crate::native_drag::NativeDrag::load(&store);
         let grabber = crate::grabber_tasks::GrabberTasks::load(store.clone(), handle);
         let completion = crate::completion::CompletionActions::new(&store);
+        let window_guard = crate::window_state::WindowGuard::new(cc.storage);
         let mut add_dialog = AddDialog::new(&settings.default_dir);
         add_dialog.ftp = crate::ftp_settings::FtpEditor::load(&store);
         let mut app = Self {
@@ -202,6 +205,7 @@ impl SwoopApp {
             progress_window: settings.progress_window,
             task_windows: Default::default(),
             popup_host: Default::default(),
+            window_guard,
             hidden: false,
             quitting: false,
             clipboard: ClipboardWatcher::new(),
@@ -726,6 +730,7 @@ impl eframe::App for SwoopApp {
         crate::shot::tick(self, ctx);
         // Process close intent before a ready update helper can authorize shutdown.
         self.handle_close(ctx);
+        self.window_guard.check_startup(ctx, self.hidden);
         self.startup.poll();
         self.media_tasks.update_file_policy(&self.engine);
         self.tasks = self.engine.snapshot();
@@ -824,6 +829,11 @@ impl eframe::App for SwoopApp {
             (false, false) => Duration::from_millis(500),
         };
         ctx.request_repaint_after(every);
+    }
+
+    /// eframe 先写窗口几何再调这里，正好纠正最小化等状态下存进去的异常尺寸
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        self.window_guard.save(storage);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {

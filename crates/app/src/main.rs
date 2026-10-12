@@ -28,6 +28,7 @@ mod theme;
 mod tray;
 mod ui;
 mod updates;
+mod window_state;
 
 use std::sync::{Arc, Mutex};
 
@@ -129,9 +130,8 @@ fn main() -> eframe::Result {
         .with_title("Swoop")
         .with_app_id("com.muffin.swoop")
         .with_icon(brand::window_icon())
-        .with_inner_size([1080.0, 700.0])
-        // 侧栏 208 + 列表行最窄约 500 + 详情面板 300
-        .with_min_inner_size([1010.0, 480.0]);
+        .with_inner_size(window_state::DEFAULT_SIZE)
+        .with_min_inner_size(window_state::MIN_SIZE);
     if cfg!(target_os = "macos") {
         // 透明标题栏 + 内容延伸到顶部，红绿灯按钮浮在侧栏上方
         viewport = viewport.with_title_shown(false).with_titlebar_shown(false).with_fullsize_content_view(true);
