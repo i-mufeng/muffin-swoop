@@ -11,7 +11,7 @@ const targets = selected ? [selected] : watching ? ["chromium"] : ["chromium", "
 for (const target of targets) {
   const outdir = target === "chromium" ? "dist" : "dist-firefox";
   const options = {
-    entryPoints: ["src/background.ts", "src/popup.ts", "src/options.ts", "src/links.ts"],
+    entryPoints: ["src/background.ts", "src/popup.ts", "src/options.ts", "src/links.ts", "src/welcome.ts"],
     outdir,
     bundle: true,
     format: "iife",

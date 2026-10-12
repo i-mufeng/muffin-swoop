@@ -128,3 +128,11 @@ function manualUrlBlock(parsed: URL, original: string): string | undefined {
   } catch { return "无效 FTP 文件链接"; }
   return undefined;
 }
+
+/** 首次安装、或主/次版本号变化（0.x 阶段次版本即"大版本"）时打开欢迎页；补丁更新与浏览器更新不打扰。 */
+export function shouldOpenWelcome(reason: string, previousVersion: string | undefined, currentVersion: string): boolean {
+  if (reason === "install") return true;
+  if (reason !== "update" || !previousVersion) return false;
+  const featureLine = (version: string) => version.split(".").slice(0, 2).map((part) => Number.parseInt(part, 10) || 0).join(".");
+  return featureLine(previousVersion) !== featureLine(currentVersion);
+}

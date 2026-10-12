@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { badgeFor } from "./badge";
 import { formatCookies } from "./cookies";
 import { ago, bytes } from "./format";
-import { knownSize, matchesDomain, parseDomainList, shouldIntercept, type DownloadLike } from "./rules";
+import { knownSize, matchesDomain, parseDomainList, shouldIntercept, shouldOpenWelcome, type DownloadLike } from "./rules";
 import { DEFAULT_SETTINGS, normalizeSettings, type Settings } from "./settings";
 
 const item = (patch: Partial<DownloadLike> = {}): DownloadLike => ({
@@ -108,5 +108,18 @@ describe("helpers", () => {
     expect(bytes(250 * 1024 * 1024)).toBe("250 MB");
     expect(ago(1_000_000, 1_000_000 + 30_000)).toBe("刚刚");
     expect(ago(0, 3 * 3600_000)).toBe("3 小时前");
+  });
+});
+
+describe("欢迎页触发", () => {
+  it("首次安装与主/次版本更新打开，补丁更新、浏览器更新和缺失旧版本不打开", () => {
+    expect(shouldOpenWelcome("install", undefined, "0.3.0")).toBe(true);
+    expect(shouldOpenWelcome("update", "0.3.0", "0.4.0")).toBe(true);
+    expect(shouldOpenWelcome("update", "0.9.2", "1.0.0")).toBe(true);
+    expect(shouldOpenWelcome("update", "0.3.0", "0.3.1")).toBe(false);
+    expect(shouldOpenWelcome("update", "0.3", "0.3.2")).toBe(false);
+    expect(shouldOpenWelcome("update", undefined, "0.4.0")).toBe(false);
+    expect(shouldOpenWelcome("browser_update", undefined, "0.4.0")).toBe(false);
+    expect(shouldOpenWelcome("chrome_update", "0.3.0", "0.4.0")).toBe(false);
   });
 });

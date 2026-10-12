@@ -20,10 +20,10 @@ describe("Chromium / Firefox 实际构建资源", () => {
         }
       }
       expect(JSON.parse(read("_locales/en/messages.json")).extensionDescription.message).toContain("Send browser downloads");
-      for (const page of ["popup", "options", "links"]) {
+      for (const page of ["popup", "options", "links", "welcome"]) {
         const html = read(`${page}.html`);
         expect(html).toContain("data-i18n=");
-        for (const [, resource] of html.matchAll(/(?:src|href)="([^"#]+)"/g)) {
+        for (const [, resource] of html.matchAll(/(?:src|href)="(?!https?:)([^"#]+)"/g)) {
           expect(existsSync(`${directory}/${resource}`), resource).toBe(true);
         }
         const bundle = read(`${page}.js`);

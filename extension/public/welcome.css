@@ -1,0 +1,60 @@
+/* 欢迎页：只用 ui.css 的颜色变量，不写裸色值。 */
+body { font-size: 14px; padding: 24px 16px 48px; }
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 32px; }
+h1 { font-size: 26px; }
+h2 { font-size: 16px; margin: 0 0 12px; font-weight: 600; }
+h3 { font-size: 14px; margin: 0; font-weight: 600; }
+p { margin: 4px 0 0; }
+.small { font-size: 12px; }
+[hidden] { display: none !important; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.icon.accent { color: var(--accent); width: 24px; height: 24px; }
+
+a, button { min-height: 36px; }
+a:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a.button {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  border-radius: 7px; padding: 6px 16px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); text-decoration: none;
+}
+a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+a.button:hover { filter: brightness(1.05); }
+
+.hero { display: grid; justify-items: center; text-align: center; gap: 8px; }
+.topbar { display: flex; align-items: center; gap: 8px; width: 100%; }
+.lang { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.lead { max-width: 480px; font-size: 15px; margin: 0; }
+
+.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.step { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; }
+.step-body { flex: 1; min-width: 0; }
+.num {
+  width: 28px; height: 28px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-weight: 600;
+  background: var(--accent-soft); color: var(--accent);
+}
+#connect.ok .num { background: var(--success); color: #fff; }
+.status { margin-top: 6px; gap: 8px; }
+.dot.err { background: var(--danger); }
+.dot.wait { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .dot.wait { animation: none; } }
+#connect.ok #status { color: var(--success); font-weight: 600; }
+.help { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+
+.features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.feature { display: grid; align-content: start; gap: 8px; padding: 16px 18px; }
+.feature p { margin: 0; }
+
+.tips { padding: 16px 18px; }
+.tips h2 { margin-bottom: 6px; }
+.tips ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--muted); }
+
+@media (max-width: 600px) {
+  .features { grid-template-columns: 1fr; }
+  .step { flex-wrap: wrap; }
+  .step-body { flex-basis: calc(100% - 42px); }
+  .step > a.button, .step > button { margin-left: 42px; }
+}

@@ -3,7 +3,7 @@ import type { HandoffResult } from "./api";
 import { DEFAULT_SETTINGS } from "./settings";
 
 let message: (msg: unknown, sender: { url: string }, reply: (value: unknown) => void) => boolean;
-let installed: () => void;
+let installed: (details?: { reason: string; previousVersion?: string }) => void;
 let startup: () => void;
 let storageChanged: (changes: Record<string, { newValue: unknown }>, area: string) => void;
 let capture: (response: unknown) => void;
@@ -18,6 +18,7 @@ const tab = { id: 1, url: pageUrl, windowId: 2, incognito: false };
 const chromeMock = {
   runtime: {
     getURL: (path: string) => extUrl + path,
+    getManifest: () => ({ version: "0.4.0" }),
     onMessage: { addListener: vi.fn((handler) => { message = handler; }) },
     onInstalled: { addListener: vi.fn((handler) => { installed = handler; }) },
     onStartup: { addListener: vi.fn((handler) => { startup = handler; }) },
@@ -67,6 +68,15 @@ beforeEach(async () => {
 });
 
 describe("后台入口与桥接", () => {
+  it("首次安装与次版本更新打开欢迎页，补丁更新不打开", () => {
+    installed({ reason: "install" });
+    expect(chromeMock.tabs.create).toHaveBeenCalledWith({ url: extUrl + "welcome.html" });
+    chromeMock.tabs.create.mockClear();
+    installed({ reason: "update", previousVersion: "0.4.0" });
+    expect(chromeMock.tabs.create).not.toHaveBeenCalled();
+    installed({ reason: "update", previousVersion: "0.3.2" });
+    expect(chromeMock.tabs.create).toHaveBeenCalledTimes(1);
+  });
   it("安装与连续语言变更串行重建菜单，最后保留最新语言", async () => {
     let finish!: () => void;
     chromeMock.contextMenus.removeAll.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));

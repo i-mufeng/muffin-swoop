@@ -64,6 +64,9 @@ $("enabled").addEventListener("change", async (e) => {
   await refresh();
 });
 $("open-options").addEventListener("click", () => { void browser.runtime.openOptionsPage(); });
+$("open-welcome").addEventListener("click", () => {
+  void browser.tabs.create({ url: browser.runtime.getURL("welcome.html") }).then(() => window.close());
+});
 browser.storage.onChanged.addListener((_changes, area) => {
   if (area === "sync" || area === "session") void refresh();
 });

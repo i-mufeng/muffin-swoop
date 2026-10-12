@@ -7,7 +7,7 @@ import { browser, isFirefox } from "./browser";
 import { ping, sendTask, supportsMedia, type HandoffResult, type TaskBody } from "./api";
 import { badgeFor } from "./badge";
 import { cookieHeader } from "./cookies";
-import { knownSize, shouldIntercept, manualDownloadBlock } from "./rules";
+import { knownSize, shouldIntercept, shouldOpenWelcome, manualDownloadBlock } from "./rules";
 import { loadPageBatch, openPageLinks, savePageResult } from "./page-tasks";
 import { contextHeaders, safeReferrer } from "./request-context";
 import { loadSettings, loadState, saveState, type LastResult } from "./settings";
@@ -64,7 +64,12 @@ function setup(): void {
   void refreshMenus().catch((error: unknown) => console.warn("Swoop context menu refresh failed", error));
 }
 
-browser.runtime.onInstalled.addListener(setup);
+browser.runtime.onInstalled.addListener((details) => {
+  setup();
+  if (details && shouldOpenWelcome(details.reason, details.previousVersion, browser.runtime.getManifest().version)) {
+    void browser.tabs.create({ url: browser.runtime.getURL("welcome.html") });
+  }
+});
 browser.runtime.onStartup.addListener(setup);
 browser.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === HEARTBEAT_ALARM) void heartbeat();

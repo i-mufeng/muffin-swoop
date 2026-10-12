@@ -23,6 +23,7 @@ const chromeMock = {
   tabs: { query: vi.fn(async () => [{ id: 1 }]) },
   runtime: {
     openOptionsPage: vi.fn(),
+    getManifest: () => ({ version: "0.3.0" }),
     sendMessage: vi.fn(async (request: { type: string }) => request.type === "media-count"
       ? { ok: true, count: 3 } : request.type === "refresh" ? true : { ok: false, error: "请在普通网页上使用此功能" }),
   },
@@ -56,7 +57,7 @@ describe("扩展双语", () => {
     expect(chromeMock.storage.sync.get).toHaveBeenCalledWith(expect.arrayContaining(["language"]));
   });
   it("所有静态页面文案有翻译，属性与中文可逆切换，不改配置值或 DOM id", () => {
-    for (const name of ["options", "popup", "links"]) {
+    for (const name of ["options", "popup", "links", "welcome"]) {
       loadDocument(name);
       const ids = [...document.querySelectorAll("[id]")].map((node) => node.id);
       for (const node of document.querySelectorAll<HTMLElement>("[data-i18n]")) expect(ENGLISH[node.dataset.i18n!]).toBeTruthy();
@@ -119,6 +120,40 @@ describe("扩展双语", () => {
     await vi.waitFor(() => expect(get("open-media").textContent).toBe("网页媒体（3）…"));
     expect(get("collect-error").textContent).toBe("请在普通网页上使用此功能");
     expect(get("result-detail").textContent).toBe("无法连接 Swoop，已由浏览器继续下载");
+  });
+  it("欢迎页检测连接、切换语言写入设置，未连接时给出端口提示", async () => {
+    stored.language = "en-US";
+    stored.port = 51999;
+    const original = chromeMock.runtime.sendMessage.getMockImplementation()!;
+    const interval = vi.spyOn(globalThis, "setInterval").mockReturnValue(0 as never);
+    chromeMock.runtime.sendMessage.mockImplementation(async () => false as never);
+    try {
+    loadDocument("welcome");
+    await import("./welcome");
+    await vi.waitFor(() => expect(get("status").textContent).toBe("Not connected to Swoop yet"));
+    expect(document.title).toBe("Welcome to Swoop");
+    expect(get("version").textContent).toBe("v0.3.0");
+    expect(get("help").hidden).toBe(false);
+    expect(get("port-hint").textContent).toContain("51999");
+    chromeMock.runtime.sendMessage.mockImplementation(async () => true as never);
+    get("retry").click();
+    await vi.waitFor(() => expect(get("status").textContent).toBe("✓ Connected to Swoop. You're ready to download."));
+    expect(get("help").hidden).toBe(true);
+    expect(get("retry").hidden).toBe(true);
+    const language = get<HTMLSelectElement>("language");
+    language.value = "zh-CN";
+    language.dispatchEvent(new Event("change"));
+    expect(document.title).toBe("欢迎使用 Swoop");
+    expect(stored.language).toBe("zh-CN");
+    await vi.waitFor(() => expect(get("status").textContent).toBe("✓ 已连接 Swoop，可以开始下载了"));
+    stored.enabled = false;
+    await chromeMock.storage.sync.set({ enabled: false });
+    await vi.waitFor(() => expect(get("status").textContent).toBe("接管已关闭，请先在扩展弹窗中开启"));
+    expect(interval).toHaveBeenCalledWith(expect.any(Function), 3000);
+    } finally {
+      chromeMock.runtime.sendMessage.mockImplementation(original);
+      interval.mockRestore();
+    }
   });
   it("失效链接页也使用保存语言并响应切换", async () => {
     stored.language = "en-US";
