@@ -3,6 +3,9 @@ use crate::app::SwoopApp;
 use crate::grabber_tasks::ProjectAction;
 use egui::{RichText, TextEdit};
 
+/// 抓取进度里页面列表的最大高度，超出在列表内滚动
+const PAGES_H: f32 = 160.0;
+
 impl SwoopApp {
     pub fn grabber_ui(&mut self, ctx: &egui::Context) {
         if !self.grabber.open {
@@ -25,7 +28,11 @@ impl SwoopApp {
                 ) {
                     open = false;
                 }
-                dialog::body(ui, "grabber_body", |ui| {
+                // 主体之下的进度区高度取上一帧的实际值，主体据此让出位置，进度和底部按钮始终可见
+                let progress_id = ui.id().with("grabber_progress_h");
+                let has_progress = self.grabber.error.is_some() || self.grabber.snapshot.is_some();
+                let below = if has_progress { ctx.data(|d| d.get_temp::<f32>(progress_id)).unwrap_or(0.0) } else { 0.0 };
+                dialog::body_reserving(ui, "grabber_body", below, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     let config = &mut self.grabber.config;
                     const LABEL_W: f32 = 72.0;
@@ -149,8 +156,100 @@ impl SwoopApp {
                             });
                         }
                     });
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
+                });
+                });
+                if has_progress {
+                    let top = ui.cursor().top();
+                    dialog::body_fixed(ui, |ui| {
+                    if let Some(error) = &self.grabber.error {
+                        dialog::error(ui, &p, error);
+                    }
+                    if let Some(snapshot) = &self.grabber.snapshot {
+                        use swoop_grabber::ProjectStatus;
+                        let status = match snapshot.status {
+                            ProjectStatus::Ready => swoop_i18n::tr!("就绪"),
+                            ProjectStatus::Running => swoop_i18n::tr!("抓取中"),
+                            ProjectStatus::Complete => swoop_i18n::tr!("本轮结束"),
+                            ProjectStatus::Cancelled => swoop_i18n::tr!("已停止"),
+                            ProjectStatus::Limited => swoop_i18n::tr!("已达限制"),
+                        };
+                        ui.add_space(4.0);
+                        dialog::group_title(ui, &p, swoop_i18n::tr!("项目进度"));
+                        egui::Frame::new()
+                            .fill(p.group)
+                            .stroke(egui::Stroke::new(1.0, p.border))
+                            .corner_radius(egui::CornerRadius::same(10))
+                            .inner_margin(egui::Margin::same(14))
+                            .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            let color = match snapshot.status {
+                                ProjectStatus::Running => p.accent,
+                                ProjectStatus::Complete => p.success,
+                                ProjectStatus::Limited => p.tint_amber,
+                                _ => p.text_muted,
+                            };
+                            super::pill(ui, status, p.soft(color), color);
+                            ui.label(RichText::new(swoop_i18n::trf!(
+                                "{} 已保存 · {} 失败 · {}",
+                                snapshot.downloaded(),
+                                snapshot.failed(),
+                                super::format::bytes(snapshot.received_bytes)
+                            )).color(p.text));
+                        });
+                        if snapshot.rendered_network_bytes > 0 {
+                            dialog::note(ui, &p, &swoop_i18n::trf!("浏览器流量：{}", super::format::bytes(snapshot.rendered_network_bytes)));
+                        }
+                        if let Some(entry) = &snapshot.entry_path {
+                            ui.add_space(4.0);
+                            ui.horizontal(|ui| {
+                                if super::ghost_button(ui, &p, swoop_i18n::tr!("显示离线首页")).clicked() {
+                                    super::task_list::reveal_in_file_manager(entry);
+                                }
+                                ui.add(
+                                    egui::Label::new(RichText::new(entry.display().to_string()).size(12.0).color(p.text_muted))
+                                        .truncate(),
+                                );
+                            });
+                        }
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical().id_salt("grabber_pages").max_height(PAGES_H).auto_shrink([false, true]).show(ui, |ui| {
+                            for page in snapshot.pages.iter().rev().take(100) {
+                                let state = match &page.state {
+                                    swoop_grabber::PageState::Pending => swoop_i18n::tr!("等待"),
+                                    swoop_grabber::PageState::Downloaded => swoop_i18n::tr!("已保存"),
+                                    swoop_grabber::PageState::Failed(_) => swoop_i18n::tr!("失败"),
+                                    swoop_grabber::PageState::Skipped(_) => swoop_i18n::tr!("跳过"),
+                                };
+                                let color = match &page.state {
+                                    swoop_grabber::PageState::Downloaded => p.success,
+                                    swoop_grabber::PageState::Failed(_) => p.danger,
+                                    _ => p.text_muted,
+                                };
+                                let response = ui
+                                    .horizontal(|ui| {
+                                        super::pill(ui, state, p.soft(color), color);
+                                        ui.add(egui::Label::new(RichText::new(&page.url).size(12.5).color(p.text)).truncate());
+                                    })
+                                    .response;
+                                if let swoop_grabber::PageState::Failed(error) | swoop_grabber::PageState::Skipped(error) =
+                                    &page.state
+                                {
+                                    response.on_hover_text(error);
+                                }
+                            }
+                        });
+                            });
+                    }
+                    });
+                    let height = ui.cursor().top() - top;
+                    if (height - below).abs() > 0.5 {
+                        ctx.data_mut(|d| d.insert_temp(progress_id, height));
+                        ctx.request_repaint();
+                    }
+                }
+                dialog::footer(ui, &p, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
                         if super::primary_button(
                             ui,
@@ -187,91 +286,13 @@ impl SwoopApp {
                             }
                         });
                     });
-                });
-                ui.add_space(8.0);
-                if busy && super::danger_button(ui, &p, &format!("{}  {}", egui_phosphor::regular::STOP, swoop_i18n::tr!("停止抓取"))).clicked() {
-                    self.grabber.stop();
-                }
-                if let Some(error) = &self.grabber.error {
-                    dialog::error(ui, &p, error);
-                }
-                if let Some(snapshot) = &self.grabber.snapshot {
-                    use swoop_grabber::ProjectStatus;
-                    let status = match snapshot.status {
-                        ProjectStatus::Ready => swoop_i18n::tr!("就绪"),
-                        ProjectStatus::Running => swoop_i18n::tr!("抓取中"),
-                        ProjectStatus::Complete => swoop_i18n::tr!("本轮结束"),
-                        ProjectStatus::Cancelled => swoop_i18n::tr!("已停止"),
-                        ProjectStatus::Limited => swoop_i18n::tr!("已达限制"),
-                    };
-                    ui.add_space(4.0);
-                    dialog::group_title(ui, &p, swoop_i18n::tr!("项目进度"));
-                    egui::Frame::new()
-                        .fill(p.group)
-                        .stroke(egui::Stroke::new(1.0, p.border))
-                        .corner_radius(egui::CornerRadius::same(10))
-                        .inner_margin(egui::Margin::same(14))
-                        .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal(|ui| {
-                        let color = match snapshot.status {
-                            ProjectStatus::Running => p.accent,
-                            ProjectStatus::Complete => p.success,
-                            ProjectStatus::Limited => p.tint_amber,
-                            _ => p.text_muted,
-                        };
-                        super::pill(ui, status, p.soft(color), color);
-                        ui.label(RichText::new(swoop_i18n::trf!(
-                            "{} 已保存 · {} 失败 · {}",
-                            snapshot.downloaded(),
-                            snapshot.failed(),
-                            super::format::bytes(snapshot.received_bytes)
-                        )).color(p.text));
-                    });
-                    if snapshot.rendered_network_bytes > 0 {
-                        dialog::note(ui, &p, &swoop_i18n::trf!("浏览器流量：{}", super::format::bytes(snapshot.rendered_network_bytes)));
-                    }
-                    if let Some(entry) = &snapshot.entry_path {
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            if super::ghost_button(ui, &p, swoop_i18n::tr!("显示离线首页")).clicked() {
-                                super::task_list::reveal_in_file_manager(entry);
+                    if busy {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            if super::danger_button(ui, &p, &format!("{}  {}", egui_phosphor::regular::STOP, swoop_i18n::tr!("停止抓取"))).clicked() {
+                                self.grabber.stop();
                             }
-                            ui.add(
-                                egui::Label::new(RichText::new(entry.display().to_string()).size(12.0).color(p.text_muted))
-                                    .truncate(),
-                            );
                         });
                     }
-                    ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height((ctx.content_rect().height() * 0.3).max(140.0)).show(ui, |ui| {
-                        for page in snapshot.pages.iter().rev().take(100) {
-                            let state = match &page.state {
-                                swoop_grabber::PageState::Pending => swoop_i18n::tr!("等待"),
-                                swoop_grabber::PageState::Downloaded => swoop_i18n::tr!("已保存"),
-                                swoop_grabber::PageState::Failed(_) => swoop_i18n::tr!("失败"),
-                                swoop_grabber::PageState::Skipped(_) => swoop_i18n::tr!("跳过"),
-                            };
-                            let color = match &page.state {
-                                swoop_grabber::PageState::Downloaded => p.success,
-                                swoop_grabber::PageState::Failed(_) => p.danger,
-                                _ => p.text_muted,
-                            };
-                            let response = ui
-                                .horizontal(|ui| {
-                                    super::pill(ui, state, p.soft(color), color);
-                                    ui.add(egui::Label::new(RichText::new(&page.url).size(12.5).color(p.text)).truncate());
-                                })
-                                .response;
-                            if let swoop_grabber::PageState::Failed(error) | swoop_grabber::PageState::Skipped(error) =
-                                &page.state
-                            {
-                                response.on_hover_text(error);
-                            }
-                        }
-                    });
-                        });
-                }
                 });
             });
         self.grabber.open = open;

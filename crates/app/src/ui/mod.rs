@@ -164,11 +164,26 @@ fn text_button(
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-/// 弹窗主体：超出窗口可用高度时滚动。`reserve` 是标题、底部按钮和弹窗边距占用的高度，
-/// 底部按钮放在主体之外，窗口再矮也点得到。
-pub fn modal_body<R>(ui: &mut Ui, id: &str, reserve: f32, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
-    let max_height = (ui.ctx().content_rect().height() - reserve).max(120.0);
-    egui::ScrollArea::vertical().id_salt(id).max_height(max_height).show(ui, add_contents).inner
+/// 独立窗口的主体：占满当前 ui 剩余高度，只留出下方 `below`（底部按钮行）的位置，超出时滚动。
+/// 按剩余高度而不是窗口高度减常数算，标题多一行提示或窗口被拉高时都不会留白或挤掉按钮。
+/// 右侧留出滚动条宽度，滚动条不压在输入框和卡片边框上。
+pub fn modal_body<R>(ui: &mut Ui, id: &str, below: f32, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let max_height = (ui.available_height() - below).max(80.0);
+    let gutter = ui.spacing().scroll.bar_width + 4.0;
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(max_height)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            egui::Frame::new()
+                .inner_margin(egui::Margin { left: 0, right: gutter as i8, top: 0, bottom: 4 })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    add_contents(ui)
+                })
+                .inner
+        })
+        .inner
 }
 
 /// 主操作按钮（强调色填充）

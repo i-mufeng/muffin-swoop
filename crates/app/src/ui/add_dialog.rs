@@ -226,7 +226,7 @@ impl SwoopApp {
                 ui.add_space(6.0);
             }
 
-            super::modal_body(ui, "add_dialog_body", 230.0, |ui| {
+            super::modal_body(ui, "add_dialog_body", 50.0, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(swoop_i18n::tr!("链接")).size(12.5).strong().color(p.text_muted));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

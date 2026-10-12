@@ -1,4 +1,4 @@
-use egui::{Frame, Margin, RichText, Sense, Stroke, UiBuilder, vec2};
+use egui::{Frame, Margin, Sense, Stroke, UiBuilder, vec2};
 
 use super::filekind::FileKind;
 use super::{Filter, nav_item};
@@ -6,6 +6,22 @@ use crate::app::SwoopApp;
 
 /// 底部固定区（分隔 + 设置行）的高度。媒体下载、站点抓取等进阶入口在顶栏「更多操作」里，不占侧栏。
 const FOOTER_H: f32 = 34.0 + 2.0 + 17.0;
+/// 侧栏顶部留白：macOS 透明标题栏要给红绿灯让位；其他平台有系统标题栏，与顶栏同高，Logo 行和顶栏标题行对齐
+const TOP_INSET: i8 = if cfg!(target_os = "macos") { 44 } else { 18 };
+/// Logo 行高，与顶栏按钮同高
+const BRAND_H: f32 = 34.0;
+
+/// 左上角品牌行：图标与字标在行内垂直居中，字标用只含 "Swoop" 的普惠体 Bold
+fn brand_row(ui: &mut egui::Ui, color: egui::Color32) {
+    const MARK: f32 = 32.0;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), BRAND_H), Sense::hover());
+    let mark =
+        egui::Rect::from_center_size(egui::pos2(rect.left() + 4.0 + MARK / 2.0, rect.center().y), vec2(MARK, MARK));
+    ui.scope_builder(UiBuilder::new().max_rect(mark), |ui| crate::brand::show_mark(ui, MARK));
+    let galley = ui.painter().layout_no_wrap("Swoop".into(), crate::fonts::brand(22.0), color);
+    let pos = egui::pos2(mark.right() + 10.0, rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(pos, galley, color);
+}
 
 impl SwoopApp {
     pub fn sidebar(&mut self, ui: &mut egui::Ui) {
@@ -15,17 +31,11 @@ impl SwoopApp {
             .exact_size(208.0)
             .resizable(false)
             .show_separator_line(false)
-            .frame(Frame::new().fill(p.panel).inner_margin(Margin { left: 12, right: 12, top: 44, bottom: 12 }))
+            .frame(Frame::new().fill(p.panel).inner_margin(Margin { left: 12, right: 12, top: TOP_INSET, bottom: 12 }))
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                // A「折光」：蓝紫双折面，与正式 SVG 共用轮廓。
-                ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    crate::brand::show_mark(ui, 26.0);
-                    ui.add_space(2.0);
-                    ui.label(RichText::new("Swoop").size(17.0).strong().color(p.text));
-                });
-                ui.add_space(18.0);
+                brand_row(ui, p.text);
+                ui.add_space(10.0);
 
                 egui::ScrollArea::vertical()
                     .id_salt("sidebar_sections")

@@ -1,4 +1,5 @@
-"""生成 GB2312 + ASCII + 常用标点的码位表，用 pyftsubset 把本机安装的阿里巴巴普惠体 Regular 子集化到 assets/fonts/。
+"""生成 GB2312 + ASCII + 常用标点的码位表，用 pyftsubset 把本机安装的阿里巴巴普惠体 Regular 子集化到 assets/fonts/；
+另把 Bold 字重只抽出侧栏字标「Swoop」用到的字母，单独生成一个几 KB 的字标字体。
 用法：python3 scripts/make_font_subset.py [输出目录]（需要 fonttools：pip install fonttools）"""
 import os
 import subprocess
@@ -47,3 +48,22 @@ cmd = [
 subprocess.run(cmd, check=True)
 os.remove(unicodes_path)
 print(f"codepoints={len(cps)} output={out} size={os.path.getsize(out)}")
+
+# 侧栏字标：Bold 字重，只含 "Swoop" 的字母
+brand_src = os.path.expanduser("~/Library/Fonts/AlibabaPuHuiTi-3-85-Bold.otf")
+brand_out = os.path.join(out_dir, "AlibabaPuHuiTi-3-85-Bold.brand.otf")
+subprocess.run(
+    [
+        "pyftsubset",
+        brand_src,
+        "--text=Swoop",
+        f"--output-file={brand_out}",
+        "--layout-features=kern",
+        "--no-hinting",
+        "--desubroutinize",
+        "--name-IDs=0,1,2,3,4,5,6,13,14",
+        "--drop-tables+=DSIG",
+    ],
+    check=True,
+)
+print(f"brand output={brand_out} size={os.path.getsize(brand_out)}")

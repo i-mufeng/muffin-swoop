@@ -19,8 +19,10 @@ use egui::{
 use super::icon_button;
 use crate::theme::{Mode, Palette, R_CTRL};
 
-/// 标题栏、底部按钮区和外框占用的高度，主体超出窗口时据此滚动
-const CHROME: f32 = 190.0;
+/// 底部按钮区高度（上边距 14 + 按钮 34 + 下边距 16）
+const FOOTER_H: f32 = 64.0;
+/// 弹窗上下离窗口边缘至少留的距离
+const EDGE: f32 = 24.0;
 const PAD_X: i8 = 24;
 
 /// 弹窗外框：零内边距，内容各段自带边距
@@ -101,7 +103,14 @@ fn heading_impl(
 
 /// 可滚动主体；窗口矮时只滚动这一段，底部按钮始终可见
 pub fn body<R>(ui: &mut Ui, id_salt: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let max_height = (ui.ctx().content_rect().height() - CHROME).max(140.0);
+    body_reserving(ui, id_salt, 0.0, add)
+}
+
+/// 同 `body`，主体与底部按钮之间还有不随主体滚动的区域（进度、列表等）时用，`below` 是那块的高度
+pub fn body_reserving<R>(ui: &mut Ui, id_salt: &str, below: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    // 主体之上已画的部分（标题栏、固定区）按实际高度扣，副标题换行或多一行提示时不会把底部按钮挤出窗口
+    let above = ui.min_rect().height();
+    let max_height = (ui.ctx().content_rect().height() - 2.0 * EDGE - above - below - FOOTER_H).max(140.0);
     egui::ScrollArea::vertical()
         .id_salt(id_salt)
         .max_height(max_height)

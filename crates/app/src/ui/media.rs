@@ -9,6 +9,9 @@ use swoop_media::{
 };
 use tokio_util::sync::CancellationToken;
 
+/// 一次性标记：底部「媒体设置」刚展开面板，下一帧把主体滚到面板处
+const REVEAL_SETTINGS: &str = "media_settings_reveal";
+
 struct Inspection {
     url: String,
     cancel: CancellationToken,
@@ -613,36 +616,6 @@ impl SwoopApp {
                         }
                     });
                 ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    start = super::primary_button(
-                        ui,
-                        &p,
-                        &format!("{}  {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, swoop_i18n::tr!("开始下载")),
-                    )
-                    .clicked();
-                    let settings_open = self.media_window.preferences.is_some();
-                    if super::ghost_button(
-                        ui,
-                        &p,
-                        &format!(
-                            "{}  {}",
-                            if settings_open { egui_phosphor::regular::CARET_UP } else { egui_phosphor::regular::GEAR },
-                            swoop_i18n::tr!("媒体设置")
-                        ),
-                    )
-                    .clicked()
-                    {
-                        if settings_open {
-                            self.media_window.preferences = None;
-                        } else {
-                            self.media_window.proxy_login =
-                                super::media_proxy::ProxyLoginForm::from_preferences(&self.media_tasks.preferences);
-                            self.media_window.preferences = Some(self.media_tasks.preferences.clone());
-                        }
-                    }
-                });
-                ui.add_space(8.0);
                 if let Some(error) = &self.media_window.error {
                     dialog::error(ui, &p, error);
                 }
@@ -650,6 +623,10 @@ impl SwoopApp {
                     dialog::error(ui, &p, error);
                 }
                 if let Some(preferences) = &mut self.media_window.preferences {
+                    // 设置面板从底部按钮展开，画在表单之后；刚展开时滚到它，免得在窗口外看不见
+                    if ui.data_mut(|d| d.remove_temp::<bool>(egui::Id::new(REVEAL_SETTINGS))).is_some() {
+                        ui.scroll_to_cursor(Some(Align::TOP));
+                    }
                     dialog::group_title(ui, &p, swoop_i18n::tr!("媒体设置"));
                     ui.add_enabled_ui(!self.media_tasks.active(), |ui| {
                         egui::Frame::new()
@@ -1012,6 +989,36 @@ impl SwoopApp {
                             });
                         ui.add_space(6.0);
                     });
+                }
+            });
+            dialog::footer(ui, &p, |ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                start = super::primary_button(
+                    ui,
+                    &p,
+                    &format!("{}  {}", egui_phosphor::regular::DOWNLOAD_SIMPLE, swoop_i18n::tr!("开始下载")),
+                )
+                .clicked();
+                let settings_open = self.media_window.preferences.is_some();
+                if super::ghost_button(
+                    ui,
+                    &p,
+                    &format!(
+                        "{}  {}",
+                        if settings_open { egui_phosphor::regular::CARET_UP } else { egui_phosphor::regular::GEAR },
+                        swoop_i18n::tr!("媒体设置")
+                    ),
+                )
+                .clicked()
+                {
+                    if settings_open {
+                        self.media_window.preferences = None;
+                    } else {
+                        self.media_window.proxy_login =
+                            super::media_proxy::ProxyLoginForm::from_preferences(&self.media_tasks.preferences);
+                        self.media_window.preferences = Some(self.media_tasks.preferences.clone());
+                        ui.data_mut(|d| d.insert_temp(egui::Id::new(REVEAL_SETTINGS), true));
+                    }
                 }
             });
         });

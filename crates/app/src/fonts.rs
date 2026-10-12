@@ -9,9 +9,13 @@ use std::sync::Arc;
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
 
 const CJK_FONT: &[u8] = include_bytes!("../../../assets/fonts/AlibabaPuHuiTi-3-55-Regular.subset.otf");
+/// 侧栏字标用的普惠体 Bold，只含 "Swoop" 几个字母（几 KB）
+const BRAND_FONT: &[u8] = include_bytes!("../../../assets/fonts/AlibabaPuHuiTi-3-85-Bold.brand.otf");
 
 /// Phosphor Fill 变体的字体族名；Regular 变体直接混在 Proportional 里。
 pub const ICON_FILL_FAMILY: &str = "phosphor-fill";
+/// 字标字体族：只能用来写 "Swoop"
+const BRAND_FAMILY: &str = "brand-bold";
 
 pub fn install(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
@@ -20,6 +24,9 @@ pub fn install(ctx: &egui::Context) {
     fonts.font_data.insert("cjk".into(), Arc::new(FontData::from_static(CJK_FONT)));
     fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "cjk".into());
     fonts.families.entry(FontFamily::Monospace).or_default().push("cjk".into());
+
+    fonts.font_data.insert(BRAND_FAMILY.into(), Arc::new(FontData::from_static(BRAND_FONT)));
+    fonts.families.insert(FontFamily::Name(BRAND_FAMILY.into()), vec![BRAND_FAMILY.into()]);
 
     // 图标：Regular 混入 Proportional（可直接写在普通文本里），Fill 单独成族
     egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -31,4 +38,8 @@ pub fn install(ctx: &egui::Context) {
 
 pub fn icon_fill(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(ICON_FILL_FAMILY.into()))
+}
+
+pub fn brand(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(BRAND_FAMILY.into()))
 }
