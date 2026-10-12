@@ -12,9 +12,14 @@ if (!master.includes('rotate(180 120 120)') || (master.match(/<use /g) || []).le
   throw new Error('母版必须保留同一单元的两个引用与 180° 旋转。');
 }
 const mono = color => master.replace(/#176FFF|#7C3CF4/g, color);
-const app = mono('#FFFFFF')
-  .replace('</defs>', '</defs><rect x="4" y="4" width="232" height="232" rx="59" fill="#4A6CF2"/><g transform="translate(34 34) scale(.716667)">')
-  .replace('</svg>', '</g></svg>');
+// 应用图标单独加宽刀身（外缘肘点沿法线外移 14），折线以下的尾部用灰色渐变做折面；仍是同一单元旋转 180°。
+const app = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Swoop 折光应用图标"><defs>'
+  + '<path id="fold-unit" d="M171.5407 23.2045 A0.8 0.8 0 0 0 170.5049 22.0253 L64.2091 83.6215 A8 8 0 0 0 63.3907 96.9212 L112.3523 133.9952 A1.2 1.2 0 0 0 114.2454 132.7658 L108.7525 109.2251 A7 7 0 0 1 110.0162 103.3728 Z"/>'
+  + '<clipPath id="fold-face"><path d="M-137.6887 31.9177 L299.4845 163.7382 L499.4845 463.7382 L-137.6887 331.9177 Z"/></clipPath>'
+  + '<linearGradient id="fold-gray" gradientUnits="userSpaceOnUse" x1="108" y1="106" x2="115" y2="136"><stop offset="0" stop-color="#B9C1D6"/><stop offset="1" stop-color="#DCE1EC"/></linearGradient>'
+  + '<g id="fold-piece"><use href="#fold-unit" fill="#FFFFFF"/><use href="#fold-unit" fill="url(#fold-gray)" clip-path="url(#fold-face)"/></g></defs>'
+  + '<rect x="4" y="4" width="232" height="232" rx="59" fill="#4A6CF2"/>'
+  + '<g transform="translate(26.4 26.4) scale(.78)"><use href="#fold-piece"/><use href="#fold-piece" transform="rotate(180 120 120)"/></g></svg>';
 for (const [name, svg] of Object.entries({
   'swoop-mono': mono('#171B25'), 'swoop-white': mono('#FFFFFF'),
   'swoop-blue': mono('#4A6CF2'), 'swoop-app': app,
