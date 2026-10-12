@@ -77,6 +77,9 @@ mod imp {
                 }
             };
             let builder = TrayIconBuilder::new().with_menu(Box::new(menu)).with_tooltip("Swoop");
+            // Windows 习惯右键弹菜单、双击打开主窗口；左键单击也弹菜单的话双击会先闪出菜单
+            #[cfg(target_os = "windows")]
+            let builder = builder.with_menu_on_left_click(false);
             #[cfg(target_os = "macos")]
             let builder = builder.with_icon_templated(icon);
             #[cfg(target_os = "windows")]
@@ -91,6 +94,7 @@ mod imp {
 
             let (tx, rx) = mpsc::channel();
             let ctx = ctx.clone();
+            let (menu_tx, menu_ctx) = (tx.clone(), ctx.clone());
             MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
                 let cmd = match e.id.0.as_str() {
                     "show" => TrayCommand::Show,
@@ -100,11 +104,20 @@ mod imp {
                     "quit" => TrayCommand::Quit,
                     _ => return,
                 };
-                let _ = tx.send(cmd);
-                ctx.request_repaint();
+                if matches!(cmd, TrayCommand::Show | TrayCommand::NewTask) {
+                    super::raise_window();
+                }
+                let _ = menu_tx.send(cmd);
+                menu_ctx.request_repaint();
             }));
-            // 点图标直接弹菜单，图标事件用不上；装个空处理器，免得事件堆在默认通道里
-            TrayIconEvent::set_event_handler(Some(|_| {}));
+            // macOS 点图标直接弹菜单；Windows 双击图标打开主窗口。其余图标事件丢弃，免得堆在默认通道里
+            TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
+                if let TrayIconEvent::DoubleClick { button: tray_icon::MouseButton::Left, .. } = e {
+                    super::raise_window();
+                    let _ = tx.send(TrayCommand::Show);
+                    ctx.request_repaint();
+                }
+            }));
 
             Some(Self { icon, status, resume_all, pause_all, rx, shown: None, last_update: None })
         }
@@ -152,6 +165,41 @@ impl Tray {
         None
     }
     pub fn update(&mut self, _s: TrayStatus, _show_speed: bool) {}
+}
+
+#[cfg(target_os = "windows")]
+static WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// 记下主窗口句柄，供 `raise_window` 在 egui 之外直接显示窗口
+pub fn register_window(handle: &impl raw_window_handle::HasWindowHandle) {
+    #[cfg(target_os = "windows")]
+    if let Ok(raw_window_handle::RawWindowHandle::Win32(h)) = handle.window_handle().map(|h| h.as_raw()) {
+        WINDOW.store(h.hwnd.get(), std::sync::atomic::Ordering::Relaxed);
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = handle;
+}
+
+/// Windows 上窗口 `Visible(false)` 后，靠 eframe 帧循环再把它显示出来并不可靠（托盘菜单点了没反应），
+/// 这里直接调 Win32 显示并前置；窗口可见后正常帧会跑 `logic`，再由 `show_window` 同步 `hidden` 等状态。
+/// 其他平台什么也不做，照常走 `logic`。
+pub fn raise_window() {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::{IsIconic, SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow};
+        let raw = WINDOW.load(std::sync::atomic::Ordering::Relaxed);
+        if raw == 0 {
+            return;
+        }
+        let hwnd = HWND(raw as *mut _);
+        // SAFETY: 句柄来自 eframe 主窗口，进程存活期间一直有效；托盘回调在主线程上执行
+        unsafe {
+            let cmd = if IsIconic(hwnd).as_bool() { SW_RESTORE } else { SW_SHOW };
+            let _ = ShowWindow(hwnd, cmd);
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
 }
 
 /// 关窗驻留时隐藏 Dock 图标（只留菜单栏），显示窗口时恢复。其他平台隐藏窗口即可，无需处理。
