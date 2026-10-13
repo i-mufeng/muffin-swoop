@@ -24,7 +24,21 @@
 
 `cargo test -p swoop-updater --locked` 覆盖签名、版本、通道与平台，真实 HTTP 下载、错误哈希/短响应/取消、安装目标外改、ZIP 路径边界、no-replace 原语、三个发布中断边界的真实文件恢复、恢复时外部改动保护、已完成记录重入，以及安装失败后启动临时旧应用脚本。就绪握手使用真实文件锁验证：持锁期间发出就绪但不替换、十类初检失败不发布或覆盖就绪记录、释放锁后安装并启动新版、等待期间更新包外改时保留并启动旧版，以及旧接口恢复中断 journal。
 
-本机测试只操作临时安装树，不替换当前开发应用。journal 测试模拟进程中断，没有宣称物理断电验证。完整 Windows 交叉构建受本机缺少 Windows SDK 阻塞（`aws-lc-sys: windows.h file not found`）；安装模块已通过独立 MSVC 目标类型检查，但 Windows 文件占用/移动/重启实机验收仍保留。没有配置或发布正式更新源，没有生成生产签名密钥，没有完成 macOS notarization 或 Windows Authenticode 签名。
+本机测试只操作临时安装树，不替换当前开发应用。journal 测试模拟进程中断，没有宣称物理断电验证。完整 Windows 交叉构建受本机缺少 Windows SDK 阻塞（`aws-lc-sys: windows.h file not found`）；安装模块已通过独立 MSVC 目标类型检查，但 Windows 文件占用/移动/重启实机验收仍保留。没有完成 macOS notarization 或 Windows Authenticode 签名。
+
+## 官方 GitHub 更新源（v0.1.0 起）
+
+正式更新源托管在 GitHub Releases，客户端「设置 → 检查与更新」按下表配置（自动检查默认关闭，由用户自行开启）：
+
+| 配置项 | 值 |
+| --- | --- |
+| 更新源 | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json` |
+| Ed25519 公钥 | `f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a` |
+| 通道 | stable |
+
+`releases/latest/download/` 始终解析到最新 Release，因此客户端更新源一次配置长期有效；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台；Windows 产物需恢复 CI 额度后在 Release 中补齐。
+
+发布流程（无 CI 额度时全本地执行）：打包脚本产出 ZIP → 用 `sign_feed` 与生产私钥（0600 权限，不入库）签名生成 `feed.json` → 打 tag 推送 → `gh release create` 上传应用包、扩展包、清单与公钥。生产签名密钥已生成并由发行方本地保管；公钥以上表和 Release 资产形式分发。
 
 ## 离线生成签名清单
 
