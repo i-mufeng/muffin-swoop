@@ -306,6 +306,12 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    /// 测试夹具的“新版本”：始终比当前 crate 版本高一个 patch，保证“只允许升级”校验在发版后依然成立。
+    fn feed_version() -> String {
+        let mut parts: Vec<u64> = env!("CARGO_PKG_VERSION").split('.').map(|part| part.parse().unwrap()).collect();
+        *parts.last_mut().unwrap() += 1;
+        parts.iter().map(u64::to_string).collect::<Vec<_>>().join(".")
+    }
     fn fixture(directory: &Path, platform: &str, seed_hex: bool) -> Arguments {
         let key = directory.join("test-only.seed");
         // Public deterministic fixture seed, created only inside the disposable test directory.
@@ -324,7 +330,8 @@ mod tests {
             fs::set_permissions(&key, fs::Permissions::from_mode(0o600)).unwrap();
         }
         let build = format!(
-            "name=Swoop\napplication_id=com.muffin.swoop\nversion=0.2.0\ntarget={}\nbinary_sha256={}\ncli_sha256={}\n",
+            "name=Swoop\napplication_id=com.muffin.swoop\nversion={}\ntarget={}\nbinary_sha256={}\ncli_sha256={}\n",
+            feed_version(),
             triplet(platform).unwrap(),
             swoop_updater::hex(&Sha256::digest(b"new executable")),
             swoop_updater::hex(&Sha256::digest(b"new cli"))
@@ -352,7 +359,7 @@ mod tests {
         fs::write(&archive, zip.finish().unwrap().into_inner()).unwrap();
         Arguments {
             key,
-            version: "0.2.0".into(),
+            version: feed_version(),
             channel: Channel::Stable,
             artifacts: vec![InputArtifact {
                 platform: platform.into(),
@@ -376,7 +383,7 @@ mod tests {
         let feed: SignedFeed = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
         let public = fs::read_to_string(public).unwrap();
         let candidate =
-            swoop_updater::verify(&feed, public.trim(), "0.1.0", &Channel::Stable, &swoop_updater::platform())
+            swoop_updater::verify(&feed, public.trim(), env!("CARGO_PKG_VERSION"), &Channel::Stable, &swoop_updater::platform())
                 .unwrap()
                 .unwrap();
         #[cfg(target_os = "macos")]

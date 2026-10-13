@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/core", "crates/app", "crates/media", "crates/grabber", "crates/ftp", "crates/updater", "crates/i18n", "crates/i18n-macros"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"

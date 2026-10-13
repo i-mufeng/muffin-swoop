@@ -7,10 +7,17 @@ use swoop_updater::{Artifact, Candidate, Channel, Release, SignedFeed, UpdateCon
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+/// 测试夹具的“新版本”：始终比当前 crate 版本高一个 patch，保证“只允许升级”校验在发版后依然成立。
+fn feed_version() -> String {
+    let mut parts: Vec<u64> = env!("CARGO_PKG_VERSION").split('.').map(|part| part.parse().unwrap()).collect();
+    *parts.last_mut().unwrap() += 1;
+    parts.iter().map(u64::to_string).collect::<Vec<_>>().join(".")
+}
+
 fn signed(url: &str, bytes: &[u8]) -> (SignedFeed, String) {
     let key = SigningKey::from_bytes(&[19; 32]); // Public deterministic test fixture only.
     let release = Release {
-        version: "0.2.0".into(),
+        version: feed_version(),
         channel: Channel::Stable,
         notes: "Test update".into(),
         platforms: BTreeMap::from([(
@@ -24,16 +31,18 @@ fn signed(url: &str, bytes: &[u8]) -> (SignedFeed, String) {
 }
 fn candidate(bytes: &[u8]) -> Candidate {
     let (feed, key) = signed("https://updates.test/download.zip", bytes);
-    swoop_updater::verify(&feed, &key, "0.1.0", &Channel::Stable, &swoop_updater::platform()).unwrap().unwrap()
+    swoop_updater::verify(&feed, &key, env!("CARGO_PKG_VERSION"), &Channel::Stable, &swoop_updater::platform())
+        .unwrap()
+        .unwrap()
 }
 
 #[test]
 fn signature_version_channel_platform_and_configuration_are_enforced() {
     let (feed, key) = signed("https://updates.test/p.zip", b"archive");
-    let current = "0.1.0";
+    let current = env!("CARGO_PKG_VERSION");
     let target = swoop_updater::platform();
     assert!(swoop_updater::verify(&feed, &key, current, &Channel::Stable, &target).unwrap().is_some());
-    assert!(swoop_updater::verify(&feed, &key, "0.3.0", &Channel::Stable, &target).unwrap().is_none());
+    assert!(swoop_updater::verify(&feed, &key, &feed_version(), &Channel::Stable, &target).unwrap().is_none());
     assert!(swoop_updater::verify(&feed, &key, current, &Channel::Preview, &target).unwrap().is_none());
     assert!(swoop_updater::verify(&feed, &key, current, &Channel::Stable, "unknown-target").is_err());
     let mut changed = feed.clone();
@@ -88,7 +97,7 @@ async fn real_http_signed_feed_and_verified_download() {
     let feeds = server(serde_json::to_vec(&feed).unwrap(), None).await;
     let config = UpdateConfig { feed_url: feeds.base.clone(), public_key: key, ..Default::default() };
     let cancel = CancellationToken::new();
-    let found = swoop_updater::check(&config, "0.1.0", &cancel).await.unwrap().unwrap();
+    let found = swoop_updater::check(&config, env!("CARGO_PKG_VERSION"), &cancel).await.unwrap().unwrap();
     let directory = tempfile::tempdir().unwrap();
     let path = swoop_updater::download(&found, directory.path(), &cancel).await.unwrap();
     assert_eq!(std::fs::read(path).unwrap(), body);
@@ -100,7 +109,9 @@ async fn wrong_hash_short_response_and_cancellation_never_publish_a_package() {
         let files = server(body, declared).await;
         let (feed, key) = signed(&files.base, b"ZIP");
         let found =
-            swoop_updater::verify(&feed, &key, "0.1.0", &Channel::Stable, &swoop_updater::platform()).unwrap().unwrap();
+            swoop_updater::verify(&feed, &key, env!("CARGO_PKG_VERSION"), &Channel::Stable, &swoop_updater::platform())
+                .unwrap()
+                .unwrap();
         let directory = tempfile::tempdir().unwrap();
         assert!(swoop_updater::download(&found, directory.path(), &CancellationToken::new()).await.is_err());
         assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
@@ -138,7 +149,8 @@ fn good_archive() -> Vec<u8> {
 #[cfg(target_os = "macos")]
 fn archive_with_executable(executable: &[u8]) -> Vec<u8> {
     let build = format!(
-        "name=Swoop\napplication_id=com.muffin.swoop\nversion=0.2.0\ntarget={}-apple-darwin\nbinary_sha256={}\ncli_sha256={}\n",
+        "name=Swoop\napplication_id=com.muffin.swoop\nversion={}\ntarget={}-apple-darwin\nbinary_sha256={}\ncli_sha256={}\n",
+        feed_version(),
         std::env::consts::ARCH,
         swoop_updater::hex(&Sha256::digest(executable)),
         swoop_updater::hex(&Sha256::digest(b"new cli"))
@@ -276,7 +288,8 @@ fn recovery_keeps_external_replacement_and_retains_original_backup() {
 fn wrong_platform_binary_hash_and_reserved_archive_names_are_rejected() {
     for field in ["target=x86_64-pc-windows-msvc", "binary_sha256=0000", "application_id=other.app"] {
         let build = format!(
-            "name=Swoop\napplication_id=com.muffin.swoop\nversion=0.2.0\ntarget={}-apple-darwin\nbinary_sha256={}\ncli_sha256={}\n",
+            "name=Swoop\napplication_id=com.muffin.swoop\nversion={}\ntarget={}-apple-darwin\nbinary_sha256={}\ncli_sha256={}\n",
+            feed_version(),
             std::env::consts::ARCH,
             swoop_updater::hex(&Sha256::digest(b"new executable")),
             swoop_updater::hex(&Sha256::digest(b"new cli"))
