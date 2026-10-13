@@ -79,8 +79,9 @@ pub struct SwoopApp {
     update_quiescence: Option<swoop_core::Quiescence>,
     pub site_auth_editor: Option<crate::ui::site_auth::SiteAuthEditor>,
     pub file_conflict: Option<crate::ui::file_conflict::ConflictPrompt>,
-    pub progress_window: bool,
+    pub progress_popup: crate::ui::download_card::ProgressPopup,
     pub task_windows: crate::ui::task_window::TaskWindows,
+    pub cards: crate::ui::download_card::Cards,
     pub popup_host: crate::ui::popup::PopupHost,
     window_guard: crate::window_state::WindowGuard,
     /// 窗口已隐藏到菜单栏
@@ -202,8 +203,9 @@ impl SwoopApp {
             update_quiescence: None,
             site_auth_editor: None,
             file_conflict: None,
-            progress_window: settings.progress_window,
+            progress_popup: settings.progress_popup,
             task_windows: Default::default(),
+            cards: Default::default(),
             popup_host: Default::default(),
             window_guard,
             hidden: false,
@@ -254,7 +256,7 @@ impl SwoopApp {
             notifications: self.notifications,
             connections: self.engine.connections(),
             batch_limit: self.batch_limit,
-            progress_window: self.progress_window,
+            progress_popup: self.progress_popup,
         }
         .save(&self.store);
         if let Err(error) = result {
@@ -372,7 +374,10 @@ impl SwoopApp {
                     };
                     let task = self.engine.snapshot_one(id);
                     let name = task.as_ref().map(|t| t.file_name.as_str());
-                    if let Some(message) = self.notifications.message(&event, name, background)
+                    // 右下角卡片会原地变成完成/失败卡片，不再另发系统通知和吐司
+                    let carded = self.cards.visible(id);
+                    if !carded
+                        && let Some(message) = self.notifications.message(&event, name, background)
                         && let Some(notifier) = &self.notifier
                     {
                         notifier.send(match (&event, &task) {
@@ -382,7 +387,7 @@ impl SwoopApp {
                     }
                     match event {
                         Event::Completed(_) => {
-                            if let Some(task) = &task {
+                            if !carded && let Some(task) = &task {
                                 self.toasts.push_completed(
                                     swoop_i18n::tr!("下载完成"),
                                     task.file_name.clone(),
@@ -393,15 +398,19 @@ impl SwoopApp {
                                 && task.as_ref().is_some_and(|t| crate::completion::is_installer(&t.path));
                             if !self.quitting
                                 && let Some(task) = task
-                                && let Err(error) =
-                                    self.completion.submit(task.path, !self.task_windows.contains(task.id), install)
+                                && let Err(error) = self.completion.submit(
+                                    task.path,
+                                    !self.task_windows.contains(task.id) && !self.cards.contains(task.id),
+                                    install,
+                                )
                             {
                                 self.toasts.push_error(swoop_i18n::tr!("完成动作未执行"), error);
                             }
                         }
-                        Event::Failed(_, reason) => {
+                        Event::Failed(_, reason) if !carded => {
                             self.toasts.push_error(swoop_i18n::trf!("下载失败：{}", name.unwrap_or_default()), reason);
                         }
+                        Event::Failed(_, _) => {}
                         _ => unreachable!(),
                     }
                 }
@@ -449,12 +458,22 @@ impl SwoopApp {
                     }
                 }),
                 BridgeEvent::Added { id, file_name } => {
-                    self.toasts.push_info(swoop_i18n::tr!("已接收浏览器下载"), file_name);
-                    self.open_task_window(ctx, id);
+                    // 卡片或进度窗口已经说明了，不再叠一条吐司
+                    if !self.show_progress(ctx, id, None) {
+                        self.toasts.push_info(swoop_i18n::tr!("已接收浏览器下载"), file_name);
+                    }
                 }
-                BridgeEvent::Ask { url, file_name, size, headers } => {
+                BridgeEvent::AskPending { token, url, headers } => {
                     // 新建对话框是独立窗口，主窗口隐藏时也不必调出来
-                    self.add_dialog.open_from_browser(url, &file_name, size, headers);
+                    self.add_dialog.begin_from_browser(token, url, headers);
+                }
+                BridgeEvent::Ask { token, file_name, size } => {
+                    self.add_dialog.finish_from_browser(token, &file_name, size);
+                }
+                BridgeEvent::AskWithdrawn { token, reason } => {
+                    if self.add_dialog.withdraw_from_browser(token) {
+                        self.toasts.push_info(swoop_i18n::tr!("已交还浏览器下载"), reason);
+                    }
                 }
                 BridgeEvent::Media { source } => {
                     self.show_window(ctx);
@@ -826,9 +845,10 @@ impl eframe::App for SwoopApp {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
 
-        // 有任务在跑就 10fps 刷新进度，否则低频；隐藏时只需维持菜单栏速度。剪贴板轮询也靠这个节拍
+        // 有任务在跑就 10fps 刷新进度，否则低频；隐藏时只需维持菜单栏速度（右下角还有卡片时照常刷新）。
+        // 剪贴板轮询也靠这个节拍
         let any_active = self.tasks.iter().any(|t| t.status.is_active()) || self.media_tasks.active();
-        let every = match (self.hidden, any_active) {
+        let every = match (self.hidden && self.cards.is_empty(), any_active) {
             (true, _) => Duration::from_secs(1),
             (false, true) => Duration::from_millis(100),
             (false, false) => Duration::from_millis(500),

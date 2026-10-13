@@ -7,6 +7,7 @@ use swoop_core::Store;
 use crate::bridge::{BridgeMode, DEFAULT_PORT};
 use crate::notifications::{NotificationSettings, NotificationTiming};
 use crate::theme::Mode;
+use crate::ui::download_card::ProgressPopup;
 use crate::ui::progress::ProgressStyle;
 
 #[derive(Clone, Debug)]
@@ -32,8 +33,8 @@ pub struct AppSettings {
     /// 新建或继续任务时采用的最大连接数。
     pub connections: usize,
     pub batch_limit: usize,
-    /// 单个下载开始时弹出独立的进度窗口
-    pub progress_window: bool,
+    /// 单个下载开始时的进度提示：右下角卡片、居中进度窗口或不提示
+    pub progress_popup: ProgressPopup,
 }
 
 pub fn default_download_dir() -> PathBuf {
@@ -71,7 +72,10 @@ impl AppSettings {
                 .and_then(|v| v.parse().ok())
                 .filter(|n| (1..=crate::batch::MAX_BATCH_LIMIT).contains(n))
                 .unwrap_or(crate::batch::DEFAULT_BATCH_LIMIT),
-            progress_window: flag("progress_window", true),
+            // 旧版只有「进度窗口」开关：关着的保持不提示，开着的换成新的默认（右下角卡片）
+            progress_popup: get("progress_popup").and_then(|v| ProgressPopup::parse(&v)).unwrap_or_else(|| {
+                if flag("progress_window", true) { ProgressPopup::default() } else { ProgressPopup::Off }
+            }),
         }
     }
 
@@ -95,7 +99,7 @@ impl AppSettings {
             ("notification_sound", flag_str(self.notifications.sound)),
             ("connections", self.connections.to_string()),
             ("batch_limit", self.batch_limit.to_string()),
-            ("progress_window", flag_str(self.progress_window)),
+            ("progress_popup", self.progress_popup.as_str().into()),
         ];
         store.set_settings(&pairs)
     }
@@ -135,6 +139,18 @@ mod tests {
         let restored = AppSettings::load(&reopened, PathBuf::from("unused"));
         assert_eq!(restored.notifications, settings.notifications);
         assert_eq!(restored.connections, 3);
+    }
+
+    #[test]
+    fn progress_popup_migrates_from_old_progress_window_switch() {
+        let store = Store::in_memory().unwrap();
+        assert_eq!(AppSettings::load(&store, PathBuf::from("d")).progress_popup, ProgressPopup::Card);
+        store.set_setting("progress_window", "0").unwrap();
+        let mut settings = AppSettings::load(&store, PathBuf::from("d"));
+        assert_eq!(settings.progress_popup, ProgressPopup::Off, "关掉过进度窗口的保持不提示");
+        settings.progress_popup = ProgressPopup::Window;
+        settings.save(&store).unwrap();
+        assert_eq!(AppSettings::load(&store, PathBuf::from("d")).progress_popup, ProgressPopup::Window);
     }
 
     #[test]

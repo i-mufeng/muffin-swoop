@@ -3,6 +3,7 @@
 use egui::{Align, Label, Layout, Pos2, RichText, ViewportId, vec2};
 use swoop_core::{TaskId, TaskSnapshot, TaskStatus};
 
+use super::download_card::ProgressPopup;
 use super::{format, ghost_button, popup, primary_button, progress};
 use crate::app::SwoopApp;
 use crate::completion::FileAction;
@@ -62,20 +63,35 @@ enum Action {
 }
 
 impl SwoopApp {
-    /// 单个下载开始时按设置弹出进度窗口
-    pub(crate) fn open_task_window(&mut self, ctx: &egui::Context, id: TaskId) {
-        if self.progress_window {
-            self.task_windows.open(ctx, id);
+    /// 单个下载开始时按设置弹出进度提示；`from` 是新建下载窗口的位置，卡片从那里飞到右下角。
+    /// 返回是否弹出了卡片或进度窗口
+    pub(crate) fn show_progress(&mut self, ctx: &egui::Context, id: TaskId, from: Option<egui::Rect>) -> bool {
+        match self.progress_popup {
+            ProgressPopup::Card => self.cards.open(id, from),
+            ProgressPopup::Window => self.task_windows.open(ctx, id),
+            ProgressPopup::Off => return false,
         }
+        true
     }
 
     pub fn task_windows_ui(&mut self, ctx: &egui::Context) {
         let p = self.palette;
         let mut actions = Vec::new();
         for window in &mut self.task_windows.windows {
-            let Some(task) = self.tasks.iter().find(|t| t.id == window.id) else {
-                actions.push(Action::Close(window.id));
-                continue;
+            // 本帧 ui 里刚建的任务还不在帧开头取的快照里，向引擎补一份；两边都没有才是任务被移除了
+            let fresh;
+            let task = match self.tasks.iter().find(|t| t.id == window.id) {
+                Some(task) => task,
+                None => match self.engine.snapshot_one(window.id) {
+                    Some(task) => {
+                        fresh = task;
+                        &fresh
+                    }
+                    None => {
+                        actions.push(Action::Close(window.id));
+                        continue;
+                    }
+                },
             };
             let title = match task.progress() {
                 Some(progress) if task.status != TaskStatus::Completed => {

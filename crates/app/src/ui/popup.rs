@@ -4,7 +4,7 @@
 //! 子窗口可见，根视口又会跑完整的 `ui`。所以始终保留一个看不见的 1×1 宿主窗口：有弹窗要显示时
 //! 在 `logic` 里把它显示出来换回 `ui` 帧，弹窗建好后再把它藏起来。
 
-use egui::{Frame, Margin, Pos2, Ui, ViewportBuilder, ViewportCommand, ViewportId, vec2};
+use egui::{Color32, Frame, Margin, Pos2, Stroke, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, vec2};
 
 use crate::app::SwoopApp;
 use crate::theme::Palette;
@@ -39,6 +39,16 @@ pub fn builder(title: &str, size: egui::Vec2, pos: Option<Pos2>) -> ViewportBuil
 /// 里建不出来，egui 会因回调未被调用而 panic。所以新窗口先登记成延迟视口，由 eframe 在下一帧开头
 /// （`initialized_all_windows`）建好窗口，之后再按立即视口画。返回 false 表示窗口还没建好。
 fn ensure_window(ctx: &egui::Context, id: ViewportId, builder: &ViewportBuilder, p: &Palette) -> bool {
+    ensure_window_filled(ctx, id, builder, p, p.surface)
+}
+
+fn ensure_window_filled(
+    ctx: &egui::Context,
+    id: ViewportId,
+    builder: &ViewportBuilder,
+    p: &Palette,
+    fill: Color32,
+) -> bool {
     // 窗口建好后把原生标题栏切到应用主题；窗口每次重建都会先经过未就绪的帧，届时清掉标记
     let themed = id.0.with("native_theme");
     if ctx.input(|i| i.raw.viewports.get(&id).is_some_and(|info| info.native_pixels_per_point.is_some())) {
@@ -49,7 +59,6 @@ fn ensure_window(ctx: &egui::Context, id: ViewportId, builder: &ViewportBuilder,
         return true;
     }
     ctx.data_mut(|d| d.remove::<crate::theme::Mode>(themed));
-    let fill = p.surface;
     ctx.show_viewport_deferred(id, builder.clone(), move |ui, _| {
         egui::CentralPanel::default().frame(Frame::new().fill(fill)).show(ui, |_| {});
     });
@@ -87,6 +96,88 @@ pub fn show(
     })
 }
 
+/// 右下角下载卡片这类小浮窗：置顶、不抢焦点、不进任务栏。圆角和阴影交给系统——eframe 只有主窗口
+/// 透明时子窗口才能透明，没法自己画圆角：macOS 用隐藏了标题栏的普通窗口（系统画圆角），
+/// 其它平台用无边框窗口，自己描一圈边。
+/// 返回内容闭包的结果和用户是否要求关窗（⌘W 等）；窗口还没建好时返回 None。`slot` 只在截图模式下用来错开位置。
+pub fn show_card<R>(
+    ctx: &egui::Context,
+    id: ViewportId,
+    size: Vec2,
+    pos: Pos2,
+    slot: usize,
+    p: &Palette,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<(R, bool)> {
+    #[cfg(feature = "screenshot")]
+    if crate::shot::active() {
+        return Some((show_card_inline(ctx, id, size, slot, p, add_contents), false));
+    }
+    let _ = slot;
+    let builder = ViewportBuilder::default()
+        .with_title("Swoop")
+        .with_app_id("com.muffin.swoop")
+        .with_inner_size(size)
+        .with_position(pos)
+        .with_resizable(false)
+        .with_window_level(egui::WindowLevel::AlwaysOnTop)
+        .with_taskbar(false)
+        .with_active(false);
+    let builder = if cfg!(target_os = "macos") {
+        builder
+            .with_title_shown(false)
+            .with_titlebar_shown(false)
+            .with_titlebar_buttons_shown(false)
+            .with_fullsize_content_view(true)
+    } else {
+        builder.with_decorations(false)
+    };
+    if !ensure_window_filled(ctx, id, &builder, p, p.surface) {
+        return None;
+    }
+    let mut add_contents = Some(add_contents);
+    ctx.show_viewport_immediate(id, builder, |ui, _class| {
+        let inner = egui::CentralPanel::default()
+            .frame(card_frame(p))
+            .show(ui, |ui| add_contents.take().map(|add| add(ui)))
+            .inner;
+        inner.map(|r| (r, ui.input(|i| i.viewport().close_requested())))
+    })
+}
+
+fn card_frame(p: &Palette) -> Frame {
+    let frame = Frame::new().fill(p.surface).inner_margin(Margin::same(12));
+    if cfg!(target_os = "macos") { frame } else { frame.stroke(Stroke::new(1.0, p.border)) }
+}
+
+/// 截图模式：卡片画在主窗口右下角，按 `slot` 往上叠
+#[cfg(feature = "screenshot")]
+fn show_card_inline<R>(
+    ctx: &egui::Context,
+    id: ViewportId,
+    size: Vec2,
+    slot: usize,
+    p: &Palette,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let offset = vec2(-16.0, -16.0 - slot as f32 * (size.y + 10.0));
+    egui::Area::new(id.0)
+        .order(egui::Order::Foreground)
+        .anchor(egui::Align2::RIGHT_BOTTOM, offset)
+        .show(ctx, |ui| {
+            card_frame(p)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(egui::CornerRadius::same(crate::theme::R_CARD))
+                .show(ui, |ui| {
+                    ui.set_width(size.x - 24.0);
+                    ui.set_height(size.y - 24.0);
+                    add_contents(ui)
+                })
+                .inner
+        })
+        .inner
+}
+
 /// 截图模式：把独立窗口的内容画在主窗口中央，模拟同尺寸的原生窗口，好与主窗口一起截下来
 #[cfg(feature = "screenshot")]
 fn show_inline(
@@ -118,13 +209,17 @@ pub struct PopupHost {
 
 impl SwoopApp {
     pub(crate) fn wants_popup(&self) -> bool {
-        self.add_dialog.open || !self.task_windows.is_empty() || !self.completion.dialogs.is_empty()
+        self.add_dialog.open
+            || !self.task_windows.is_empty()
+            || !self.cards.is_empty()
+            || !self.completion.dialogs.is_empty()
     }
 
     /// 所有独立弹窗；宿主窗口必须最后画，才能在弹窗建好后藏起来
     pub(crate) fn popups_ui(&mut self, ctx: &egui::Context) {
         self.add_dialog_ui(ctx);
         self.task_windows_ui(ctx);
+        self.cards_ui(ctx);
         self.completed_window_ui(ctx);
         self.popup_host_ui(ctx);
     }

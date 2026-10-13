@@ -2,7 +2,7 @@
 //!
 //! 与 eframe 自带的 `EFRAME_SCREENSHOT_TO`（只抓首帧，看不到 Modal、吐司等 `Area`）不同，这里等若干帧后
 //! 发 `ViewportCommand::Screenshot`，wgpu 后端也能用，弹窗和吐司都在图里。独立窗口（新建下载、进度窗口、
-//! 完成窗口）在截图模式下改画进主窗口中央（见 `popup::show`），一起截下来。
+//! 完成窗口）在截图模式下改画进主窗口中央（见 `popup::show`），右下角下载卡片画在主窗口右下角，一起截下来。
 //!
 //! 环境变量：`SWOOP_SHOT=<输出.png>`，`SWOOP_SHOT_VIEW=<视图>`（见 [`VIEWS`]）。一般通过
 //! `scripts/screenshot.sh` 调用：它用临时数据目录和演示数据，不碰真实下载记录，也不会被已运行的实例接管。
@@ -34,7 +34,9 @@ pub const VIEWS: &[&str] = &[
     "media",
     "grabber",
     "add",
+    "add-pending",
     "task-window",
+    "cards",
     "completed",
 ];
 
@@ -119,8 +121,21 @@ fn open_view(app: &mut SwoopApp, ctx: &egui::Context, view: &str) -> bool {
         "media" => app.media_window.open = true,
         "grabber" => app.grabber.open = true,
         "add" => app.add_dialog.open_with(None),
+        // 浏览器刚交来、还在探测的下载
+        "add-pending" => app.add_dialog.begin_from_browser(
+            1,
+            "https://releases.ubuntu.com/24.04/ubuntu-24.04.3-desktop-amd64.iso".into(),
+            Vec::new(),
+        ),
         // 演示模式下默认选中的那条假任务
         "task-window" => app.task_windows.open(ctx, crate::demo::SELECTED),
+        // 自下而上：已完成、失败、下载中，再多一张排队的，看「+1」
+        "cards" => {
+            app.toasts.items.clear();
+            for id in [9006, 9008, 9001, 9002] {
+                app.cards.open(swoop_core::TaskId(id), None);
+            }
+        }
         "completed" => app.completion.dialogs.push_back(app.default_dir.join("ubuntu-24.04.3-desktop-amd64.iso")),
         other => match other.strip_prefix("settings:") {
             Some(tab) => return app.show_settings_tab(ctx, tab),

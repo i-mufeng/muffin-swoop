@@ -19,6 +19,7 @@ mod media_tasks;
 mod native_drag;
 mod network_settings;
 mod notifications;
+mod screen;
 mod settings;
 #[cfg(feature = "screenshot")]
 mod shot;

@@ -245,7 +245,9 @@ impl SwoopApp {
         for url in urls {
             let dir = self.categories.target(&self.default_dir, &url, None);
             match self.engine.add(AddOptions { url: url.clone(), dir, file_name: None, headers: Vec::new() }) {
-                Ok(id) if single => self.open_task_window(ctx, id),
+                Ok(id) if single => {
+                    self.show_progress(ctx, id, None);
+                }
                 Ok(_) => {}
                 Err(e) => failed.push(format!("{url}: {e}")),
             }

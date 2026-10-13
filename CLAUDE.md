@@ -30,7 +30,7 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 - 主题只通过 `Palette::apply` 切换：它同时写 egui 的 dark/light 两套样式、锁定主题并同步原生标题栏；不要直接 `ctx.set_visuals`（只改当前那套，系统主题与应用主题不同时控件会用回 egui 默认样式）。
 - 侧栏只放任务筛选、队列、分类和设置；媒体下载、站点抓取等进阶入口放顶栏「更多操作」（可在「视图 → 工具栏」固定到顶栏）。
 - 吐司在 `ui/toast.rs`，右下角 `Area`；引擎事件（完成/失败）和剪贴板链接都走它，不要再加第二套应用内提示机制。系统通知（`notifications.rs`）只在窗口不在前台时补充提醒，不替代吐司。
-- 看界面效果用 `scripts/screenshot.sh <视图> [dark|light]`（`--features screenshot`，视图列表见 `crates/app/src/shot.rs`）：打开指定弹窗或设置分类后截主窗口，吐司、Modal 都在，独立窗口（新建下载、进度/完成窗口）画在主窗口中央；用临时数据目录和演示数据，输出到 `target/screenshots/`，会短暂弹出窗口。eframe 自带的 `EFRAME_SCREENSHOT_TO` 只抓首帧，看不到任何 `Area`。
+- 看界面效果用 `scripts/screenshot.sh <视图> [dark|light]`（`--features screenshot`，视图列表见 `crates/app/src/shot.rs`）：打开指定弹窗或设置分类后截主窗口，吐司、Modal 都在，独立窗口（新建下载、进度/完成窗口）画在主窗口中央，右下角下载卡片（`ui/download_card.rs`，实际是贴屏幕右下角的置顶小窗口）画在主窗口右下角；用临时数据目录和演示数据，输出到 `target/screenshots/`，会短暂弹出窗口。eframe 自带的 `EFRAME_SCREENSHOT_TO` 只抓首帧，看不到任何 `Area`。
 - `SWOOP_DEMO=1` 混入假任务与假吐司，只在 UI 层拼 `TaskSnapshot`，不经过引擎。
 - 非绘制的每帧逻辑（刷新快照、轮询引擎/剪贴板/桥接/托盘事件、关窗拦截）放 `App::logic`，不放 `ui`：窗口隐藏到菜单栏（`tray.rs`）时 eframe 不跑 `ui`，只在有 repaint 请求时调 `logic`。后台线程要唤醒界面就 `ctx.request_repaint()`。
 - 截图用默认窗口尺寸 1080×700，弹窗主体超出时会滚动；要看下半部分只能临时调整内容顺序。

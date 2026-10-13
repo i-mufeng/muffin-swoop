@@ -810,8 +810,6 @@
   "打开": "Open",
   "打开文件夹": "Open folder",
   "{} · 剩余 {} · {} 连接": "{} · {} left · {} connections",
-  "进度窗口": "Progress window",
-  "单个下载开始时弹出独立的进度窗口": "Show a separate progress window when a single download starts",
   "双击编辑队列": "Double-click to edit the queue",
   "视图": "View",
   "下载失败时通知": "Notify when a download fails",
@@ -854,5 +852,13 @@
   "无法跟踪安装程序进程，安装包未删除": "Could not track the installer process; installer kept",
   "无法等待安装程序结束（{other}）": "Could not wait for the installer to exit ({other})",
   "无法移到回收站（{result}）": "Could not move to the Recycle Bin ({result})",
-  "当前系统不支持自动运行安装包": "Running installers automatically is not supported on this system"
+  "当前系统不支持自动运行安装包": "Running installers automatically is not supported on this system",
+  "已交还浏览器下载": "Handed back to the browser",
+  "浏览器已断开连接": "The browser disconnected",
+  "来自浏览器 · 正在获取文件信息…": "From browser · Getting file information…",
+  "进度提示": "Progress",
+  "单个下载开始时显示": "Shown when a single download starts",
+  "右下角卡片": "Corner card",
+  "居中窗口": "Centered window",
+  "还有 {} 个下载": "{} more downloads"
 }

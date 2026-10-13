@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use egui::{Align, Key, Layout, Margin, Modifiers, RichText};
 use swoop_core::AddOptions;
@@ -18,6 +19,10 @@ pub struct AddDialog {
     browser_names: HashMap<String, String>,
     /// 来自浏览器时在标题下显示的一行说明
     browser_note: Option<String>,
+    /// 浏览器交来、Swoop 还在探测的链接：桥接令牌 →（原样链接，预览里的键）；探测完之前不能开始下载
+    browser_pending: HashMap<u64, (String, String)>,
+    /// 收到浏览器下载的时刻，窗口真正画出来时记一条耗时日志
+    shown_since: Option<Instant>,
     preview: Option<Result<Vec<String>, String>>,
     preview_limit: usize,
     pub queue: swoop_core::QueueId,
@@ -43,6 +48,8 @@ impl AddDialog {
             browser_headers: HashMap::new(),
             browser_names: HashMap::new(),
             browser_note: None,
+            browser_pending: HashMap::new(),
+            shown_since: None,
             preview: None,
             preview_limit: 0,
             queue: swoop_core::MAIN_QUEUE_ID,
@@ -53,22 +60,39 @@ impl AddDialog {
         }
     }
 
-    /// 询问模式：浏览器交来的下载，预填链接并记住它的请求头
-    pub fn open_from_browser(
-        &mut self,
-        url: String,
-        file_name: &str,
-        size: Option<u64>,
-        headers: Vec<(String, String)>,
-    ) {
+    /// 询问模式：浏览器交来下载，Swoop 开始探测前就弹出对话框，预填链接并记住它的请求头
+    pub fn begin_from_browser(&mut self, token: u64, url: String, headers: Vec<(String, String)>) {
         self.queue = swoop_core::MAIN_QUEUE_ID;
-        let size = size.map(|s| format!(" · {}", super::format::bytes(s))).unwrap_or_default();
-        self.browser_note = Some(swoop_i18n::trf!("来自浏览器：{file_name}{size}"));
+        self.browser_note = Some(swoop_i18n::tr!("来自浏览器 · 正在获取文件信息…").into());
         let key =
             crate::batch::parse(&url, 1).ok().and_then(|urls| urls.into_iter().next()).unwrap_or_else(|| url.clone());
-        self.browser_names.insert(key.clone(), file_name.to_string());
-        self.browser_headers.insert(key, headers);
-        self.open_with(Some(url));
+        self.browser_headers.insert(key.clone(), headers);
+        self.open_with(Some(url.clone()));
+        self.browser_pending.insert(token, (url, key));
+        self.shown_since.get_or_insert_with(Instant::now);
+    }
+
+    /// 探测成功：补上文件名和大小。对话框已被关掉（令牌不在了）就什么都不做
+    pub fn finish_from_browser(&mut self, token: u64, file_name: &str, size: Option<u64>) {
+        let Some((_, key)) = self.browser_pending.remove(&token) else { return };
+        let size = size.map(|s| format!(" · {}", super::format::bytes(s))).unwrap_or_default();
+        self.browser_note = Some(swoop_i18n::trf!("来自浏览器：{file_name}{size}"));
+        self.browser_names.insert(key, file_name.to_string());
+    }
+
+    /// 探测失败、浏览器自己下：撤下这条链接，草稿里没别的链接就关窗。返回是否撤下了
+    pub fn withdraw_from_browser(&mut self, token: u64) -> bool {
+        let Some((url, key)) = self.browser_pending.remove(&token) else { return false };
+        self.browser_headers.remove(&key);
+        self.browser_names.remove(&key);
+        self.text = self.text.lines().filter(|line| line.trim() != url.trim()).collect::<Vec<_>>().join("\n");
+        self.preview = None;
+        if self.text.trim().is_empty() {
+            self.close();
+        } else if self.browser_pending.is_empty() {
+            self.browser_note = None;
+        }
+        true
     }
 
     /// 关闭即丢弃草稿：取消（按钮、Esc、关窗）和提交成功都走这里
@@ -81,6 +105,8 @@ impl AddDialog {
         self.browser_headers.clear();
         self.browser_names.clear();
         self.browser_note = None;
+        self.browser_pending.clear();
+        self.shown_since = None;
         self.ftp.clear_credentials();
     }
 
@@ -216,7 +242,11 @@ impl SwoopApp {
         if std::mem::take(&mut self.add_dialog.raise) {
             ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Focus);
         }
+        let pending = !self.add_dialog.browser_pending.is_empty();
         let close = super::popup::show(ctx, viewport_id(), builder, &p, |ui| {
+            if let Some(since) = self.add_dialog.shown_since.take() {
+                tracing::info!(elapsed_ms = since.elapsed().as_millis() as u64, "浏览器下载：新建下载窗口已显示");
+            }
             super::dialog::heading(
                 ui,
                 &p,
@@ -381,10 +411,17 @@ impl SwoopApp {
             // 按钮行贴着窗口底边
             ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(swoop_i18n::tr!("⌘↩ 开始  ·  Esc 取消")).size(12.0).color(p.text_muted));
+                    if pending {
+                        ui.add(egui::Spinner::new().size(12.0).color(p.text_muted));
+                        ui.label(RichText::new(swoop_i18n::tr!("正在获取文件信息…")).size(12.0).color(p.text_muted));
+                    } else {
+                        ui.label(RichText::new(swoop_i18n::tr!("⌘↩ 开始  ·  Esc 取消")).size(12.0).color(p.text_muted));
+                    }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 10.0;
-                        if primary_button(ui, &p, swoop_i18n::tr!("开始下载")).clicked() {
+                        let start =
+                            ui.add_enabled_ui(!pending, |ui| primary_button(ui, &p, swoop_i18n::tr!("开始下载")));
+                        if start.inner.clicked() {
                             submit = true;
                         }
                         if ghost_button(ui, &p, swoop_i18n::tr!("取消")).clicked() {
@@ -393,7 +430,7 @@ impl SwoopApp {
                     });
                 });
             });
-            if ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
+            if !pending && ui.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Enter)) {
                 submit = true;
             }
         });
@@ -455,12 +492,13 @@ impl SwoopApp {
                 swoop_i18n::tr!("安装程序结束后，安装包会移到回收站"),
             );
         }
-        // 只为单个、立即开始的下载弹进度窗口；批量或等待队列的不弹
+        // 只为单个、立即开始的下载弹进度提示；批量或等待队列的不弹。卡片从对话框的位置飞到右下角
         let queue_running = self.engine.queues().iter().any(|q| q.id == self.add_dialog.queue && q.running);
         if let [id] = started[..]
             && queue_running
         {
-            self.open_task_window(ctx, id);
+            let from = ctx.input(|i| i.raw.viewports.get(&viewport_id()).and_then(|v| v.outer_rect));
+            self.show_progress(ctx, id, from);
         }
         if self.default_dir != dir {
             self.default_dir = dir;

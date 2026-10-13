@@ -5,9 +5,10 @@
 
 use std::convert::Infallible;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
@@ -28,6 +29,8 @@ const MAX_BODY: usize = 64 * 1024;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 /// 单连接总时长上限（含探测）
 const CONN_TIMEOUT: Duration = Duration::from_secs(15);
+/// 询问模式下探测超过这么久还没结束，就先弹出新建对话框
+const ASK_GRACE: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BridgeMode {
@@ -67,12 +70,22 @@ pub enum BridgeEvent {
         id: swoop_core::TaskId,
         file_name: String,
     },
-    /// 询问模式：探测成功，等 UI 弹新建对话框
-    Ask {
+    /// 询问模式：开始探测前先让 UI 弹出新建对话框，文件信息稍后由 `Ask` / `AskWithdrawn` 补上
+    AskPending {
+        token: u64,
         url: String,
+        headers: Vec<(String, String)>,
+    },
+    /// 询问模式：探测成功，对话框补上文件名和大小
+    Ask {
+        token: u64,
         file_name: String,
         size: Option<u64>,
-        headers: Vec<(String, String)>,
+    },
+    /// 询问模式：探测失败或不是同一份文件，交回浏览器下载，对话框撤下这条链接
+    AskWithdrawn {
+        token: u64,
+        reason: String,
     },
 }
 
@@ -83,6 +96,8 @@ struct Shared {
     dir: Mutex<PathBuf>,
     categories: Mutex<crate::categories::Categories>,
     last_ping: Mutex<Option<SystemTime>>,
+    /// 询问模式下每次交接的编号，对应 `AskPending` 与随后的 `Ask` / `AskWithdrawn`
+    next_token: AtomicU64,
     events: mpsc::Sender<BridgeEvent>,
     /// 有新事件时唤醒 UI（egui 空闲时不会自己重绘）
     wake: Box<dyn Fn() + Send + Sync>,
@@ -92,6 +107,43 @@ impl Shared {
     fn emit(&self, ev: BridgeEvent) {
         let _ = self.events.send(ev);
         (self.wake)();
+    }
+}
+
+/// 已通知 UI 弹出对话框、还没给出结果的一次询问；连接超时等提前中断时补发 `AskWithdrawn`，
+/// 对话框不会一直停在"正在获取文件信息"
+struct PendingAsk<'a> {
+    shared: &'a Shared,
+    token: u64,
+    settled: bool,
+}
+
+impl<'a> PendingAsk<'a> {
+    fn begin(shared: &'a Shared, url: &str, headers: &[(String, String)]) -> Self {
+        let token = shared.next_token.fetch_add(1, Ordering::Relaxed);
+        shared.emit(BridgeEvent::AskPending { token, url: url.to_string(), headers: headers.to_vec() });
+        Self { shared, token, settled: false }
+    }
+
+    fn resolve(mut self, file_name: String, size: Option<u64>) {
+        self.settled = true;
+        self.shared.emit(BridgeEvent::Ask { token: self.token, file_name, size });
+    }
+
+    fn withdraw(mut self, reason: &str) {
+        self.settled = true;
+        self.shared.emit(BridgeEvent::AskWithdrawn { token: self.token, reason: reason.to_string() });
+    }
+}
+
+impl Drop for PendingAsk<'_> {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.shared.emit(BridgeEvent::AskWithdrawn {
+                token: self.token,
+                reason: swoop_i18n::tr!("浏览器已断开连接").into(),
+            });
+        }
     }
 }
 
@@ -122,6 +174,7 @@ impl Bridge {
             dir: Mutex::new(dir),
             categories: Mutex::new(crate::categories::Categories::default()),
             last_ping: Mutex::new(None),
+            next_token: AtomicU64::new(1),
             events: tx,
             wake: Box::new(wake),
         });
@@ -375,20 +428,48 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         return reply(StatusCode::OK, json!({ "id": null, "file_name": name, "size": null }));
     }
     headers.extend(redirect_cookie_headers(&task.url, &task.redirect_cookies));
-    let info = match tokio::time::timeout(PROBE_TIMEOUT, shared.engine.probe_url(&task.url, &headers)).await {
-        Ok(Ok(info)) => info,
-        Ok(Err(e)) => {
-            return error(StatusCode::UNPROCESSABLE_ENTITY, &swoop_i18n::trf!("探测失败：{e}"));
-        }
-        Err(_) => return error(StatusCode::UNPROCESSABLE_ENTITY, swoop_i18n::tr!("探测超时")),
+    let mode = *shared.mode.lock().unwrap();
+    let started = Instant::now();
+    let (pending, probed) = {
+        let mut probe =
+            std::pin::pin!(tokio::time::timeout(PROBE_TIMEOUT, shared.engine.probe_url(&task.url, &headers)));
+        // 探测要再请求一次服务器，可能要好几秒；询问模式下没能马上结束就先把对话框弹出来，用户不必干等。
+        // 链接或请求头不合法会立刻失败，这种不弹，免得对话框一闪而过
+        let early = match mode {
+            BridgeMode::Ask => tokio::time::timeout(ASK_GRACE, &mut probe).await.ok(),
+            BridgeMode::Silent => None,
+        };
+        let pending = (mode == BridgeMode::Ask && matches!(early, None | Some(Ok(Ok(_)))))
+            .then(|| PendingAsk::begin(shared, &task.url, &headers));
+        let probed = match early {
+            Some(probed) => probed,
+            None => probe.await,
+        };
+        (pending, probed)
     };
-    if let Some(reason) = mismatch(task.mime.as_deref(), task.size, &info) {
-        tracing::info!("不接管: {reason}");
-        return error(StatusCode::UNPROCESSABLE_ENTITY, &reason);
-    }
+    tracing::info!(elapsed_ms = started.elapsed().as_millis() as u64, "浏览器下载探测结束");
+    let checked = match probed {
+        Ok(Ok(info)) => match mismatch(task.mime.as_deref(), task.size, &info) {
+            None => Ok(info),
+            Some(reason) => {
+                tracing::info!("不接管: {reason}");
+                Err(reason)
+            }
+        },
+        Ok(Err(e)) => Err(swoop_i18n::trf!("探测失败：{e}")),
+        Err(_) => Err(swoop_i18n::tr!("探测超时").to_string()),
+    };
+    let info = match checked {
+        Ok(info) => info,
+        Err(reason) => {
+            if let Some(pending) = pending {
+                pending.withdraw(&reason);
+            }
+            return error(StatusCode::UNPROCESSABLE_ENTITY, &reason);
+        }
+    };
     tracing::info!(name = %info.file_name, size = ?info.size, "收到浏览器下载");
 
-    let mode = *shared.mode.lock().unwrap();
     match mode {
         BridgeMode::Silent => {
             let dir = shared.dir.lock().unwrap().clone();
@@ -404,7 +485,9 @@ async fn post_task(shared: &Shared, req: Request<Incoming>) -> Response<Full<Byt
         }
         BridgeMode::Ask => {
             let resp = json!({ "id": null, "file_name": info.file_name, "size": info.size });
-            shared.emit(BridgeEvent::Ask { url: task.url, file_name: info.file_name, size: info.size, headers });
+            if let Some(pending) = pending {
+                pending.resolve(info.file_name, info.size);
+            }
             reply(StatusCode::OK, resp)
         }
     }
@@ -599,16 +682,67 @@ mod tests {
         let (status, body) = post(&f, json!({ "url": url, "headers": [["Cookie", "token=1"]] }), None);
         assert_eq!(status, 200, "{body}");
         assert!(body["id"].is_null());
-        match f.bridge.try_recv() {
-            Some(BridgeEvent::Ask { url: u, file_name, size, headers }) => {
+        let token = match f.bridge.try_recv() {
+            Some(BridgeEvent::AskPending { token, url: u, headers }) => {
                 assert_eq!(u, url);
+                assert_eq!(headers, vec![("Cookie".to_string(), "token=1".to_string())]);
+                token
+            }
+            _ => panic!("探测前应先收到 AskPending 事件"),
+        };
+        match f.bridge.try_recv() {
+            Some(BridgeEvent::Ask { token: t, file_name, size }) => {
+                assert_eq!(t, token);
                 assert_eq!(file_name, "report.pdf");
                 assert_eq!(size, Some(10));
-                assert_eq!(headers, vec![("Cookie".to_string(), "token=1".to_string())]);
             }
             _ => panic!("应收到 Ask 事件"),
         }
         assert!(f.engine.snapshot().is_empty(), "询问模式不应直接建任务");
+    }
+
+    #[test]
+    fn ask_mode_withdraws_dialog_when_probe_rejects_download() {
+        static BODY: &[u8] = b"0123456789";
+        let url = file_server(BODY);
+        let f = fixture(BridgeMode::Ask);
+        // 浏览器那边是 11 字节，探测到 10 字节：不是同一份文件，交回浏览器
+        let (status, body) = post(
+            &f,
+            json!({ "url": url, "size": 11, "mime": "application/pdf", "headers": [["Cookie", "token=1"]] }),
+            None,
+        );
+        assert_eq!(status, 422, "{body}");
+        let Some(BridgeEvent::AskPending { token, .. }) = f.bridge.try_recv() else {
+            panic!("探测前应先收到 AskPending 事件");
+        };
+        match f.bridge.try_recv() {
+            Some(BridgeEvent::AskWithdrawn { token: t, reason }) => {
+                assert_eq!(t, token);
+                assert!(reason.contains("11"), "{reason}");
+            }
+            _ => panic!("应收到 AskWithdrawn 事件"),
+        }
+        assert!(f.bridge.try_recv().is_none());
+    }
+
+    #[test]
+    fn dropped_ask_request_withdraws_pending_dialog() {
+        let (tx, rx) = mpsc::channel();
+        let shared = Shared {
+            engine: Arc::new(Engine::new(tokio::runtime::Runtime::new().unwrap().handle().clone(), Config::default())),
+            mode: Mutex::new(BridgeMode::Ask),
+            dir: Mutex::new(PathBuf::new()),
+            categories: Mutex::new(crate::categories::Categories::default()),
+            last_ping: Mutex::new(None),
+            next_token: AtomicU64::new(7),
+            events: tx,
+            wake: Box::new(|| {}),
+        };
+        drop(PendingAsk::begin(&shared, "https://example.test/a.zip", &[]));
+        assert!(matches!(rx.try_recv(), Ok(BridgeEvent::AskPending { token: 7, .. })));
+        assert!(matches!(rx.try_recv(), Ok(BridgeEvent::AskWithdrawn { token: 7, .. })));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
@@ -670,11 +804,16 @@ mod tests {
         assert!(commands.iter().any(|command| command == "SIZE"));
         assert!(!commands.iter().any(|command| command == "RETR"));
         match f.bridge.try_recv() {
-            Some(BridgeEvent::Ask { url: received, file_name, size, headers }) => {
+            Some(BridgeEvent::AskPending { url: received, headers, .. }) => {
                 assert_eq!(received, url);
+                assert!(headers.is_empty());
+            }
+            _ => panic!("应先收到 FTP AskPending 事件"),
+        }
+        match f.bridge.try_recv() {
+            Some(BridgeEvent::Ask { file_name, size, .. }) => {
                 assert_eq!(file_name, "archive.zip");
                 assert_eq!(size, Some(42));
-                assert!(headers.is_empty());
             }
             _ => panic!("应收到 FTP Ask 事件"),
         }

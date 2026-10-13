@@ -332,6 +332,40 @@ fn axis_label(v: f64, unit: usize) -> String {
     format!("{s} {}/s", UNITS[unit])
 }
 
+/// 速度曲线本体（面积 + 折线），详情面板和右下角卡片共用。最新的点贴右边，按每秒固定间距往左排，
+/// `span` 秒铺满整个宽度，更早的点画不下就不画，不满时左侧留空。返回画出的各点（旧的在前）
+pub(super) fn speed_curve(
+    painter: &egui::Painter,
+    plot: Rect,
+    history: &[f64],
+    span: usize,
+    ymax: f32,
+    color: Color32,
+) -> Vec<Pos2> {
+    let history = &history[history.len().saturating_sub(span)..];
+    let step = plot.width() / (span.max(2) - 1) as f32;
+    let n = history.len();
+    let y_of = |v: f64| plot.bottom() - (v as f32 / ymax.max(1.0)).clamp(0.0, 1.0) * plot.height();
+    let pts: Vec<Pos2> =
+        history.iter().enumerate().map(|(i, v)| pos2(plot.right() - (n - 1 - i) as f32 * step, y_of(*v))).collect();
+
+    // 面积：从曲线到底部的竖向渐隐
+    let mut mesh = Mesh::default();
+    let fill = color.gamma_multiply(0.28);
+    for (i, pt) in pts.iter().enumerate() {
+        mesh.colored_vertex(*pt, fill);
+        mesh.colored_vertex(pos2(pt.x, plot.bottom()), Color32::TRANSPARENT);
+        if i > 0 {
+            let k = (i * 2) as u32;
+            mesh.add_triangle(k - 2, k - 1, k);
+            mesh.add_triangle(k - 1, k + 1, k);
+        }
+    }
+    painter.add(mesh);
+    painter.add(Shape::line(pts.clone(), Stroke::new(1.6, color)));
+    pts
+}
+
 fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Color32, active: bool) {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), CHART_H), Sense::hover());
     if !ui.is_rect_visible(rect) {
@@ -368,26 +402,9 @@ fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Col
         p.text_muted,
     );
 
-    // 最新的点贴右边，按每秒固定间距往左排；不满 2 分钟时左侧留空
+    let pts = speed_curve(painter, plot, history, SPEED_HISTORY_LEN, ymax, color);
     let step = plot.width() / (SPEED_HISTORY_LEN - 1) as f32;
     let n = history.len();
-    let pts: Vec<Pos2> =
-        history.iter().enumerate().map(|(i, v)| pos2(plot.right() - (n - 1 - i) as f32 * step, y_of(*v))).collect();
-
-    // 面积：从曲线到底部的竖向渐隐
-    let mut mesh = Mesh::default();
-    let fill = color.gamma_multiply(0.28);
-    for (i, pt) in pts.iter().enumerate() {
-        mesh.colored_vertex(*pt, fill);
-        mesh.colored_vertex(pos2(pt.x, plot.bottom()), Color32::TRANSPARENT);
-        if i > 0 {
-            let k = (i * 2) as u32;
-            mesh.add_triangle(k - 2, k - 1, k);
-            mesh.add_triangle(k - 1, k + 1, k);
-        }
-    }
-    painter.add(mesh);
-    painter.add(Shape::line(pts.clone(), Stroke::new(1.6, color)));
 
     let last = pts[n - 1];
     if active {

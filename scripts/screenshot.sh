@@ -6,7 +6,7 @@
 #   SWOOP_DEMO=0 scripts/screenshot.sh home        # 不混入演示任务（看空状态）
 #
 # 视图：home settings settings:{general,download,notify,integration,about} queues categories network
-#       quota completion site-auth updates media grabber add task-window completed
+#       quota completion site-auth updates media grabber add add-pending task-window cards completed
 # 默认输出 target/screenshots/<视图>-<主题>.png。用临时数据目录，不碰真实下载记录，也不会被已运行的
 # Swoop 实例接管；截图期间会短暂弹出一个窗口。
 set -euo pipefail

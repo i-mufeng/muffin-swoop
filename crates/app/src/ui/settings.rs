@@ -269,9 +269,22 @@ impl SwoopApp {
             dialog::row(
                 ui,
                 &p,
-                swoop_i18n::tr!("进度窗口"),
-                Some(swoop_i18n::tr!("单个下载开始时弹出独立的进度窗口")),
-                |ui| changes.dirty |= toggle(ui, &p, &mut self.progress_window).changed(),
+                swoop_i18n::tr!("进度提示"),
+                Some(swoop_i18n::tr!("单个下载开始时显示")),
+                |ui| {
+                    use crate::ui::download_card::ProgressPopup;
+                    changes.dirty |= segmented(
+                        ui,
+                        &p,
+                        &mut self.progress_popup,
+                        &[
+                            (ProgressPopup::Card, swoop_i18n::tr!("右下角卡片")),
+                            (ProgressPopup::Window, swoop_i18n::tr!("居中窗口")),
+                            (ProgressPopup::Off, swoop_i18n::tr!("关闭")),
+                        ],
+                    )
+                    .changed();
+                },
             );
         });
 

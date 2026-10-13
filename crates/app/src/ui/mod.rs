@@ -6,6 +6,7 @@ pub mod categories;
 pub mod completion;
 pub mod detail;
 pub mod dialog;
+pub mod download_card;
 pub mod file_conflict;
 pub mod filekind;
 pub mod format;
