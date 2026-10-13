@@ -672,7 +672,7 @@ fn refreshing_to_an_unknown_length_entity_truncates_the_old_tail() {
     engine.pause(id).unwrap();
     wait("旧运行退出", || engine.queues()[0].active_count == 0);
     assert_eq!(
-        std::fs::metadata(dir.path().join("unknown.bin"))
+        std::fs::metadata(dir.path().join("unknown.bin.swoop"))
             .unwrap()
             .len(),
         32768
@@ -724,7 +724,7 @@ fn failed_sqlite_quota_reservation_prevents_unbilled_writes() {
     assert_eq!(engine.quota().used_bytes, 0);
     assert_eq!(engine.quota().remaining_bytes, Some(4096));
     assert!(
-        std::fs::read(dir.path().join("quota-failure.bin"))
+        std::fs::read(dir.path().join("quota-failure.bin.swoop"))
             .unwrap()
             .iter()
             .all(|byte| *byte == 0),

@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     speed_limit  INTEGER NOT NULL DEFAULT 0,
     source_changed INTEGER NOT NULL DEFAULT 0,
     sync_state TEXT NOT NULL DEFAULT '{}',
-    ftp_options TEXT DEFAULT NULL
+    ftp_options TEXT DEFAULT NULL,
+    part_file INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -64,13 +65,14 @@ INSERT OR IGNORE INTO queues (id, name) VALUES (1, '主队列');
 "#;
 
 /// 建表之后追加的列：旧库启动时按需 `ALTER TABLE` 补上（幂等）
-const ADDED_TASK_COLUMNS: [(&str, &str); 6] = [
+const ADDED_TASK_COLUMNS: [(&str, &str); 7] = [
     ("headers", "TEXT NOT NULL DEFAULT '[]'"),
     ("description", "TEXT NOT NULL DEFAULT ''"),
     ("speed_limit", "INTEGER NOT NULL DEFAULT 0"),
     ("source_changed", "INTEGER NOT NULL DEFAULT 0"),
     ("sync_state", "TEXT NOT NULL DEFAULT '{}'"),
     ("ftp_options", "TEXT DEFAULT NULL"),
+    ("part_file", "INTEGER NOT NULL DEFAULT 0"),
 ];
 
 fn init(conn: &Connection) -> Result<()> {
@@ -133,6 +135,8 @@ pub struct TaskRecord {
     pub sync_state: crate::sync::SyncState,
     /// 非敏感 FTP 任务配置；密码不参与任何持久化。
     pub ftp_options: Option<crate::FtpTaskOptions>,
+    /// 未完成的数据写在 `<文件名>.swoop`，完成后改名；旧库默认 false，沿用直接写目标文件。
+    pub part_file: bool,
 }
 
 pub struct Store {
@@ -175,8 +179,8 @@ impl Store {
             .unwrap_or(0);
         let next_id = max_id.max(high_water).checked_add(1).ok_or_else(|| Error::Internal("任务 ID 已耗尽".into()))?;
         conn.execute(
-            "INSERT INTO tasks (url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers, id, description, speed_limit, source_changed, sync_state, ftp_options)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+            "INSERT INTO tasks (url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers, id, description, speed_limit, source_changed, sync_state, ftp_options, part_file)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 rec.url,
                 rec.dir.to_string_lossy(),
@@ -198,6 +202,7 @@ impl Store {
                 rec.source_changed,
                 serde_json::to_string(&rec.sync_state)?,
                 rec.ftp_options.as_ref().map(serde_json::to_string).transpose()?,
+                rec.part_file,
             ],
         )?;
         let id = TaskId(next_id as u64);
@@ -220,7 +225,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "UPDATE tasks SET url=?2, dir=?3, file_name=?4, user_named=?5, total=?6, resumable=?7, etag=?8,
-                              status=?9, error=?10, segments=?11, downloaded=?12, completed_at=?13, headers=?14, source_changed=?15, sync_state=?16, ftp_options=?17
+                              status=?9, error=?10, segments=?11, downloaded=?12, completed_at=?13, headers=?14, source_changed=?15, sync_state=?16, ftp_options=?17, part_file=?18
              WHERE id=?1",
             params![
                 rec.id.0 as i64,
@@ -240,6 +245,7 @@ impl Store {
                 rec.source_changed,
                 serde_json::to_string(&rec.sync_state)?,
                 rec.ftp_options.as_ref().map(serde_json::to_string).transpose()?,
+                rec.part_file,
             ],
         )?;
         Ok(())
@@ -341,7 +347,7 @@ impl Store {
     pub fn load_tasks(&self) -> Result<Vec<TaskRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers, description, speed_limit, source_changed, sync_state, ftp_options
+            "SELECT id, url, dir, file_name, user_named, total, resumable, etag, status, error, segments, downloaded, created_at, completed_at, headers, description, speed_limit, source_changed, sync_state, ftp_options, part_file
              FROM tasks ORDER BY id",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -374,6 +380,7 @@ impl Store {
                 sync_state: serde_json::from_str(&row.get::<_, String>(18)?).map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(18, rusqlite::types::Type::Text, Box::new(e))
                 })?,
+                part_file: row.get(20)?,
             })
         })?;
         let mut out = Vec::new();
@@ -469,6 +476,7 @@ mod tests {
             source_changed: false,
             sync_state: Default::default(),
             ftp_options: None,
+            part_file: true,
         }
     }
 
@@ -496,6 +504,7 @@ mod tests {
         assert_eq!(tasks[0].etag.as_deref(), Some("\"abc\""));
         assert_eq!(tasks[1].status, TaskStatus::Failed("HTTP 状态码 403".into()));
         assert_eq!(tasks[0].headers, vec![("Cookie".to_string(), "token=1".to_string())]);
+        assert!(tasks[0].part_file && tasks[1].part_file);
 
         store.delete_task(id).unwrap();
         assert_eq!(store.load_tasks().unwrap().len(), 1);
@@ -516,7 +525,9 @@ mod tests {
                 .replace(",\n    speed_limit  INTEGER NOT NULL DEFAULT 0", "")
                 .replace(",\n    source_changed INTEGER NOT NULL DEFAULT 0", "")
                 .replace(",\n    sync_state TEXT NOT NULL DEFAULT '{}'", "")
-                .replace(",\n    ftp_options TEXT DEFAULT NULL", "");
+                .replace(",\n    ftp_options TEXT DEFAULT NULL", "")
+                .replace(",\n    part_file INTEGER NOT NULL DEFAULT 0", "");
+            assert!(!old_schema.contains("part_file"));
             assert!(!old_schema.contains("headers"));
             let conn = Connection::open(&db).unwrap();
             conn.execute_batch(&old_schema).unwrap();
@@ -536,6 +547,7 @@ mod tests {
         assert!(tasks[0].sync_state.baseline.is_none());
         assert!(!tasks[0].sync_state.pending);
         assert!(tasks[0].ftp_options.is_none());
+        assert!(!tasks[0].part_file, "旧任务继续直接写目标文件");
         let queues = store.load_queues().unwrap();
         assert_eq!(queues.len(), 1);
         assert_eq!(queues[0].id, MAIN_QUEUE_ID);

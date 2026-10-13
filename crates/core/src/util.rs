@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// 定位写入：各 worker 共享同一个 File，无需 seek，也无需加锁。
 pub fn write_at(file: &File, buf: &[u8], pos: u64) -> (usize, io::Result<()>) {
@@ -28,7 +28,7 @@ pub fn write_at(file: &File, buf: &[u8], pos: u64) -> (usize, io::Result<()>) {
     (written, Ok(()))
 }
 
-/// 常见文件系统单个文件名上限 255 字节（UTF-16 的 NTFS 是 255 个单元），留出 " (n)" 去重后缀的余量
+/// 常见文件系统单个文件名上限 255 字节（UTF-16 的 NTFS 是 255 个单元），留出 " (n)" 去重后缀和 `.swoop` 的余量
 const MAX_FILE_NAME_BYTES: usize = 240;
 
 /// 文件名去掉路径分隔符等危险字符，过长时截断主名、保留扩展名。
@@ -75,30 +75,77 @@ fn truncate_file_name(name: &str) -> String {
     format!("{}{ext}", name[..cut].trim_end())
 }
 
-/// 以 create_new 原子占用名称，包含普通文件、目录、断链和并发任务的冲突。
+/// 未完成下载的数据写在目标旁的 `<文件名>.swoop`，完成后再改名为目标文件名。
+pub const PART_SUFFIX: &str = ".swoop";
+
+pub fn part_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(PART_SUFFIX);
+    PathBuf::from(name)
+}
+
+/// 同名顺延编号的上限
+pub const MAX_NUMBERED: u32 = 10_000;
+
+/// 第 n 个去重名称：0 为原名，其余为 `主名 (n).扩展名`。
+pub fn numbered_name(name: &str, n: u32) -> String {
+    if n == 0 {
+        return name.to_owned();
+    }
+    match name.rfind('.') {
+        Some(i) if i > 0 => format!("{} ({n}){}", &name[..i], &name[i..]),
+        _ => format!("{name} ({n})"),
+    }
+}
+
+/// 为新下载占用名称：目标（含普通文件、目录、断链）不存在，且以 create_new 原子创建
+/// `<名称>.swoop` 成功；任一被占用就顺延 " (n)" 编号。返回的文件是临时文件。
 pub fn reserve_file(
     dir: &Path,
     name: &str,
     registry: &crate::TargetRegistry,
 ) -> io::Result<(String, File, crate::TargetLease)> {
-    let (stem, ext) = match name.rfind('.') {
-        Some(i) if i > 0 => (&name[..i], &name[i..]),
-        _ => (name, ""),
-    };
-    for n in 0..10_000 {
-        let candidate = if n == 0 { name.to_owned() } else { format!("{stem} ({n}){ext}") };
-        let lease = match registry.reserve(&dir.join(&candidate)) {
+    for n in 0..MAX_NUMBERED {
+        let candidate = numbered_name(name, n);
+        let target = dir.join(&candidate);
+        let lease = match registry.reserve(&target) {
             Ok(lease) => lease,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
             Err(error) => return Err(error),
         };
-        match OpenOptions::new().create_new(true).read(true).write(true).open(dir.join(&candidate)) {
+        match std::fs::symlink_metadata(&target) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        match OpenOptions::new().create_new(true).read(true).write(true).open(part_path(&target)) {
             Ok(file) => return Ok((candidate, file, lease)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),
         }
     }
     Err(io::Error::new(io::ErrorKind::AlreadyExists, "同名文件过多，请更换下载文件名"))
+}
+
+/// 不覆盖地改名；目标已存在返回 `AlreadyExists`，源文件保持原样。
+pub fn rename_noclobber(from: &Path, to: &Path) -> io::Result<()> {
+    let error = match tempfile::TempPath::try_from_path(from)?.persist_noclobber(to) {
+        Ok(()) => return Ok(()),
+        Err(error) => {
+            // TempPath 析构会删文件，失败时必须交还所有权。
+            let _ = error.path.keep();
+            error.error
+        }
+    };
+    if error.kind() == io::ErrorKind::AlreadyExists {
+        return Err(error);
+    }
+    // exFAT 等不支持原子不覆盖改名（也不支持硬链接）的文件系统：先确认目标不存在再普通改名。
+    match std::fs::symlink_metadata(to) {
+        Ok(_) => Err(io::Error::new(io::ErrorKind::AlreadyExists, "目标文件已存在")),
+        Err(missing) if missing.kind() == io::ErrorKind::NotFound => std::fs::rename(from, to),
+        Err(other) => Err(other),
+    }
 }
 
 /// 续传只能打开已存在的普通文件；不创建零洞文件，也不跟随目标符号链接。
@@ -161,9 +208,35 @@ mod tests {
         std::os::unix::fs::symlink(&external, dir.path().join("file.bin")).unwrap();
         let (name, _, _lease) = reserve_file(dir.path(), "file.bin", &crate::TargetRegistry::default()).unwrap();
         assert_eq!(name, "file (1).bin");
+        assert!(dir.path().join("file (1).bin.swoop").is_file());
+        assert!(!dir.path().join("file (1).bin").exists());
         assert!(!external.exists());
         std::fs::write(&external, b"preserve").unwrap();
         assert!(open_resume_file(&dir.path().join("file.bin")).is_err());
         assert_eq!(std::fs::read(external).unwrap(), b"preserve");
+    }
+
+    #[test]
+    fn reserve_skips_part_files_of_other_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.bin.swoop"), b"other task").unwrap();
+        let (name, _, _lease) = reserve_file(dir.path(), "file.bin", &crate::TargetRegistry::default()).unwrap();
+        assert_eq!(name, "file (1).bin");
+        assert_eq!(std::fs::read(dir.path().join("file.bin.swoop")).unwrap(), b"other task");
+    }
+
+    #[test]
+    fn rename_noclobber_keeps_both_files_on_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let (from, to) = (dir.path().join("a.swoop"), dir.path().join("a"));
+        std::fs::write(&from, b"new").unwrap();
+        std::fs::write(&to, b"user").unwrap();
+        assert_eq!(super::rename_noclobber(&from, &to).unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&from).unwrap(), b"new");
+        assert_eq!(std::fs::read(&to).unwrap(), b"user");
+        std::fs::remove_file(&to).unwrap();
+        super::rename_noclobber(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(std::fs::read(&to).unwrap(), b"new");
     }
 }

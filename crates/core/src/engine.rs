@@ -24,7 +24,7 @@ use crate::quota::{Quota, QuotaPolicy, QuotaSnapshot};
 use crate::segment::{SegmentMap, SegmentState};
 use crate::store::{Store, TaskRecord};
 use crate::task::{SegmentSnapshot, TaskId, TaskProperties, TaskSnapshot, TaskStatus};
-use crate::util::{open_resume_file, sanitize_file_name, write_at};
+use crate::util::{open_resume_file, part_path, sanitize_file_name, write_at};
 use crate::{FileConflictPolicy, FtpCredentials, FtpTaskOptions};
 
 mod auth;
@@ -165,6 +165,10 @@ struct TaskShared {
     conflict_target: Mutex<Option<std::fs::Metadata>>,
     dir: PathBuf,
     file_name: Mutex<String>,
+    /// 未完成数据写在 `<文件名>.swoop`；完成改名后清除。旧任务为 false，直接写目标文件。
+    part_file: AtomicBool,
+    /// 移除任务时要求删除半成品；仍在收尾的运行退出时再清理一次自己创建的临时文件。
+    discard: AtomicBool,
     user_named: bool,
     status: Mutex<RunStatus>,
     /// 同一任务的旧运行清理完文件与区段后，新运行才能开始；UI 不等待这把异步锁。
@@ -227,6 +231,11 @@ impl TaskShared {
     }
     fn path(&self) -> PathBuf {
         self.dir.join(&*self.file_name.lock().unwrap())
+    }
+    /// 下载数据实际写入的文件
+    fn write_path(&self) -> PathBuf {
+        let path = self.path();
+        if self.part_file.load(Ordering::Relaxed) { part_path(&path) } else { path }
     }
     fn push_history(&self, bps: f64) {
         let mut h = self.history.lock().unwrap();
@@ -425,6 +434,8 @@ impl Engine {
                 }),
                 dir: rec.dir,
                 file_name: Mutex::new(rec.file_name),
+                part_file: AtomicBool::new(rec.part_file),
+                discard: AtomicBool::new(false),
                 user_named: rec.user_named,
                 status: Mutex::new(RunStatus { status, generation: 0 }),
                 run_lock: tokio::sync::Mutex::new(()),
@@ -645,6 +656,7 @@ impl Engine {
                     source_changed: false,
                     sync_state: Default::default(),
                     ftp_options: ftp_options.clone(),
+                    part_file: false,
                 },
                 queue,
             )?,
@@ -669,6 +681,8 @@ impl Engine {
             dir: opts.dir,
             user_named,
             file_name: Mutex::new(file_name),
+            part_file: AtomicBool::new(false),
+            discard: AtomicBool::new(false),
             status: Mutex::new(RunStatus { status: TaskStatus::Queued, generation: 0 }),
             run_lock: tokio::sync::Mutex::new(()),
             total: AtomicU64::new(0),
@@ -782,6 +796,7 @@ impl Engine {
         }
         drop(queues);
         drop(tasks);
+        entry.shared.discard.store(delete_file, Ordering::Relaxed);
         entry.cancel.cancel();
         self.inner.queue_wake.notify_one();
         // 等待同名处理的任务尚未拥有目标；覆盖下载的区段属于临时文件，
@@ -790,11 +805,14 @@ impl Engine {
             let state = entry.shared.sync_state.lock().unwrap();
             state.overwrite || state.recovery_path.is_some()
         };
-        let owns_target = entry.shared.status() != TaskStatus::FileConflict
-            && !publication_unresolved
-            && !entry.shared.segments.lock().unwrap().segments.is_empty();
+        // `.swoop` 临时文件只由本任务以 create_new 创建，任何状态下都归它所有。
+        let owns_target = entry.shared.part_file.load(Ordering::Relaxed)
+            || (entry.shared.status() != TaskStatus::FileConflict
+                && !publication_unresolved
+                && !entry.shared.segments.lock().unwrap().segments.is_empty());
         if delete_file && owns_target {
-            let path = entry.shared.path();
+            // 运行中的 worker 仍持有句柄：Unix 照常删除，Windows 的 std 句柄允许共享删除。
+            let path = entry.shared.write_path();
             if path.is_file() {
                 let _ = std::fs::remove_file(path);
             }
@@ -881,6 +899,8 @@ impl Engine {
             conflict_target: Mutex::new(None),
             dir: rec.dir,
             file_name: Mutex::new(rec.file_name),
+            part_file: AtomicBool::new(rec.part_file),
+            discard: AtomicBool::new(false),
             user_named: rec.user_named,
             status: Mutex::new(RunStatus { status, generation: 0 }),
             run_lock: tokio::sync::Mutex::new(()),
@@ -990,6 +1010,7 @@ fn record_of(s: &TaskShared) -> TaskRecord {
         source_changed: s.source_changed.load(Ordering::Relaxed),
         sync_state: s.sync_state.lock().unwrap().clone(),
         ftp_options: s.ftp_options.lock().unwrap().clone(),
+        part_file: s.part_file.load(Ordering::Relaxed),
     }
 }
 
@@ -1119,6 +1140,10 @@ fn spawn_run(inner: Arc<Inner>, shared: Arc<TaskShared>, cancel: CancellationTok
                 }
             }
         }
+        // 下载中被移除：取消前刚创建或仍在写的临时文件，等运行退出、句柄关闭后再删一次。
+        if shared.discard.load(Ordering::Relaxed) && shared.part_file.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(shared.write_path());
+        }
         let mut tasks = inner.tasks.lock().unwrap();
         if let Some(entry) = tasks.get_mut(&id) {
             entry.running = false;
@@ -1165,7 +1190,21 @@ async fn run_task(
                 return Err(Error::InvalidTaskUpdate("文件名不能包含路径".into()));
             }
             {
-                let file = open_resume_file(&shared.dir.join(&*name))?;
+                let path = shared.dir.join(&*name);
+                let file = if shared.part_file.load(Ordering::Relaxed) {
+                    match open_resume_file(&part_path(&path)) {
+                        // 改名完成、记录落盘前退出：数据已经在目标文件上。
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::NotFound && map.all_done() && path.is_file() =>
+                        {
+                            shared.part_file.store(false, Ordering::Relaxed);
+                            open_resume_file(&path)?
+                        }
+                        file => file?,
+                    }
+                } else {
+                    open_resume_file(&path)?
+                };
                 let size = file.metadata()?.len();
                 let required =
                     map.segments.iter().filter(|s| s.pos > 0).map(|s| s.start.saturating_add(s.pos)).max().unwrap_or(0);

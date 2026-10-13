@@ -1371,7 +1371,8 @@ fn missing_or_truncated_partial_files_fail_instead_of_completing_with_missing_by
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(5));
         }
-        let path = engine.snapshot_one(id).unwrap().path;
+        let path = dir.path().join("partial.bin.swoop");
+        assert!(!engine.snapshot_one(id).unwrap().path.exists(), "未完成时不应出现目标文件");
         if remove {
             std::fs::remove_file(&path).unwrap();
         } else {
@@ -1616,21 +1617,16 @@ fn overwrite_does_not_replace_another_tasks_paused_partial_file() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let path = engine.snapshot_one(original).unwrap().path;
-    let partial = std::fs::read(&path).unwrap();
+    let part = dir.path().join("owned.bin.swoop");
+    let partial = std::fs::read(&part).unwrap();
     engine.set_file_conflict_policy(FileConflictPolicy::Overwrite).unwrap();
+    // 另一个任务的 `.swoop` 不算同名文件，也不能被覆盖：新任务自动顺延编号。
     let replacement =
         engine.add(AddOptions { url: server.url.clone(), dir: dir.path().into(), ..Default::default() }).unwrap();
-    wait_for_status(&engine, replacement, TaskStatus::FileConflict);
-    assert!(
-        engine
-            .resolve_file_conflict(replacement, FileConflictPolicy::Overwrite)
-            .unwrap_err()
-            .to_string()
-            .contains("未完成任务")
-    );
-    assert_eq!(std::fs::read(&path).unwrap(), partial);
-    engine.resolve_file_conflict(replacement, FileConflictPolicy::Rename).unwrap();
     assert_eq!(wait_done(&engine, replacement, Duration::from_secs(10)), TaskStatus::Completed);
+    assert_eq!(engine.snapshot_one(replacement).unwrap().file_name, "owned (1).bin");
+    assert_eq!(std::fs::read(&part).unwrap(), partial);
+    assert!(!path.exists());
     engine.resume(original).unwrap();
     assert_eq!(wait_done(&engine, original, Duration::from_secs(10)), TaskStatus::Completed);
     assert_eq!(std::fs::read(&path).unwrap(), *body);

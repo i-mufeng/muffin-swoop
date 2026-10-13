@@ -329,7 +329,7 @@ fn apply_bulk(engine: &Engine, action: BulkAction, ids: &[TaskId]) -> BulkReport
         let result = match action {
             BulkAction::Pause => engine.pause(id),
             BulkAction::Resume => engine.resume(id),
-            BulkAction::Remove => engine.remove(id, false),
+            BulkAction::Remove => engine.remove(id, !crate::ui::task_list::keeps_file(&task)),
         };
         match result {
             Ok(()) => report.succeeded.push(id),

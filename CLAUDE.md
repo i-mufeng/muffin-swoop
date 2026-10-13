@@ -18,6 +18,7 @@ Rust workspace，IDM 平替下载器。GUI 用 egui/eframe（wgpu），引擎自
 
 - 区段为半开区间 `[start, end)`，`end == u64::MAX` 表示大小未知。
 - 写入前先在 `SegmentMap` 锁内预订范围再落盘，防止与动态分段窃取方重叠。
+- 新下载写 `<文件名>.swoop`（`TaskShared::write_path`），完成时 `publish_part` 不覆盖地改名；旧任务 `part_file = false` 直接写目标。界面移除未完成任务会删掉部分文件，已完成的保留。
 - 暂停 = `pause()` 先置 `Paused` 再 cancel；`spawn_run` 的收尾按状态区分"用户暂停"与"失败"。
 - 持久化在 `core/src/store.rs`（rusqlite bundled）：`Engine::with_store` + `Engine::load(auto_resume)`；引擎负责写任务表，app 层通过 `Store::get_setting/set_setting` 写设置。改 schema 用 `CREATE TABLE IF NOT EXISTS` + 新列加默认值，保持向后兼容。
 - 新增协议/功能请先加测试：单元测试在模块内，端到端测试在 `crates/core/tests/`（自带支持 Range 的本地 HTTP 服务器，不依赖外网）。认证、代理和 FTP 夹具是 `crates/*/tests/` 下的 Python 本地服务，要先装 `crates/ftp/tests/requirements.txt`（见下方命令）；依赖真实 FFmpeg 的媒体测试默认 `#[ignore]`。

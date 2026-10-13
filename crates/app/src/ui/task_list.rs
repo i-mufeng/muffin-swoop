@@ -97,15 +97,18 @@ impl SwoopApp {
                 }
                 Err(error) => self.toasts.push_error(swoop_i18n::tr!("继续失败"), error.to_string()),
             },
-            RowAction::Remove(id) => match self.engine.remove(id, false) {
-                Ok(()) => {
-                    self.task_transfer.selected.remove(&id);
-                    if self.selected == Some(id) {
-                        self.selected = None;
+            // 未完成的任务连同已下载的部分一起删除；已完成的只移除记录，保留文件。
+            RowAction::Remove(id) => {
+                match self.engine.remove(id, self.engine.snapshot_one(id).is_some_and(|t| !keeps_file(&t))) {
+                    Ok(()) => {
+                        self.task_transfer.selected.remove(&id);
+                        if self.selected == Some(id) {
+                            self.selected = None;
+                        }
                     }
+                    Err(error) => self.toasts.push_error(swoop_i18n::tr!("移除失败"), error.to_string()),
                 }
-                Err(error) => self.toasts.push_error(swoop_i18n::tr!("移除失败"), error.to_string()),
-            },
+            }
             RowAction::Drag(id) => {
                 let chosen = if self.task_transfer.selected.contains(&id) {
                     self.task_transfer
@@ -164,7 +167,9 @@ impl SwoopApp {
                             }
                             ui.separator();
                             if ui
-                                .button(RichText::new(swoop_i18n::tr!("移除所选记录（保留文件）")).color(p.danger))
+                                .button(
+                                    RichText::new(swoop_i18n::tr!("移除所选任务（已完成的保留文件）")).color(p.danger),
+                                )
                                 .clicked()
                             {
                                 action = Some(BulkAction::Remove);
@@ -343,15 +348,7 @@ impl SwoopApp {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 2.0;
                             use egui_phosphor::regular as i;
-                            if icon_button_colored(
-                                ui,
-                                &p,
-                                i::TRASH,
-                                swoop_i18n::tr!("移除任务（保留文件）"),
-                                p.text_muted,
-                                p.danger,
-                            )
-                            .clicked()
+                            if icon_button_colored(ui, &p, i::TRASH, remove_label(t), p.text_muted, p.danger).clicked()
                             {
                                 action = Some(RowAction::Remove(t.id));
                             }
@@ -435,7 +432,7 @@ pub(super) fn row_context_menu(
         ui.close();
     }
     ui.separator();
-    if ui.button(RichText::new(swoop_i18n::tr!("移除任务（保留文件）")).color(p.danger)).clicked() {
+    if ui.button(RichText::new(remove_label(t)).color(p.danger)).clicked() {
         *action = Some(RowAction::Remove(t.id));
         ui.close();
     }
@@ -517,17 +514,53 @@ fn meta_text(t: &TaskSnapshot, view: ListPreferences) -> String {
     parts.join("  ·  ")
 }
 
+/// 移除时是否保留磁盘上的文件：只有已完成的任务保留。
+pub fn keeps_file(task: &TaskSnapshot) -> bool {
+    task.status == TaskStatus::Completed
+}
+
+fn remove_label(task: &TaskSnapshot) -> &'static str {
+    if keeps_file(task) {
+        swoop_i18n::tr!("移除任务（保留文件）")
+    } else {
+        swoop_i18n::tr!("移除任务并删除已下载部分")
+    }
+}
+
 pub fn reveal_in_file_manager(path: &Path) {
+    // 未完成的新任务数据在 `<文件名>.swoop`；两者都不在时直接打开所在目录。
+    let part = {
+        let mut name = path.as_os_str().to_owned();
+        name.push(swoop_core::PART_SUFFIX);
+        std::path::PathBuf::from(name)
+    };
+    let file = if path.exists() {
+        Some(path)
+    } else if part.exists() {
+        Some(part.as_path())
+    } else {
+        None
+    };
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+        let mut command = std::process::Command::new("open");
+        match file {
+            Some(file) => command.arg("-R").arg(file),
+            None => command.arg(path.parent().unwrap_or(path)),
+        };
+        let _ = command.spawn();
     }
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
+        let arg = match file {
+            Some(file) => format!("/select,{}", file.display()),
+            None => path.parent().unwrap_or(path).display().to_string(),
+        };
+        let _ = std::process::Command::new("explorer").arg(arg).spawn();
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
+        let _ = file;
         if let Some(dir) = path.parent() {
             let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
         }

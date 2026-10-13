@@ -1243,7 +1243,9 @@ mod tests {
             media.cancel(id);
             while media.active() { media.poll(); assert!(std::time::Instant::now() < deadline); tokio::time::sleep(Duration::from_millis(10)).await; }
             assert!(!renamed.exists());
-            assert_eq!(std::fs::metadata(path).unwrap().len(), 8192);
+            // HTTP 的半成品写在 `.swoop` 临时文件里，目标名直到完成才出现。
+            assert!(!path.exists());
+            assert_eq!(std::fs::metadata(dir.path().join("http-first.mp4.swoop")).unwrap().len(), 8192);
         });
     }
 

@@ -12,7 +12,9 @@ use tokio_util::sync::CancellationToken;
 use crate::probe::{ProbeInfo, content_range_total};
 use crate::segment::{SegmentMap, SegmentState};
 use crate::sync::{SyncBaseline, strong_etag};
-use crate::util::{reserve_file, sanitize_file_name};
+use crate::util::{
+    MAX_NUMBERED, numbered_name, open_resume_file, part_path, rename_noclobber, reserve_file, sanitize_file_name,
+};
 use crate::{Error, FileConflictPolicy, Result, TaskStatus};
 
 use super::{Inner, RunNetwork, RunTarget, TaskShared, from_unix, probe_task, record_of, run_task, unix_secs};
@@ -186,6 +188,7 @@ async fn prepare_destination(
     if policy == FileConflictPolicy::Rename {
         let (name, file, lease) = reserve_file(&shared.dir, &name, &inner.target_registry)?;
         *shared.file_name.lock().unwrap() = name;
+        shared.part_file.store(true, Ordering::Relaxed);
         return Ok(Destination::Ready(Some(file), lease));
     }
     let path = shared.path();
@@ -196,9 +199,32 @@ async fn prepare_destination(
         }
         Err(error) => return Err(error.into()),
     };
-    match OpenOptions::new().create_new(true).read(true).write(true).open(&path) {
-        Ok(file) => return Ok(Destination::Ready(Some(file), lease)),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+    // 新下载写 `<名称>.swoop`，完成后改名；目标本身已存在才进入同名处理。
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let part = part_path(&path);
+            // 上次运行在保存区段前就退出时留下的自己的临时文件，直接重用。
+            if shared.part_file.load(Ordering::Relaxed)
+                && let Ok(file) = open_resume_file(&part)
+            {
+                return Ok(Destination::Ready(Some(file), lease));
+            }
+            match OpenOptions::new().create_new(true).read(true).write(true).open(&part) {
+                Ok(file) => {
+                    shared.part_file.store(true, Ordering::Relaxed);
+                    return Ok(Destination::Ready(Some(file), lease));
+                }
+                // 只是另一个未完成任务的临时文件，不算同名文件：顺延编号。
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let (name, file, lease) = reserve_file(&shared.dir, &name, &inner.target_registry)?;
+                    *shared.file_name.lock().unwrap() = name;
+                    shared.part_file.store(true, Ordering::Relaxed);
+                    return Ok(Destination::Ready(Some(file), lease));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         Err(error) => return Err(error.into()),
     }
     let current = std::fs::symlink_metadata(&path)?;
@@ -253,6 +279,42 @@ async fn prepare_destination(
     Ok(Destination::Overwrite(lease))
 }
 
+/// 下载完成后把 `.swoop` 改名为目标文件名。下载期间目标被别的程序占用时顺延编号，绝不覆盖。
+/// 原名的租约由调用方持有。
+fn publish_part(inner: &Inner, shared: &TaskShared) -> Result<()> {
+    if !shared.part_file.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    if shared.discard.load(Ordering::Relaxed) {
+        return Err(Error::Cancelled);
+    }
+    let part = shared.write_path();
+    let name = shared.file_name.lock().unwrap().clone();
+    for n in 0..MAX_NUMBERED {
+        let candidate = numbered_name(&name, n);
+        let target = shared.dir.join(&candidate);
+        let _lease = if n == 0 {
+            None
+        } else {
+            match inner.target_registry.reserve(&target) {
+                Ok(lease) => Some(lease),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => continue,
+                Err(error) => return Err(error.into()),
+            }
+        };
+        match rename_noclobber(&part, &target) {
+            Ok(()) => {
+                *shared.file_name.lock().unwrap() = candidate;
+                shared.part_file.store(false, Ordering::Relaxed);
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "同名文件过多，请更换下载文件名").into())
+}
+
 pub(super) async fn run(
     inner: &Arc<Inner>,
     shared: &Arc<TaskShared>,
@@ -294,6 +356,7 @@ pub(super) async fn run(
                 .await;
                 let verified_info = shared.sync_probe.lock().unwrap().take().unwrap_or(info);
                 downloaded?;
+                publish_part(inner, shared)?;
                 let actual = fingerprint(shared.path(), cancel.clone()).await?;
                 let baseline = SyncBaseline {
                     canonical_path: actual.canonical_path,

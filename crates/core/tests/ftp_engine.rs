@@ -234,10 +234,10 @@ fn pause_cancels_quota_blocked_worker_and_restarts_without_trusting_size_or_mdtm
     let start = Instant::now();
     pause(&engine, id);
     assert!(start.elapsed() < Duration::from_secs(2));
-    let partial = std::fs::read(dir.path().join("payload.bin")).unwrap();
+    let partial = std::fs::read(dir.path().join("payload.bin.swoop")).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(
-        std::fs::read(dir.path().join("payload.bin")).unwrap(),
+        std::fs::read(dir.path().join("payload.bin.swoop")).unwrap(),
         partial
     );
     assert_eq!(engine.snapshot_one(id).unwrap().downloaded, 32 * 1024);
@@ -492,7 +492,7 @@ fn failed_database_preparation_never_truncates_or_starts_ftp_download() {
     let id = engine.add(server.add(dir.path(), "payload.bin")).unwrap();
     wait_until(|| engine.quota().waiting);
     pause(&engine, id);
-    let original = std::fs::read(dir.path().join("payload.bin")).unwrap();
+    let original = std::fs::read(dir.path().join("payload.bin.swoop")).unwrap();
     let progress = engine.snapshot_one(id).unwrap().downloaded;
     let requests = server.commands("RETR");
     let conn = rusqlite::Connection::open(&db).unwrap();
@@ -509,7 +509,7 @@ fn failed_database_preparation_never_truncates_or_starts_ftp_download() {
     );
     assert_eq!(server.commands("RETR"), requests);
     assert_eq!(
-        std::fs::read(dir.path().join("payload.bin")).unwrap(),
+        std::fs::read(dir.path().join("payload.bin.swoop")).unwrap(),
         original
     );
     assert_eq!(engine.snapshot_one(id).unwrap().downloaded, progress);

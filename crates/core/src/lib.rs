@@ -42,3 +42,4 @@ pub use store::{Store, TaskRecord};
 pub use swoop_ftp::{ActiveMode, FtpConfig, FtpCredentials, FtpDataMode, FtpProxy, FtpProxyKind, FtpTlsMode};
 pub use target::{TargetLease, TargetRegistry};
 pub use task::{SegmentSnapshot, TaskId, TaskProperties, TaskSnapshot, TaskStatus};
+pub use util::PART_SUFFIX;

@@ -224,10 +224,13 @@ fn deleting_owned_partial_and_completed_downloads_still_removes_the_file() {
             wait_partial(&engine, id);
             pause_finished(&engine, id);
         }
-        let path = engine.snapshot_one(id).unwrap().path;
+        let target = engine.snapshot_one(id).unwrap().path;
+        let path = if complete { target.clone() } else { dir.path().join("file.bin.swoop") };
+        assert_eq!(target.exists(), complete, "未完成的数据只在 .swoop 临时文件里");
         assert!(path.exists());
         engine.remove(id, true).unwrap();
         assert!(!path.exists());
+        assert!(!target.exists());
     }
 }
 
@@ -246,8 +249,10 @@ fn sqlite_failure_before_first_write_keeps_placeholder_empty_and_records_no_down
     let failure = wait_for(&engine, id, |status| matches!(status, TaskStatus::Failed(_)));
     assert!(matches!(failure, TaskStatus::Failed(message) if message.contains("injected ownership save failure")));
     let path = dir.path().join("file.bin");
+    let part = dir.path().join("file.bin.swoop");
     wait_released(&engine, &path);
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+    assert!(!path.exists());
+    assert_eq!(std::fs::metadata(&part).unwrap().len(), 0);
     assert_eq!(server.downloads.load(Ordering::SeqCst), 0);
     assert_eq!(engine.snapshot_one(id).unwrap().downloaded, 0);
     assert!(store.load_tasks().unwrap()[0].segments.segments.is_empty());
@@ -255,12 +260,10 @@ fn sqlite_failure_before_first_write_keeps_placeholder_empty_and_records_no_down
     connection.execute_batch("DROP TRIGGER reject_download;").unwrap();
     let restored = Engine::with_store(rt.handle().clone(), Config::default(), store);
     restored.load(false).unwrap();
+    // 空的临时文件属于本任务，重启后直接重用，不再当成同名文件询问。
     restored.resume(id).unwrap();
-    wait_for(&restored, id, |status| *status == TaskStatus::FileConflict);
-    wait_released(&restored, &path);
-    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
-    restored.resolve_file_conflict(id, FileConflictPolicy::Overwrite).unwrap();
     wait_for(&restored, id, |status| *status == TaskStatus::Completed);
+    assert!(!part.exists());
     assert_eq!(std::fs::read(path).unwrap(), vec![7; 1024 * 1024]);
 }
 
@@ -277,7 +280,8 @@ fn sqlite_failure_before_replanning_preserves_partial_bytes_and_resume_validator
     wait_partial(&engine, id);
     pause_finished(&engine, id);
     let path = dir.path().join("file.bin");
-    let original = std::fs::read(&path).unwrap();
+    let part = dir.path().join("file.bin.swoop");
+    let original = std::fs::read(&part).unwrap();
     let record = store.load_tasks().unwrap().remove(0);
     let downloaded = server.downloads.load(Ordering::SeqCst);
     *server.body.lock().unwrap() = vec![8; 2 * 1024 * 1024];
@@ -285,7 +289,7 @@ fn sqlite_failure_before_replanning_preserves_partial_bytes_and_resume_validator
     engine.resume(id).unwrap();
     wait_for(&engine, id, |status| matches!(status, TaskStatus::Failed(_)));
     wait_released(&engine, &path);
-    assert_eq!(std::fs::read(&path).unwrap(), original);
+    assert_eq!(std::fs::read(&part).unwrap(), original);
     assert_eq!(server.downloads.load(Ordering::SeqCst), downloaded);
     let failed = store.load_tasks().unwrap().remove(0);
     assert_eq!(failed.total, record.total);
@@ -332,4 +336,70 @@ fn deleting_task_with_persisted_recovery_path_preserves_both_files() {
     assert!(restored.snapshot_one(id).is_none());
     assert!(store.load_tasks().unwrap().is_empty());
     assert_eq!(std::fs::read(&path).unwrap(), vec![7; 64 * 1024]);
+}
+
+#[test]
+fn part_file_hides_progress_and_publication_never_clobbers_a_late_user_file() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = vec![7; 1024 * 1024];
+    let server = Server::start(body.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::new(rt.handle().clone(), Config { connections: 1, ..Default::default() });
+    let id = engine.add(server.options(dir.path())).unwrap();
+    wait_partial(&engine, id);
+    let (path, part) = (dir.path().join("file.bin"), dir.path().join("file.bin.swoop"));
+    assert!(!path.exists());
+    assert!(part.is_file());
+    // 下载期间别的程序占用了目标名：完成时顺延编号，不覆盖用户文件。
+    std::fs::write(&path, b"user").unwrap();
+    wait_for(&engine, id, |status| *status == TaskStatus::Completed);
+    let task = engine.snapshot_one(id).unwrap();
+    assert_eq!(task.file_name, "file (1).bin");
+    assert_eq!(std::fs::read(&task.path).unwrap(), body);
+    assert_eq!(std::fs::read(&path).unwrap(), b"user");
+    assert!(!part.exists());
+}
+
+#[test]
+fn removing_a_running_download_deletes_its_part_file_only_when_asked() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let server = Server::start(vec![7; 1024 * 1024]);
+    for delete in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::new(rt.handle().clone(), Config { connections: 1, ..Default::default() });
+        let id = engine.add(server.options(dir.path())).unwrap();
+        wait_partial(&engine, id);
+        let (path, part) = (dir.path().join("file.bin"), dir.path().join("file.bin.swoop"));
+        engine.remove(id, delete).unwrap();
+        wait_released(&engine, &path);
+        assert_eq!(part.exists(), !delete);
+        assert!(!path.exists());
+    }
+}
+
+#[test]
+fn legacy_tasks_without_part_file_keep_resuming_in_place() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let body = vec![7; 1024 * 1024];
+    let server = Server::start(body.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("state.db");
+    let store = Arc::new(Store::open(&db).unwrap());
+    let engine =
+        Engine::with_store(rt.handle().clone(), Config { connections: 1, ..Default::default() }, store.clone());
+    let id = engine.add(server.options(dir.path())).unwrap();
+    wait_partial(&engine, id);
+    pause_finished(&engine, id);
+    drop(engine);
+    // 模拟升级前的任务：半成品直接写在目标文件名上，库里 part_file 为默认值 0。
+    let (path, part) = (dir.path().join("file.bin"), dir.path().join("file.bin.swoop"));
+    std::fs::rename(&part, &path).unwrap();
+    rusqlite::Connection::open(&db).unwrap().execute_batch("UPDATE tasks SET part_file = 0").unwrap();
+    let restored = Engine::with_store(rt.handle().clone(), Config { connections: 1, ..Default::default() }, store);
+    restored.load(false).unwrap();
+    restored.resume(id).unwrap();
+    wait_for(&restored, id, |status| *status == TaskStatus::Completed);
+    assert_eq!(restored.snapshot_one(id).unwrap().file_name, "file.bin");
+    assert_eq!(std::fs::read(&path).unwrap(), body);
+    assert!(!part.exists());
 }
