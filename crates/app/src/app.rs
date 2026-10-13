@@ -459,7 +459,7 @@ impl SwoopApp {
                 }),
                 BridgeEvent::Added { id, file_name } => {
                     // 卡片或进度窗口已经说明了，不再叠一条吐司
-                    if !self.show_progress(ctx, id, None) {
+                    if !self.show_progress(ctx, id) {
                         self.toasts.push_info(swoop_i18n::tr!("已接收浏览器下载"), file_name);
                     }
                 }

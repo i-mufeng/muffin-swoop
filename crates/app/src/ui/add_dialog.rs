@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use egui::{Align, Key, Layout, Margin, Modifiers, RichText};
-use swoop_core::AddOptions;
+use egui::{Align, Key, Layout, Margin, Modifiers, Pos2, Rect, RichText, Vec2, ViewportCommand};
+use swoop_core::{AddOptions, TaskId};
 
 use super::{ghost_button, primary_button};
 use crate::app::SwoopApp;
@@ -23,6 +23,8 @@ pub struct AddDialog {
     browser_pending: HashMap<u64, (String, String)>,
     /// 收到浏览器下载的时刻，窗口真正画出来时记一条耗时日志
     shown_since: Option<Instant>,
+    /// 点了「开始下载」、正缩进右下角变成下载卡片
+    shrink: Option<Shrink>,
     preview: Option<Result<Vec<String>, String>>,
     preview_limit: usize,
     pub queue: swoop_core::QueueId,
@@ -35,6 +37,30 @@ pub struct AddDialog {
 
 fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("swoop-add-dialog")
+}
+
+const SIZE: Vec2 = egui::vec2(580.0, 500.0);
+/// 缩进右下角的时长
+const SHRINK_SECS: f64 = 0.36;
+
+/// 「开始下载」后新建窗口不直接关：内容换成那张下载卡片，窗口边缩小边移到卡片的槽位，
+/// 到位后交给真正的卡片窗口再关掉，看起来就是对话框收进了右下角
+struct Shrink {
+    task: TaskId,
+    /// 起点：对话框的内容区（不含标题栏和边框）
+    from: Rect,
+    /// 外框左上角到内容区左上角的距离（标题栏、边框）；挪窗口按外框算
+    inset: Vec2,
+    /// 对话框建窗口时的位置；收缩期间 builder 保持不变，egui 就不会另发移动命令打乱顺序
+    pos: Option<Pos2>,
+    started: f64,
+}
+
+/// 收缩到 `t`（0..=1）时内容区的位置和大小：缓入缓出，位置和大小一起变
+fn shrink_rect(from: Rect, to: Pos2, t: f32) -> Rect {
+    let t = t.clamp(0.0, 1.0);
+    let e = if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
+    Rect::from_min_size(from.min.lerp(to, e), from.size() + (super::download_card::SIZE - from.size()) * e)
 }
 
 impl AddDialog {
@@ -50,6 +76,7 @@ impl AddDialog {
             browser_note: None,
             browser_pending: HashMap::new(),
             shown_since: None,
+            shrink: None,
             preview: None,
             preview_limit: 0,
             queue: swoop_core::MAIN_QUEUE_ID,
@@ -122,6 +149,10 @@ impl AddDialog {
         self.text = retry.join("\n");
         self.preview = None;
         self.error = Some(swoop_i18n::trf!("以下链接未能添加：\n{}", failed.join("\n")));
+    }
+
+    pub fn shrinking(&self) -> bool {
+        self.shrink.is_some()
     }
 
     pub fn open_with(&mut self, prefill: Option<String>) {
@@ -227,6 +258,7 @@ impl SwoopApp {
     }
 
     pub fn add_dialog_ui(&mut self, ctx: &egui::Context) {
+        self.shrink_ui(ctx);
         if !self.add_dialog.open {
             return;
         }
@@ -234,11 +266,10 @@ impl SwoopApp {
         let mut submit = false;
         let mut cancel = false;
 
-        let size = egui::vec2(580.0, 500.0);
         if self.add_dialog.pos.is_none() {
-            self.add_dialog.pos = super::popup::centered(ctx, size, 0);
+            self.add_dialog.pos = super::popup::centered(ctx, SIZE, 0);
         }
-        let builder = super::popup::builder(swoop_i18n::tr!("新建下载"), size, self.add_dialog.pos);
+        let builder = super::popup::builder(swoop_i18n::tr!("新建下载"), SIZE, self.add_dialog.pos);
         if std::mem::take(&mut self.add_dialog.raise) {
             ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Focus);
         }
@@ -492,25 +523,93 @@ impl SwoopApp {
                 swoop_i18n::tr!("安装程序结束后，安装包会移到回收站"),
             );
         }
-        // 只为单个、立即开始的下载弹进度提示；批量或等待队列的不弹。卡片从对话框的位置飞到右下角
+        // 只为单个、立即开始的下载弹进度提示；批量或等待队列的不弹
         let queue_running = self.engine.queues().iter().any(|q| q.id == self.add_dialog.queue && q.running);
-        if let [id] = started[..]
-            && queue_running
-        {
-            let from = ctx.input(|i| i.raw.viewports.get(&viewport_id()).and_then(|v| v.outer_rect));
-            self.show_progress(ctx, id, from);
-        }
+        let single = match started[..] {
+            [id] if queue_running => Some(id),
+            _ => None,
+        };
         if self.default_dir != dir {
             self.default_dir = dir;
             self.save_settings();
         }
 
         if failed.is_empty() {
+            // 用卡片提示时，对话框缩进右下角变成那张卡片
+            if let Some(id) = single
+                && !self.begin_shrink(ctx, id)
+            {
+                self.show_progress(ctx, id);
+            }
             self.add_dialog.close();
         } else {
+            if let Some(id) = single {
+                self.show_progress(ctx, id);
+            }
             // 保留失败项，用户再次提交时不会重复创建之前成功的任务。
             self.add_dialog.retain_failed(retry, failed);
         }
+    }
+
+    /// 让对话框开始缩进右下角；不用卡片提示、卡片排不进可见的几张或拿不到窗口位置时返回 false
+    fn begin_shrink(&mut self, ctx: &egui::Context, id: TaskId) -> bool {
+        if self.progress_popup != super::download_card::ProgressPopup::Card {
+            return false;
+        }
+        let rects = ctx.input(|i| i.raw.viewports.get(&viewport_id()).map(|v| (v.inner_rect, v.outer_rect)));
+        let Some((Some(inner), Some(outer))) = rects else { return false };
+        if !self.cards.open_held(id) {
+            return false;
+        }
+        let started = ctx.input(|i| i.time);
+        self.add_dialog.shrink =
+            Some(Shrink { task: id, from: inner, inset: inner.min - outer.min, pos: self.add_dialog.pos, started });
+        true
+    }
+
+    /// 缩进右下角的每一帧：先改大小再挪位置——macOS 改内容区大小时以左下角为准，后挪位置才能让左上角落在算好的点上
+    fn shrink_ui(&mut self, ctx: &egui::Context) {
+        let Some(shrink) = &self.add_dialog.shrink else { return };
+        let task = shrink.task;
+        // 收缩途中又打开了新建窗口（⌘N 等），或卡片被挤到后面、任务没了：不缩了，直接交给卡片
+        let target = self.cards.target(ctx, task);
+        let (Some(target), false) = (target, self.add_dialog.open) else {
+            if self.add_dialog.open {
+                // 同一个窗口留给新对话框用，恢复原来的大小和位置
+                let id = viewport_id();
+                ctx.send_viewport_cmd_to(id, ViewportCommand::InnerSize(shrink.from.size()));
+                ctx.send_viewport_cmd_to(id, ViewportCommand::OuterPosition(shrink.from.min - shrink.inset));
+            }
+            self.cards.release(task);
+            self.add_dialog.shrink = None;
+            return;
+        };
+        let now = ctx.input(|i| i.time);
+        let t = ((now - shrink.started) / SHRINK_SECS) as f32;
+        let rect = shrink_rect(shrink.from, target, t);
+        let id = viewport_id();
+        ctx.send_viewport_cmd_to(id, ViewportCommand::InnerSize(rect.size()));
+        ctx.send_viewport_cmd_to(id, ViewportCommand::OuterPosition(rect.min - shrink.inset));
+        let builder =
+            super::popup::builder(swoop_i18n::tr!("新建下载"), SIZE, shrink.pos).with_min_inner_size(Vec2::ZERO);
+        let snapshot = self.tasks.iter().find(|t| t.id == task).cloned().or_else(|| self.engine.snapshot_one(task));
+        let history = self.engine.speed_history(task);
+        let p = self.palette;
+        // 卡片四周留 12，与卡片窗口一致，交接时内容不跳
+        super::popup::show_with_margin(ctx, id, builder, &p, 12, |ui| {
+            ui.set_opacity((t / 0.4).clamp(0.0, 1.0));
+            if let Some(snapshot) = &snapshot {
+                super::download_card::preview(ui, &p, snapshot, &history);
+            }
+        });
+        if t >= 1.0 {
+            self.cards.release(task);
+        }
+        // 卡片窗口画出来盖住对话框之后再关，不留空档
+        if self.cards.settled(task) {
+            self.add_dialog.shrink = None;
+        }
+        ctx.request_repaint();
     }
 }
 
@@ -543,6 +642,18 @@ mod tests {
         assert!(credentials.is_none());
         assert_eq!(options.proxy, FtpProxyPolicy::Direct);
         assert_eq!(options.tls, FtpTlsMode::Explicit);
+    }
+
+    #[test]
+    fn shrink_moves_and_resizes_together_into_the_card_slot() {
+        let from = Rect::from_min_size(egui::pos2(400.0, 230.0), egui::vec2(580.0, 500.0));
+        let to = egui::pos2(1000.0, 700.0);
+        assert_eq!(shrink_rect(from, to, 0.0), from);
+        let mid = shrink_rect(from, to, 0.5);
+        assert_eq!(mid.min, from.min.lerp(to, 0.5), "缓入缓出的中点正好走一半");
+        assert_eq!(mid.size(), (from.size() + super::super::download_card::SIZE) / 2.0);
+        let end = shrink_rect(from, to, 1.2);
+        assert_eq!(end, Rect::from_min_size(to, super::super::download_card::SIZE));
     }
 
     #[test]

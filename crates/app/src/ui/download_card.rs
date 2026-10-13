@@ -1,5 +1,6 @@
 //! 右下角下载卡片：单个下载开始时贴着屏幕右下角出现——从右侧滑入；在新建下载窗口里点「开始下载」的，
-//! 从对话框的位置飞过去。卡片显示最近一分钟的速度曲线和进度，完成后原地变成完成卡片，几秒后自己收起。
+//! 由对话框自己缩小、移到卡片的位置再交接（见 `add_dialog`）。卡片显示最近一分钟的速度曲线和进度，
+//! 完成后原地变成完成卡片，几秒后自己收起。
 //! 每张卡片是独立的置顶小窗口，不抢焦点，主窗口隐藏到菜单栏时照样显示。设置里可换回居中的进度窗口。
 
 use std::path::PathBuf;
@@ -56,9 +57,8 @@ const MARGIN: f32 = 16.0;
 const GAP: f32 = 10.0;
 /// 滑入的起点在目标位置右侧多远
 const SLIDE_IN: f32 = 56.0;
-/// 滑入、上下挪位的时长；从新建下载窗口飞过来的路程长，慢一点
+/// 滑入、上下挪位的时长
 const MOVE_SECS: f64 = 0.28;
-const FLY_SECS: f64 = 0.42;
 /// 完成后停留多久自动收起；鼠标停在卡片上时重新计时
 const LINGER: Duration = Duration::from_secs(8);
 /// 曲线横跨的秒数
@@ -89,8 +89,10 @@ struct Card {
     motion: Option<Motion>,
     /// 最近一帧窗口所在的位置；还没出现过时为 None
     pos: Option<Pos2>,
-    /// 飞入起点（新建下载窗口里卡片大小的那块居中位置），只用于第一次出现
-    origin: Option<Pos2>,
+    /// 新建下载窗口正缩进这个位置：先占住槽位，不画
+    held: bool,
+    /// 由新建下载窗口交接过来：第一次出现直接在槽位上，不滑入
+    in_place: bool,
     done_since: Option<Instant>,
 }
 
@@ -115,16 +117,49 @@ impl Cards {
         self.cards.iter().take(MAX_VISIBLE).any(|c| c.id == id)
     }
 
-    /// `from` 是新建下载窗口的位置，卡片从那里飞过来；None 时从右侧滑入
-    pub fn open(&mut self, id: TaskId, from: Option<Rect>) {
+    /// 从右侧滑入
+    pub fn open(&mut self, id: TaskId) {
+        self.push(id, false);
+    }
+
+    /// 新建下载窗口要缩进来：先占住槽位，等 [`Self::release`] 再显示。排不进可见的几张时不占位、
+    /// 照常滑入，返回 false
+    pub fn open_held(&mut self, id: TaskId) -> bool {
+        if self.contains(id) || self.cards.len() >= MAX_VISIBLE {
+            self.push(id, false);
+            return false;
+        }
+        self.push(id, true);
+        true
+    }
+
+    fn push(&mut self, id: TaskId, held: bool) {
         if self.contains(id) {
             return;
         }
         if self.cards.is_empty() {
             self.area = crate::screen::work_area_at_cursor();
         }
-        let origin = from.map(|rect| rect.center() - SIZE / 2.0);
-        self.cards.push(Card { id, motion: None, pos: None, origin, done_since: None });
+        self.cards.push(Card { id, motion: None, pos: None, held, in_place: held, done_since: None });
+    }
+
+    /// 卡片所在槽位的左上角；卡片不在或排在后面时为 None
+    pub fn target(&mut self, ctx: &egui::Context, id: TaskId) -> Option<Pos2> {
+        let slot = self.cards.iter().take(MAX_VISIBLE).position(|c| c.id == id)?;
+        let area = *self.area.get_or_insert_with(|| fallback_area(ctx));
+        Some(slot_pos(area, slot))
+    }
+
+    /// 新建下载窗口已经缩到位，显示卡片
+    pub fn release(&mut self, id: TaskId) {
+        if let Some(card) = self.cards.iter_mut().find(|c| c.id == id) {
+            card.held = false;
+        }
+    }
+
+    /// 卡片窗口已经画出来了（或卡片已经不在了），交接的对话框可以关掉
+    pub fn settled(&self, id: TaskId) -> bool {
+        !self.cards.iter().any(|c| c.id == id && (c.held || c.motion.is_none_or(|m| m.started.is_none())))
     }
 
     pub fn close(&mut self, id: TaskId) {
@@ -185,15 +220,18 @@ impl SwoopApp {
         let mut moving = false;
         for (slot, card) in self.cards.cards.iter_mut().take(MAX_VISIBLE).enumerate() {
             let Some(task) = tasks.iter().find(|t| t.id == card.id) else { continue };
+            if card.held {
+                continue;
+            }
             let target = slot_pos(area, slot);
             if card.motion.is_none_or(|m| m.to != target) {
-                // 下面的卡片收起后，上面的跟着挪下来；没出现过的从新建窗口飞来或从右侧滑入
-                let (from, secs) = match (card.pos, card.origin.take()) {
-                    (Some(pos), _) => (pos, MOVE_SECS),
-                    (None, Some(origin)) => (origin, FLY_SECS),
-                    (None, None) => (target + vec2(SLIDE_IN, 0.0), MOVE_SECS),
+                // 下面的卡片收起后，上面的跟着挪下来；没出现过的从右侧滑入，新建窗口交接过来的直接出现
+                let from = match card.pos {
+                    Some(pos) => pos,
+                    None if card.in_place => target,
+                    None => target + vec2(SLIDE_IN, 0.0),
                 };
-                card.motion = Some(Motion { from, to: target, secs, started: None });
+                card.motion = Some(Motion { from, to: target, secs: MOVE_SECS, started: None });
             }
             let motion = card.motion.as_mut().expect("上面刚设置过");
             let (pos, arrived) = motion.at(now);
@@ -207,7 +245,14 @@ impl SwoopApp {
             }
             let history = crate::demo::speed_history(task).unwrap_or_else(|| self.engine.speed_history(task.id));
             let extra = if slot + 1 == visible { more } else { 0 };
-            let shown = popup::show_card(ctx, viewport_id(card.id), SIZE, pos, slot, &p, |ui| {
+            // 窗口刚建好的第一帧也画卡片内容，不闪一帧空白（交接时盖在对话框上）
+            let placeholder = {
+                let (task, history) = ((*task).clone(), history.clone());
+                move |ui: &mut Ui| {
+                    card_contents(ui, &p, &task, &history, extra);
+                }
+            };
+            let shown = popup::show_card(ctx, viewport_id(card.id), SIZE, pos, slot, &p, placeholder, |ui| {
                 let hovered = ui.input(|i| i.pointer.has_pointer());
                 (card_contents(ui, &p, task, &history, extra), hovered)
             });
@@ -260,6 +305,11 @@ impl SwoopApp {
             }
         }
     }
+}
+
+/// 新建下载窗口缩进右下角途中画的卡片内容（不响应点击），到位后与真正的卡片窗口对齐
+pub fn preview(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64]) {
+    card_contents(ui, p, t, history, 0);
 }
 
 /// 卡片处于哪个阶段；阶段变了（例如下载完成）下半部分淡入新内容
@@ -469,9 +519,9 @@ mod tests {
     fn only_first_cards_are_visible_and_closing_frees_a_slot() {
         let mut cards = Cards::default();
         for id in 1..=4 {
-            cards.open(TaskId(id), None);
+            cards.open(TaskId(id));
         }
-        cards.open(TaskId(1), None);
+        cards.open(TaskId(1));
         assert_eq!(cards.cards.len(), 4, "同一任务不重复开卡片");
         assert!(cards.visible(TaskId(3)) && !cards.visible(TaskId(4)));
         cards.close(TaskId(2));
@@ -483,10 +533,26 @@ mod tests {
     }
 
     #[test]
-    fn card_flies_from_dialog_center() {
+    fn held_card_keeps_its_slot_until_the_dialog_hands_over() {
+        let ctx = egui::Context::default();
         let mut cards = Cards::default();
-        let dialog = Rect::from_min_size(pos2(400.0, 200.0), vec2(580.0, 500.0));
-        cards.open(TaskId(1), Some(dialog));
-        assert_eq!(cards.cards[0].origin, Some(dialog.center() - SIZE / 2.0));
+        cards.open(TaskId(1));
+        assert!(cards.open_held(TaskId(2)));
+        assert_eq!(cards.target(&ctx, TaskId(2)), Some(slot_pos(cards.area.unwrap(), 1)), "占第二个槽位");
+        assert!(!cards.settled(TaskId(2)), "对话框还在缩，卡片没画出来");
+        cards.release(TaskId(2));
+        assert!(!cards.cards[1].held && cards.cards[1].in_place);
+        cards.close(TaskId(2));
+        assert!(cards.settled(TaskId(2)), "卡片没了也算交接完，对话框不能一直等");
+    }
+
+    #[test]
+    fn held_card_needs_a_visible_slot() {
+        let mut cards = Cards::default();
+        for id in 1..=3 {
+            cards.open(TaskId(id));
+        }
+        assert!(!cards.open_held(TaskId(4)), "排在后面的不缩进来，照常排队");
+        assert!(cards.contains(TaskId(4)) && !cards.cards[3].held);
     }
 }

@@ -63,11 +63,10 @@ enum Action {
 }
 
 impl SwoopApp {
-    /// 单个下载开始时按设置弹出进度提示；`from` 是新建下载窗口的位置，卡片从那里飞到右下角。
-    /// 返回是否弹出了卡片或进度窗口
-    pub(crate) fn show_progress(&mut self, ctx: &egui::Context, id: TaskId, from: Option<egui::Rect>) -> bool {
+    /// 单个下载开始时按设置弹出进度提示；返回是否弹出了卡片或进度窗口
+    pub(crate) fn show_progress(&mut self, ctx: &egui::Context, id: TaskId) -> bool {
         match self.progress_popup {
-            ProgressPopup::Card => self.cards.open(id, from),
+            ProgressPopup::Card => self.cards.open(id),
             ProgressPopup::Window => self.task_windows.open(ctx, id),
             ProgressPopup::Off => return false,
         }

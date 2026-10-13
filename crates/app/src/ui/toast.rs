@@ -246,7 +246,7 @@ impl SwoopApp {
             let dir = self.categories.target(&self.default_dir, &url, None);
             match self.engine.add(AddOptions { url: url.clone(), dir, file_name: None, headers: Vec::new() }) {
                 Ok(id) if single => {
-                    self.show_progress(ctx, id, None);
+                    self.show_progress(ctx, id);
                 }
                 Ok(_) => {}
                 Err(e) => failed.push(format!("{url}: {e}")),

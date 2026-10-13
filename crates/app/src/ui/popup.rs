@@ -4,7 +4,7 @@
 //! 子窗口可见，根视口又会跑完整的 `ui`。所以始终保留一个看不见的 1×1 宿主窗口：有弹窗要显示时
 //! 在 `logic` 里把它显示出来换回 `ui` 帧，弹窗建好后再把它藏起来。
 
-use egui::{Color32, Frame, Margin, Pos2, Stroke, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, vec2};
+use egui::{Frame, Margin, Pos2, Stroke, Ui, Vec2, ViewportBuilder, ViewportCommand, ViewportId, vec2};
 
 use crate::app::SwoopApp;
 use crate::theme::Palette;
@@ -39,15 +39,17 @@ pub fn builder(title: &str, size: egui::Vec2, pos: Option<Pos2>) -> ViewportBuil
 /// 里建不出来，egui 会因回调未被调用而 panic。所以新窗口先登记成延迟视口，由 eframe 在下一帧开头
 /// （`initialized_all_windows`）建好窗口，之后再按立即视口画。返回 false 表示窗口还没建好。
 fn ensure_window(ctx: &egui::Context, id: ViewportId, builder: &ViewportBuilder, p: &Palette) -> bool {
-    ensure_window_filled(ctx, id, builder, p, p.surface)
+    ensure_window_with(ctx, id, builder, p, Frame::new().fill(p.surface), |_| {})
 }
 
-fn ensure_window_filled(
+/// 同上；`frame` 和 `paint` 决定窗口建好后、换成立即视口之前那一帧画什么
+fn ensure_window_with(
     ctx: &egui::Context,
     id: ViewportId,
     builder: &ViewportBuilder,
     p: &Palette,
-    fill: Color32,
+    frame: Frame,
+    paint: impl Fn(&mut Ui) + Send + Sync + 'static,
 ) -> bool {
     // 窗口建好后把原生标题栏切到应用主题；窗口每次重建都会先经过未就绪的帧，届时清掉标记
     let themed = id.0.with("native_theme");
@@ -60,7 +62,7 @@ fn ensure_window_filled(
     }
     ctx.data_mut(|d| d.remove::<crate::theme::Mode>(themed));
     ctx.show_viewport_deferred(id, builder.clone(), move |ui, _| {
-        egui::CentralPanel::default().frame(Frame::new().fill(fill)).show(ui, |_| {});
+        egui::CentralPanel::default().frame(frame).show(ui, |ui| paint(ui));
     });
     ctx.request_repaint();
     false
@@ -74,6 +76,18 @@ pub fn show(
     p: &Palette,
     add_contents: impl FnOnce(&mut Ui),
 ) -> bool {
+    show_with_margin(ctx, id, builder, p, 20, add_contents)
+}
+
+/// 同 [`show`]，内容区边距自定
+pub fn show_with_margin(
+    ctx: &egui::Context,
+    id: ViewportId,
+    builder: ViewportBuilder,
+    p: &Palette,
+    margin: i8,
+    add_contents: impl FnOnce(&mut Ui),
+) -> bool {
     #[cfg(feature = "screenshot")]
     if crate::shot::active() {
         show_inline(ctx, id, &builder, p, add_contents);
@@ -84,7 +98,7 @@ pub fn show(
     }
     let mut add_contents = Some(add_contents);
     ctx.show_viewport_immediate(id, builder, |ui, _class| {
-        egui::CentralPanel::default().frame(Frame::new().fill(p.surface).inner_margin(Margin::same(20))).show(
+        egui::CentralPanel::default().frame(Frame::new().fill(p.surface).inner_margin(Margin::same(margin))).show(
             ui,
             |ui| {
                 if let Some(add) = add_contents.take() {
@@ -99,7 +113,9 @@ pub fn show(
 /// 右下角下载卡片这类小浮窗：置顶、不抢焦点、不进任务栏。圆角和阴影交给系统——eframe 只有主窗口
 /// 透明时子窗口才能透明，没法自己画圆角：macOS 用隐藏了标题栏的普通窗口（系统画圆角），
 /// 其它平台用无边框窗口，自己描一圈边。
-/// 返回内容闭包的结果和用户是否要求关窗（⌘W 等）；窗口还没建好时返回 None。`slot` 只在截图模式下用来错开位置。
+/// 返回内容闭包的结果和用户是否要求关窗（⌘W 等）；窗口还没建好时返回 None。`placeholder` 画窗口刚建好的
+/// 那一帧，`slot` 只在截图模式下用来错开位置。
+#[allow(clippy::too_many_arguments)]
 pub fn show_card<R>(
     ctx: &egui::Context,
     id: ViewportId,
@@ -107,6 +123,7 @@ pub fn show_card<R>(
     pos: Pos2,
     slot: usize,
     p: &Palette,
+    placeholder: impl Fn(&mut Ui) + Send + Sync + 'static,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> Option<(R, bool)> {
     #[cfg(feature = "screenshot")]
@@ -132,7 +149,7 @@ pub fn show_card<R>(
     } else {
         builder.with_decorations(false)
     };
-    if !ensure_window_filled(ctx, id, &builder, p, p.surface) {
+    if !ensure_window_with(ctx, id, &builder, p, card_frame(p), placeholder) {
         return None;
     }
     let mut add_contents = Some(add_contents);
@@ -210,6 +227,7 @@ pub struct PopupHost {
 impl SwoopApp {
     pub(crate) fn wants_popup(&self) -> bool {
         self.add_dialog.open
+            || self.add_dialog.shrinking()
             || !self.task_windows.is_empty()
             || !self.cards.is_empty()
             || !self.completion.dialogs.is_empty()
