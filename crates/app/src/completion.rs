@@ -511,6 +511,7 @@ fn install_and_trash(path: &Path, cancel: &CancellationToken) -> Result<(), Stri
 /// 安装程序最长等一天；超过就放弃等待，安装包保留
 const INSTALLER_WAIT: Duration = Duration::from_secs(24 * 3600);
 
+#[cfg(target_os = "macos")]
 fn wait_until(cancel: &CancellationToken, timeout: Duration, mut done: impl FnMut() -> Result<bool, String>) -> Result<(), String> {
     let started = Instant::now();
     loop {
