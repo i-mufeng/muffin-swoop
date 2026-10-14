@@ -107,6 +107,10 @@ fn main() -> eframe::Result {
         }
     };
     let settings = AppSettings::load(&store, default_download_dir());
+    // 环境变量只影响本次运行，不写回设置；要在新装播种默认分类之前应用
+    if let Some(lang) = std::env::var("SWOOP_LANG").ok().and_then(|value| swoop_i18n::Language::parse(&value)) {
+        swoop_i18n::set_language(lang);
+    }
     if fresh_install {
         categories::Categories::init_fresh(&store, &settings.default_dir);
     }

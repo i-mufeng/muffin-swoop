@@ -107,6 +107,9 @@ impl SwoopApp {
             .flatten()
             .and_then(|value| swoop_i18n::Language::parse(&value))
             .unwrap_or_default();
+        // 环境变量只影响本次运行，不写回设置
+        let language =
+            std::env::var("SWOOP_LANG").ok().and_then(|value| swoop_i18n::Language::parse(&value)).unwrap_or(language);
         swoop_i18n::set_language(language);
         // 环境变量只影响本次运行，不写回设置
         let mode = std::env::var("SWOOP_THEME").ok().and_then(|v| Mode::parse(&v)).unwrap_or(settings.theme);

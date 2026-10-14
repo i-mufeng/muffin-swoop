@@ -133,7 +133,7 @@ fn open_view(app: &mut SwoopApp, ctx: &egui::Context, view: &str) -> bool {
         "cards" => {
             app.toasts.items.clear();
             for id in [9006, 9008, 9001, 9002] {
-                app.cards.open(swoop_core::TaskId(id), None);
+                app.cards.open(swoop_core::TaskId(id));
             }
         }
         "completed" => app.completion.dialogs.push_back(app.default_dir.join("ubuntu-24.04.3-desktop-amd64.iso")),
