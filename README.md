@@ -1,15 +1,35 @@
-# Swoop
+<p align="center">
+  <img src="assets/brand/swoop/png/swoop-app-256.png" width="128" alt="Swoop logo">
+</p>
 
-**A fast, efficient, and lightweight download manager — written in Rust.**
+<h1 align="center">Swoop</h1>
 
-[![CI](https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml/badge.svg)](https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml)
-[![GitHub release](https://img.shields.io/github/v/release/i-mufeng/muffin-swoop)](https://github.com/i-mufeng/muffin-swoop/releases/latest)
-[![License: MIT](https://img.shields.io/github/license/i-mufeng/muffin-swoop)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)](https://www.rust-lang.org)
+<p align="center"><strong>A fast, efficient, and lightweight download manager — written in Rust.</strong></p>
+
+<p align="center">
+  English · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/i-mufeng/muffin-swoop/releases/latest"><img src="https://img.shields.io/github/v/release/i-mufeng/muffin-swoop" alt="GitHub release"></a>
+  <a href="https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml"><img src="https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/i-mufeng/muffin-swoop" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/rust-1.95%2B-orange" alt="Rust 1.95+">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-blue" alt="Platforms: macOS and Windows">
+</p>
+
+<p align="center">
+  <a href="https://github.com/i-mufeng/muffin-swoop/releases/latest"><strong>Download</strong></a> ·
+  <a href="#features"><strong>Features</strong></a> ·
+  <a href="#development"><strong>Development</strong></a> ·
+  <a href="docs/"><strong>Docs</strong></a>
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/home-dark.png" alt="Swoop main window — dark theme, English UI">
+</p>
 
 Swoop is a native download manager built around a multi-connection download engine. It downloads ordinary files with no extra runtime, takes over downloads from your browser, records streams, and mirrors whole sites — all in one small, fast binary.
-
-![Swoop main window — dark theme](assets/screenshots/home-dark.png)
 
 ## Download
 
