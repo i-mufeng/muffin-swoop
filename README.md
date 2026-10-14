@@ -1,141 +1,145 @@
 # Swoop
 
-> 俯冲抓取。一个用 Rust + egui 写的高性能、好看、好用的下载器，目标是成为 IDM 的开源平替。
+**A fast, efficient, and lightweight download manager — written in Rust.**
 
-当前按 macOS / Windows 双平台对标 IDM；清单中的功能均已接入，平台实机与真实站点兼容验收单独记录。实现与验收范围见 [功能矩阵](docs/idm-parity.md)，桌面打包与实机检查见 [验收说明](docs/desktop-validation.md)。
+[![CI](https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml/badge.svg)](https://github.com/i-mufeng/muffin-swoop/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/i-mufeng/muffin-swoop)](https://github.com/i-mufeng/muffin-swoop/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/i-mufeng/muffin-swoop)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.95%2B-orange)](https://www.rust-lang.org)
 
-## 当前功能
+Swoop is a native download manager built around a multi-connection download engine. It downloads ordinary files with no extra runtime, takes over downloads from your browser, records streams, and mirrors whole sites — all in one small, fast binary.
 
-- **多连接分段下载**：默认 8 连接，设置中可调为 1–32；新建或继续任务时生效。文件预分配后各连接定位写入，无锁。
-- **动态分段（IDM 招牌）**：某连接提前完成后，从剩余最多的区段"窃取"一半继续下，不会被尾部慢连接拖住。
-- **HTTP 断点续传**：按区段记录进度，暂停/失败后从断点继续。
-- **FTP / FTPS**：复用下载队列、限速、配额和同名保护；连接方式、TLS、代理、超时和 CA 可配置，支持会话登录。当前暂停重试从头下载，详见 [FTP 说明](docs/ftp.md)。
-- **同名文件处理**：默认询问，支持覆盖、自动重命名、取消；设置中可保存默认策略，普通文件和媒体共用。覆盖先暂存，取消或失败保留原文件。见 [同名处理](docs/file-conflicts.md)。
-- **全局与任务限速**：令牌桶，可运行时调整；文件下载配额按周期共享，重启保留用量。媒体和站点抓取使用各自的策略。
-- **命名队列与计划**：队列并发、任务顺序、启动/停止时间、周期调度，重启保持；可启用完成文件的周期同步检查，改变后完整暂存并替换。
-- **批量管理**：数字/字母 URL 范围展开、去重预览、文本/快捷方式导入、原生拖入链接与链接文件、拖出已完成文件，多选暂停/继续/移除记录、链接导出及持久化排序。
-- **分类规则**：按扩展名和域名选择目录，规则可编辑和排序；默认关闭自动分目录，启用后作用于新任务。
-- **任务属性**：描述、独立限速和刷新下载地址。换地址清除旧请求头，仅强 ETag 与大小一致时继续旧片段。
-- **站点登录**：Basic、Digest、NTLM、Negotiate；可使用会话凭据、系统账户或系统凭据库，按精确来源隔离。企业域与系统授权验收见 [认证说明](docs/site-auth.md)。
-- **网络策略**：连接/读取/总时长超时、重试与退避、HTTP(S)/SOCKS 代理、认证和排除主机。普通 HTTP(S) 的代理账号可保存在会话或系统凭据库，见 [代理认证](docs/proxy-auth.md)。跨源重定向移除站点凭据及自定义头。
-- **界面**：egui 原生渲染，深/浅主题，卡片/表格切换，列显示、顺序和宽度可保存，工具栏可隐藏和排序，简体中文/English 可切换并保存；⌘N 新建、⌘V 粘贴链接直接添加。
-- **详情面板**：点选任务从右侧滑出，最近 2 分钟速度曲线（平均/峰值）、续传支持、各区段进度；Esc 或再点一次收起。
-- **菜单栏驻留**（macOS / Windows）：关闭窗口后隐藏到菜单栏继续下载（macOS 同时隐藏 Dock 图标），菜单里看总速度、全部开始/暂停、新建任务、退出；图标旁可显示速度。⌘Q 仍然直接退出。
-- **系统通知**：下载完成／失败可分别开关，通知时机可选「仅后台」或「始终」；默认只在窗口失焦、最小化或隐藏时提醒，前台保留应用内吐司；通知声音独立配置，默认关闭。
-- **完成后动作**：可选扫描、打开文件/目录和完成窗口；全部下载成功后可倒计时退出或请求关机，默认关闭并可取消。见 [动作说明](docs/completion-actions.md)。
-- **用户级开机启动**：设置中显式启停，读取系统状态并提示失效路径；默认不启用，不要求管理员。
-- **签名更新**：更新源、公钥、稳定/预览通道、自动检查和间隔可配置；下载验签、用户确认安装、备份与中断恢复。默认关闭，发行方需配置正式更新源，见 [更新说明](docs/updates.md)。
-- **单实例与 CLI**：同一数据目录复用已有窗口；独立控制台入口可管理文件、媒体、抓取项目和队列，处理同名询问，命令不启动 GUI。见 [命令行说明](docs/cli.md)。
-- **浏览器集成**：Chromium / Firefox 产物、下载接管与失败回退、本页链接筛选、被动媒体检测。候选由用户选择；HLS/DASH 交给独立媒体窗口。
-- **媒体下载**：HLS、AES-128 HLS、无 DRM 的 DASH；清晰度/音轨/文本字幕选择，带时长上限的直播录制、MMSH/MMST，FFmpeg 转封装 MP4/MKV。HLS/DASH 点播与直播可用会话认证和显式代理；完整分片缓存经来源验证后复用。工具路径、重试、缓存预算、录制时长及默认质量/语言可配置。具体协议、字幕和恢复边界见 [媒体说明](crates/media/README.md)。
-- **站点抓取**：HTML/CSS、SVG、网页清单、媒体/字幕引用与懒加载图片，域名/深度/类型/URL 过滤、robots、预算、恢复与离线镜像。可配置隔离 Chromium 渲染动态页面，也可导入渲染后的 HTML；浏览器另行安装，见 [抓取说明](docs/grabber.md)。
-- **原生桌面主程序**：普通文件下载无需额外运行时；媒体下载另需 FFmpeg。
-- **内嵌中文字体**：阿里巴巴普惠体 3.0 子集（GB2312 全部汉字 + 标点，约 1.5 MB），无需依赖系统字体；生僻字会显示为方框，详见 `assets/fonts/NOTICE.md`。
+![Swoop main window — dark theme](assets/screenshots/home-dark.png)
 
-## 结构
+## Download
+
+Grab the latest build from [GitHub Releases](https://github.com/i-mufeng/muffin-swoop/releases/latest):
+
+| Platform | Package |
+| --- | --- |
+| macOS (Apple Silicon) | `.dmg` / signed update `.zip` |
+| Windows (x64 / ARM64) | per-user NSIS installer |
+
+- No installation privileges required — Swoop installs per user and stays out of your way.
+- **Signed auto-update** (Ed25519, stable/preview channels) built in; update source, public key, and check interval are configurable. See [updates](docs/updates.md).
+- **FFmpeg is only needed for media downloads** (HLS/DASH/MMS). Ordinary file downloads run entirely on Swoop's own engine.
+
+## Features
+
+### Download engine
+
+- **Multi-connection segmented downloads** — 8 connections by default, adjustable from 1 to 32 per task.
+- **Dynamic segment rebalancing** — a connection that finishes early steals half of the largest remaining segment, so a single slow connection never holds the whole file hostage.
+- **Resumable HTTP downloads** — per-segment progress is persisted continuously; pause, quit, and continue from the exact byte. Before resuming, Swoop re-validates ETag and file size and restarts cleanly if the remote file changed.
+- **Safe in-place writes** — files are pre-allocated and written through `.swoop` temporary files; removing an unfinished task cleans up its partial data.
+- **FTP / FTPS** with the same queues, speed limits, quotas, and name-collision handling as HTTP. See [FTP](docs/ftp.md).
+
+### Media & sites
+
+- **Stream recording** — HLS (including AES-128) and DRM-free DASH, with quality, audio-track, and subtitle selection; live recording with a duration cap; MMSH/MMST; remux to MP4/MKV via FFmpeg. Verified fragments are cached and reused. See [media](crates/media/README.md).
+- **Site grabber** — mirrors HTML/CSS/SVG pages, media and subtitle references, and lazy-loaded images with domain/depth/type filters, robots.txt support, budget limits, and resumable projects. Dynamic pages can be rendered with an isolated Chromium instance. See [grabber](docs/grabber.md).
+
+### Browser integration
+
+- **Chromium & Firefox extension (MV3)** intercepts downloads *before* the browser's download panel appears — on Chromium at the filename-determination stage, with automatic fallback to the browser if Swoop can't take over. See [protocol & security](docs/browser-extension.md).
+- **Passive media detection** records video/audio candidates on the page for you to pick; nothing downloads automatically.
+- Right-click any link, image, or video to send it to Swoop; the popup lists all links on the current page.
+
+### Organization & control
+
+- **Named queues with a scheduler** — per-queue concurrency, task order, start/stop times, and periodic schedules, all persisted across restarts.
+- **Categories** route files by extension or domain into the right folder (off by default).
+- **Batch tools** — numeric/alphabetic URL ranges with dedup preview, text and shortcut-file import, native drag & drop of links and files, multi-select operations, and link export.
+- **Speed limits** — token-bucket limiting, globally and per task, adjustable while running; download quotas shared per period.
+- **Network policy** — connect/read/total timeouts, retries with backoff, HTTP(S)/SOCKS proxies with authentication, and per-site credentials (Basic, Digest, NTLM, Negotiate; session, account, or OS credential store). See [site auth](docs/site-auth.md) and [proxy auth](docs/proxy-auth.md).
+- **Name collisions** — ask, overwrite, auto-rename, or cancel; overwrites are staged and only swapped in on success. See [file conflicts](docs/file-conflicts.md).
+
+### Experience
+
+- **Native UI** (egui + wgpu) with dark and light themes, card/table layouts, customizable columns and toolbar, and Simplified Chinese / English.
+- **Detail panel** slides out per task: live speed graph (average/peak), resume support, and per-segment progress.
+- **Menu bar / tray presence** — close the window and downloads keep running; the menu shows total speed and quick actions.
+- **System notifications** for completion and failure (configurable, off when the window is focused), plus optional sound.
+- **Completion actions** — scan, open file/folder, or a countdown to quit/shut down after everything finishes. See [completion actions](docs/completion-actions.md).
+- **Single instance & CLI** — rerunning Swoop hands off to the existing window; `swoop-cli` manages files, media, grabber projects, and queues from a terminal. See [CLI](docs/cli.md).
+- **Embedded CJK font subset** (~1.5 MB) so Chinese text renders identically on any system. See [font notice](assets/fonts/NOTICE.md).
+
+## Project structure
 
 ```
-crates/core   swoop-core  下载引擎（纯库，无 UI 依赖）
-crates/app    swoop-app   egui 桌面 swoop + 控制台 swoop-cli（浏览器桥接 / 本机控制）
-crates/media  swoop-media HLS/DASH/MMS 检查、可取消的 FFmpeg 下载
-crates/grabber swoop-grabber 可恢复站点抓取与离线镜像
-crates/ftp    swoop-ftp   可取消的 FTP/FTPS 传输
-crates/updater swoop-updater 签名更新、安装与恢复
-crates/i18n    swoop-i18n 桌面语言资源（编译期检查）
-extension/    Chromium / Firefox MV3 扩展（TypeScript + esbuild）
-docs/         设计文档（browser-extension.md）
-assets/fonts  内嵌字体子集与声明
-scripts/      make_font_subset.py：从本机普惠体重新生成字体子集
+crates/core     swoop-core      Download engine (pure library, no UI dependencies)
+crates/app      swoop-app       egui desktop app + swoop-cli console
+crates/media    swoop-media     HLS/DASH/MMS inspection and cancellable FFmpeg downloads
+crates/grabber  swoop-grabber   Resumable site grabbing and offline mirroring
+crates/ftp      swoop-ftp       Cancellable FTP/FTPS transport
+crates/updater  swoop-updater   Signed updates, install, and recovery
+crates/i18n     swoop-i18n      Desktop language resources (compile-time checked)
+extension/      Chromium / Firefox MV3 extension (TypeScript + esbuild)
+docs/           Design and validation docs
+assets/         Brand assets, screenshots, embedded font subsets
+scripts/        Packaging, installer, and font-subset tooling
 ```
 
-## 开发
+## Development
 
-使用 Rust 1.95 或更新版本（eframe / egui 0.36 的最低要求）；本轮实际使用 Rust 1.98.1，未单独运行最低版本工具链。
+Requires **Rust 1.95+** (eframe/egui 0.36 minimum).
 
 ```bash
-cargo run -p swoop-app            # 启动界面
-python3 -m venv target/ftp-fixture-venv
-target/ftp-fixture-venv/bin/python -m pip install -r crates/ftp/tests/requirements.txt
-cargo test --workspace --locked  # 单元 + 本地 HTTP/FTP 服务器端到端测试
-RUST_LOG=debug cargo run -p swoop-app
+cargo run -p swoop-app              # launch the app
+cargo test --workspace --locked     # unit + local HTTP/FTP end-to-end tests
 ```
 
-Windows 的 FTP 测试解释器设置见 [FTP 开发验证](docs/ftp.md#开发验证)。
-
-调界面时的两个开关：
+Useful switches when working on the UI (Windows: use `set` instead of `env` prefix):
 
 ```bash
-SWOOP_DEMO=1 cargo run -p swoop-app                     # 混入 8 条假任务，覆盖所有状态，并默认打开第一条的详情面板
-SWOOP_THEME=light cargo run -p swoop-app                # 以浅色主题启动
-SWOOP_PROGRESS=cells|lanes|overlay cargo run -p swoop-app   # 进度条样式（默认 cells，设置里也可切换）
-SWOOP_DATA_DIR=tmp/manual-check cargo run -p swoop-app   # 独立任务/设置数据库，便于本地验收
-# 自动截图后退出（需要 glow 后端）：
-SWOOP_DEMO=1 SWOOP_RENDERER=glow EFRAME_SCREENSHOT_TO=tmp/shot.png \
-  cargo run -p swoop-app --features screenshot
+SWOOP_DEMO=1 cargo run -p swoop-app                        # seed 8 fake tasks covering every state
+SWOOP_THEME=light cargo run -p swoop-app                   # start in light theme
+SWOOP_DATA_DIR=tmp/manual-check cargo run -p swoop-app     # isolated database for manual testing
+scripts/screenshot.sh home dark out.png                    # capture any screen, then exit (demo data, temp dir)
 ```
 
-注意：自动截图抓的是第一帧，而 egui 的 `Area`（右下角吐司、设置/新建弹窗）在首帧总是隐藏，
-所以截图里看不到它们，需要实际运行查看。
-
-## 浏览器扩展
+Browser extension:
 
 ```bash
 cd extension
 npm install
-npm run build       # Chromium: dist/；Firefox: dist-firefox/
-npm run package     # 构建并打包为 target/packages/swoop-extension-{chromium,firefox}-<版本>.zip（附 .sha256）
-npm test            # 规则等纯函数的单元测试
-npm run typecheck
+npm run build       # Chromium -> dist/, Firefox -> dist-firefox/
+npm test            # unit tests for pure functions
+npm run package     # store-ready zips under target/packages/ (with .sha256)
 ```
 
-Chrome / Edge / Arc / Brave：打开 `chrome://extensions` → 开启「开发者模式」→「加载已解压的扩展程序」→ 选 `extension/dist/`。
+CI runs tests and packaging on macOS and Windows for every push and pull request. Passing local fixture tests does **not** mean every website, media format, or enterprise environment is compatible — the [feature matrix](docs/idm-parity.md) records what is implemented and how it was validated.
 
-- Swoop 侧在「设置 → 浏览器集成」里开关、改端口（默认 51230）、选择「直接下载」或「弹出确认」，并能看到扩展是否已连接。
-- 「弹出确认」在窗口隐藏到菜单栏时会唤回窗口，再显示预填好的新建任务对话框。
-- 下载接管在 Chromium 上监听 `downloads.onDeterminingFilename`（文件名确定前拿住，接手成功就取消，浏览器下载面板不弹出），Firefox 监听 `downloads.onCreated` 先暂停；Swoop 探测成功才取消，否则放行。被动媒体检测只记录候选，不自动开始下载。
-- 右键链接/图片/视频 →「用 Swoop 下载」。
-- 扩展弹窗可打开「本页全部链接」或媒体选择页；缓存上限、检测开关、过期时间、批量并发等均可配置。
-- `npm run package` 产出的 zip 以 `manifest.json` 为包根，可直接上传 Chrome Web Store / AMO；版本取 `package.json`，与 `public/manifest.json` 不一致时报错。同版本重复打包会覆盖，且产物逐字节一致。
-- Firefox 本地测试加载 `extension/dist-firefox/manifest.json`；浏览器商店签名与发布尚未执行。
-- 协议与安全边界见 `docs/browser-extension.md`。
+## Configuration
 
-## 数据与设置
+Everything lives in a per-user SQLite database (WAL) under the platform's application-support directory; settings apply transactionally and are documented with defaults in [configuration](docs/configuration.md). Highlights:
 
-- 数据库：`~/Library/Application Support/com.muffin.swoop/swoop.db`（SQLite，WAL）。
-- 任务新增/状态变化即时落盘，下载中每秒刷新一次区段表；重启后按设置自动续传，续传前比对 ETag 与文件大小，变了就从头下。
-- 设置、分类、网络策略、媒体历史及最近抓取项目存在同一个库的 `settings` 表；队列及任务属性单独持久化。普通设置成组事务保存，失败会显示错误。
-- 浏览器交来的任务会把 Cookie 等请求头明文存进任务表（重启后续传需要），数据库只在本用户目录下。
-- 剪贴板监听：每秒轮询一次，只对启动后新复制的 http(s) 链接弹吐司（可在设置里关闭）；窗口隐藏到菜单栏时暂停轮询。
-
-配置入口和默认值汇总见 [配置说明](docs/configuration.md)。以下为常用项：
-
-| 设置 | 默认值 | 生效时机 |
+| Setting | Default | When it takes effect |
 | --- | --- | --- |
-| 每任务连接数 | 8（可调 1–32） | 新建或暂停后继续；保留已有分段进度，不改变正在运行的连接数 |
-| 完成通知 | 开 | 后续完成事件 |
-| 失败通知 | 开 | 后续失败事件；暂停不提醒 |
-| 通知时机 | 仅后台 | 后续事件；可选始终 |
-| 通知声音 | 关 | 后续系统通知 |
-| 完成后扫描/打开/弹窗 | 关 | 后续成功下载，扫描先于打开 |
-| 全部完成后退出/关机 | 关；倒计时 30 秒 | 新完成事件后且所有工作成功，可取消 |
-| 列表显示和密度 | 完整信息、舒适密度 | 立即生效并保存 |
+| Connections per task | 8 (1–32) | New tasks and resumes; running connections are untouched |
+| Completion / failure notifications | On | Future events; pauses never notify |
+| Notification timing | Background only | Optionally "always" |
+| Notification sound | Off | Future system notifications |
+| Post-download scan / open / dialog | Off | Future completed downloads |
+| Quit / shut down when all done | Off (30 s countdown, cancellable) | After every job succeeds |
 
-系统通知只显示文件名，不携带错误里的 URL 或请求头；具体错误仍在应用内查看。
-通知发送在独立线程执行，系统拒绝或繁忙不影响下载，失败原因写入日志。
-「测试通知」用于确认本机系统权限：系统禁用横幅或专注模式可能让通知不可见。
-macOS 使用 `cargo run` 或直接运行裸二进制时没有应用容器，通知借用「终端」的系统标识和权限；
-在已注册的 `.app` 中运行时使用该应用自己的标识。Windows / Linux 的系统展示需在对应桌面环境验收。
+## Privacy notes
 
-通知策略与设置持久化测试包含在 `cargo test --workspace` 中；真实系统发送测试默认跳过，手动执行：
+- The database lives only in your own user directory.
+- Browser-submitted tasks store their request headers (including cookies) in the task table — required for resume — in plaintext within that local database.
+- System notifications show the file name only; URLs and headers from errors stay inside the app.
+- Per-site credentials can be kept in the OS credential store instead of the database.
+
+## Contributing
+
+Issues and pull requests are welcome. Before opening a PR:
 
 ```bash
-cargo test -p swoop-app notifications::tests::native_notification_smoke -- --ignored --nocapture
+cargo fmt --all -- --check
+cargo test --workspace --locked
+cd extension && npm test && npm run typecheck
 ```
 
-该命令成功仅代表通知 API 调用成功；横幅是否显示仍需实际查看。
+## License
 
-## 路线图
-
-以 [IDM 功能矩阵](docs/idm-parity.md) 为准。已实现项与验收范围逐项记录；不会把本地夹具通过视为所有网站、媒体格式、企业环境或系统集成都兼容。
-
-Windows 暂无实机，保留验收项；macOS 原生交互与通知横幅未完成自动验收。当前 CI 配置已提供，未把本地测试当成远端 CI 已运行。
+[MIT](LICENSE)
