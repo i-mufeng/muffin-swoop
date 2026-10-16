@@ -8,3 +8,6 @@
 __pycache__/
 # 品牌概念稿只留本地，构建只用 assets/brand/swoop
 /assets/brand/logo-*/
+
+# Upyun publish credentials (scripts/publish-upyun.sh)
+.env
