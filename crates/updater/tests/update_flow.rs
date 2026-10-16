@@ -167,6 +167,25 @@ async fn real_http_signed_feed_and_verified_download() {
     assert_eq!(std::fs::read(path).unwrap(), body);
 }
 
+/// 发布验收：对线上官方更新源执行完整「检查 → 验签 → 下载 → 哈希校验」。
+/// 默认 #[ignore]；仅在显式 `--ignored` 时运行，需要可访问 GitHub 的网络。
+/// 注意：download() 会用编译进二进制的真实版本复验升级资格，验收时当前版本就是
+/// 最新版本，因此这里用 reqwest 直接取包并校验声明的长度与 SHA-256。
+#[tokio::test]
+#[ignore = "live release acceptance check against the official GitHub feed; requires network"]
+async fn live_official_feed_checks_downloads_and_matches_hash_with_built_in_defaults() {
+    let config = UpdateConfig::default();
+    let cancel = CancellationToken::new();
+    // 以低于已发布版本的假当前版本模拟「存在新版本」；不得高于线上最新版本，否则返回 None。
+    let found = swoop_updater::check(&config, "0.5.0", &cancel).await.unwrap().unwrap();
+    assert_eq!(found.release.channel, Channel::Stable);
+    let version = semver::Version::parse(&found.release.version).unwrap();
+    assert!(version > semver::Version::parse("0.5.0").unwrap());
+    let bytes = reqwest::get(&found.artifact.url).await.unwrap().error_for_status().unwrap().bytes().await.unwrap();
+    assert_eq!(bytes.len() as u64, found.artifact.size);
+    assert_eq!(swoop_updater::hex(&Sha256::digest(&bytes)), found.artifact.sha256.to_ascii_lowercase());
+}
+
 #[tokio::test]
 async fn wrong_hash_short_response_and_cancellation_never_publish_a_package() {
     for (body, declared) in [(b"BAD".to_vec(), None), (b"x".to_vec(), Some(3))] {
