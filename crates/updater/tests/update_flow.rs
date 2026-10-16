@@ -60,6 +60,68 @@ fn signature_version_channel_platform_and_configuration_are_enforced() {
     assert!(UpdateConfig::default().validate().is_ok());
 }
 
+#[test]
+fn built_in_official_defaults_need_no_user_imported_key() {
+    let config = UpdateConfig::default();
+    assert_eq!(config.feed_url, swoop_updater::DEFAULT_FEED_URL);
+    assert_eq!(config.public_key, swoop_updater::OFFICIAL_PUBLIC_KEY);
+    assert!(config.feed_url.starts_with("https://github.com/i-mufeng/muffin-swoop/"));
+    assert_ne!(swoop_updater::OFFICIAL_PUBLIC_KEY, swoop_updater::LEGACY_PUBLIC_KEY);
+    // 内置公钥必须是合法 Ed25519 公钥（validate 内部完成解码校验）。
+    assert!(config.validate().is_ok());
+    // 内置公钥与固定测试密钥不同，测试密钥签发的清单不能冒充官方清单。
+    let (feed, fixture_key) = signed("https://updates.test/p.zip", b"archive");
+    assert_ne!(fixture_key, swoop_updater::OFFICIAL_PUBLIC_KEY);
+    assert!(
+        swoop_updater::verify(
+            &feed,
+            swoop_updater::OFFICIAL_PUBLIC_KEY,
+            env!("CARGO_PKG_VERSION"),
+            &Channel::Stable,
+            &swoop_updater::platform(),
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn migration_fills_blank_values_and_replaces_rotated_legacy_key() {
+    for (feed_url, public_key, expected_feed) in [
+        (String::new(), String::new(), swoop_updater::DEFAULT_FEED_URL),
+        (String::new(), swoop_updater::OFFICIAL_PUBLIC_KEY.into(), swoop_updater::DEFAULT_FEED_URL),
+        (
+            "https://mirror.example.com/feed.json".into(),
+            String::new(),
+            "https://mirror.example.com/feed.json",
+        ),
+        (
+            "https://mirror.example.com/feed.json".into(),
+            swoop_updater::LEGACY_PUBLIC_KEY.into(),
+            "https://mirror.example.com/feed.json",
+        ),
+        (
+            "https://mirror.example.com/feed.json".into(),
+            swoop_updater::LEGACY_PUBLIC_KEY.to_uppercase(),
+            "https://mirror.example.com/feed.json",
+        ),
+    ] {
+        let mut config = UpdateConfig { feed_url, public_key, ..Default::default() };
+        config.migrate();
+        assert_eq!(config.feed_url, expected_feed);
+        assert_eq!(config.public_key, swoop_updater::OFFICIAL_PUBLIC_KEY);
+    }
+    // 自定义源与自定义公钥原样保留，不被内置值覆盖。
+    let mut custom =
+        UpdateConfig { feed_url: "https://mirror.example.com/feed.json".into(), public_key: "ab".repeat(32), ..Default::default() };
+    custom.migrate();
+    assert_eq!(custom.feed_url, "https://mirror.example.com/feed.json");
+    assert_eq!(custom.public_key, "ab".repeat(32));
+    // 迁移幂等。
+    let before = custom.clone();
+    custom.migrate();
+    assert_eq!(custom, before);
+}
+
 struct Server {
     base: String,
     task: tokio::task::JoinHandle<()>,

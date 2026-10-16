@@ -412,6 +412,31 @@ mod tests {
         assert!(!serialized.contains("13131313131313131313131313131313"));
     }
     #[test]
+    #[cfg(windows)]
+    fn release_signing_with_local_key_only_runs_when_explicitly_enabled() {
+        // 仅当显式设置 SWOOP_RELEASE_SIGN=1 时执行真实签名；默认立即返回，不影响常规测试。
+        // 用途：在启用应用程序控制策略（WDAC）的机器上，target\examples 下的独立 exe 可能被拦截，
+        // 而 cargo test 的测试宿主可运行，因此把发布签名入口放在这里。密钥路径只从环境变量读取，不入库。
+        if std::env::var_os("SWOOP_RELEASE_SIGN").as_deref() != Some(std::ffi::OsStr::new("1")) {
+            return;
+        }
+        let req = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("missing env {name}"));
+        let args = Arguments {
+            key: PathBuf::from(req("SWOOP_SIGN_KEY")),
+            version: req("SWOOP_SIGN_VERSION"),
+            channel: Channel::Stable,
+            artifacts: vec![InputArtifact {
+                platform: req("SWOOP_SIGN_PLATFORM"),
+                archive: PathBuf::from(req("SWOOP_SIGN_ARCHIVE")),
+                url: req("SWOOP_SIGN_URL"),
+            }],
+            output: PathBuf::from(req("SWOOP_SIGN_OUTPUT")),
+            public_key_output: PathBuf::from(req("SWOOP_SIGN_PUBLIC_OUT")),
+            notes: std::env::var_os("SWOOP_SIGN_NOTES").map(PathBuf::from),
+        };
+        sign(args).unwrap();
+    }
+    #[test]
     fn binary_and_hex_seed_inputs_produce_same_feed_without_overwriting_outputs() {
         let first = tempfile::tempdir().unwrap();
         let second = tempfile::tempdir().unwrap();

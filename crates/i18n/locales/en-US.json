@@ -185,7 +185,6 @@
   "默认高度需为 1–8640；音轨语言长度不能超过 64 字符": "Default height must be 1–8640; audio language cannot exceed 64 characters",
   "DOM 上限": "DOM size limit",
   "FTP 链接无效": "Invalid FTP URL",
-  "HTTPS 更新清单地址": "HTTPS update manifest URL",
   "LaunchAgent 格式无效，未覆盖": "Invalid LaunchAgent format; existing file preserved",
   "SOCKS5 远程 DNS": "SOCKS5 remote DNS",
   "Swoop 控制信息尚未就绪": "Swoop control service is not ready",
@@ -323,7 +322,6 @@
   "端口": "Port",
   "第 {} 行不是有效链接": "Line {} is not a valid URL",
   "等待开始": "Waiting to start",
-  "签名公钥（64 位十六进制）": "Signing public key (64 hex characters)",
   "系统启动应用状态无法识别，请到 Windows 设置确认": "Could not determine startup status; check Windows Settings",
   "系统未接受关机请求": "The system did not accept the shutdown request",
   "紧凑显示": "Compact view",
@@ -860,5 +858,8 @@
   "单个下载开始时显示": "Shown when a single download starts",
   "右下角卡片": "Corner card",
   "居中窗口": "Centered window",
-  "还有 {} 个下载": "{} more downloads"
+  "还有 {} 个下载": "{} more downloads",
+  "官方更新源与签名公钥已内置，留空即可自动更新": "The official update feed and signing public key are built in; leave blank to update automatically",
+  "留空使用官方更新源": "Leave blank to use the official update feed",
+  "留空使用内置官方公钥": "Leave blank to use the built-in official public key"
 }

@@ -1,6 +1,6 @@
 # 签名更新
 
-设置 → 检查与更新。更新源和 Ed25519 公钥由用户或发行方在带外配置，默认均为空，自动检查默认关闭。稳定/预览通道及检查间隔可配置。清单只公布已签名的版本、通道、平台、包地址、长度与 SHA-256；不会接受清单自行替换信任公钥。
+设置 → 检查与更新。v0.6.0 起官方更新源与 Ed25519 公钥内置在程序里：用户无需导入任何密钥，留空即使用官方源自动更新；「更新源」折叠栏中可填写自定义镜像源或公钥覆盖。自动检查默认关闭，稳定/预览通道及检查间隔可配置。清单只公布已签名的版本、通道、平台、包地址、长度与 SHA-256；不会接受清单自行替换信任公钥。
 
 下载后再次验签并校验实际字节长度与哈希。只有用户明确选择「安装并重启」才启动更新助手；该动作需要当前任务/媒体/抓取/系统操作退出条件满足。主程序保留单实例锁，直到助手完成启动检查并发出匹配授权 token 的就绪记录后才退出；安装助手在单实例锁释放后才替换文件。
 
@@ -22,23 +22,27 @@
 
 ## 验证与发布边界
 
-`cargo test -p swoop-updater --locked` 覆盖签名、版本、通道与平台，真实 HTTP 下载、错误哈希/短响应/取消、安装目标外改、ZIP 路径边界、no-replace 原语、三个发布中断边界的真实文件恢复、恢复时外部改动保护、已完成记录重入，以及安装失败后启动临时旧应用脚本。就绪握手使用真实文件锁验证：持锁期间发出就绪但不替换、十类初检失败不发布或覆盖就绪记录、释放锁后安装并启动新版、等待期间更新包外改时保留并启动旧版，以及旧接口恢复中断 journal。
+`cargo test -p swoop-updater --locked` 覆盖签名、版本、通道与平台，内置官方更新源/公钥默认值，空值与已轮换旧公钥的迁移及幂等，真实 HTTP 下载、错误哈希/短响应/取消、安装目标外改、ZIP 路径边界、no-replace 原语、三个发布中断边界的真实文件恢复、恢复时外部改动保护、已完成记录重入，以及安装失败后启动临时旧应用脚本。就绪握手使用真实文件锁验证：持锁期间发出就绪但不替换、十类初检失败不发布或覆盖就绪记录、释放锁后安装并启动新版、等待期间更新包外改时保留并启动旧版，以及旧接口恢复中断 journal。
 
 本机测试只操作临时安装树，不替换当前开发应用。journal 测试模拟进程中断，没有宣称物理断电验证。完整 Windows 交叉构建受本机缺少 Windows SDK 阻塞（`aws-lc-sys: windows.h file not found`）；安装模块已通过独立 MSVC 目标类型检查，但 Windows 文件占用/移动/重启实机验收仍保留。没有完成 macOS notarization 或 Windows Authenticode 签名。
 
-## 官方 GitHub 更新源（v0.1.0 起）
+## 官方 GitHub 更新源（v0.6.0 起内置）
 
-正式更新源托管在 GitHub Releases，客户端「设置 → 检查与更新」按下表配置（自动检查默认关闭，由用户自行开启）：
+正式更新源托管在 GitHub Releases，v0.6.0 起客户端「设置 → 检查与更新」无需任何配置即可使用（自动检查默认关闭，由用户自行开启）：
 
 | 配置项 | 值 |
 | --- | --- |
-| 更新源 | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json` |
-| Ed25519 公钥 | `f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a` |
+| 更新源（内置默认） | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json` |
+| Ed25519 公钥（内置） | `76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1` |
 | 通道 | stable |
 
-`releases/latest/download/` 始终解析到最新 Release，因此客户端更新源一次配置长期有效；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台；Windows 产物需恢复 CI 额度后在 Release 中补齐。
+`releases/latest/download/` 始终解析到最新 Release；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台。
 
-发布流程（无 CI 额度时全本地执行）：打包脚本产出 ZIP → 用 `sign_feed` 与生产私钥（0600 权限，不入库）签名生成 `feed.json` → 打 tag 推送 → `gh release create` 上传应用包、扩展包、清单与公钥。生产签名密钥已生成并由发行方本地保管；公钥以上表和 Release 资产形式分发。
+**密钥轮换**：v0.1.0 曾公布旧公钥 `f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a`，其生产私钥已不可用，v0.6.0 起由内置新公钥替换。存量配置中留空的更新源/公钥、或仍等于旧公钥的配置，加载与检查前自动迁移到内置官方值（`UpdateConfig::migrate`，幂等）；自定义镜像源与自定义公钥不受影响。v0.1.0 客户端需先升级到 v0.6.0 之后才能使用内置更新源。
+
+发布流程（无 CI 额度时全本地执行）：打包脚本产出 ZIP（Windows ZIP 条目名使用正斜杠，符合 ZIP 规范与验签要求）→ 用 `sign_feed` 与生产私钥签名生成 `feed.json` → 扩展包与应用同版本构建（`extension/package.json` 与 `public/manifest.json` 版本必须等于应用版本，`scripts/package.mjs` 会校验）→ 打 tag 推送 → `gh release create` 上传应用包、扩展包、清单与公钥。生产签名密钥由发行方本地保管于项目外目录，权限仅限发行账户，不入库；公钥以内置常量、上表和 Release 资产形式分发。
+
+在启用应用程序控制策略（WDAC）的机器上，`target\examples` 下的独立签名 exe 可能被拦截；此时改用 `sign_feed` 内置的环境变量门控测试入口执行同一签名流程（`SWOOP_RELEASE_SIGN=1` 加上 `SWOOP_SIGN_*` 参数，见 `crates/updater/examples/sign_feed.rs`），测试宿主不受该限制。
 
 ## 离线生成签名清单
 

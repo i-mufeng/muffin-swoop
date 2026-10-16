@@ -32,10 +32,13 @@ impl Updates {
         let stored = store.get_setting("updates").ok().flatten();
         let (config, error) = match stored {
             Some(value) => match serde_json::from_str::<UpdateConfig>(&value) {
-                Ok(config) => match config.validate() {
-                    Ok(()) => (config, None),
-                    Err(error) => (UpdateConfig::default(), Some(error)),
-                },
+                Ok(mut config) => {
+                    config.migrate();
+                    match config.validate() {
+                        Ok(()) => (config, None),
+                        Err(error) => (UpdateConfig::default(), Some(error)),
+                    }
+                }
                 Err(_) => (UpdateConfig::default(), Some(swoop_i18n::tr!("更新设置损坏，请重新保存").into())),
             },
             None => (UpdateConfig::default(), None),

@@ -52,15 +52,21 @@ impl SwoopApp {
                     egui::CollapsingHeader::new(RichText::new(swoop_i18n::tr!("更新源")).color(p.text_muted))
                         .id_salt("update_source")
                         .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(swoop_i18n::tr!("官方更新源与签名公钥已内置，留空即可自动更新"))
+                                    .size(12.0)
+                                    .color(p.text_muted),
+                            );
+                            ui.add_space(4.0);
                             ui.add(
                                 super::field(&mut self.updates.draft.feed_url)
                                     .desired_width(f32::INFINITY)
-                                    .hint_text(swoop_i18n::tr!("HTTPS 更新清单地址")),
+                                    .hint_text(swoop_i18n::tr!("留空使用官方更新源")),
                             );
                             ui.add(
                                 super::field(&mut self.updates.draft.public_key)
                                     .desired_width(f32::INFINITY)
-                                    .hint_text(swoop_i18n::tr!("签名公钥（64 位十六进制）")),
+                                    .hint_text(swoop_i18n::tr!("留空使用内置官方公钥")),
                             );
                         });
                 });

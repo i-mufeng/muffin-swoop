@@ -209,8 +209,24 @@ authenticode_signature=none
     Remove-Item -LiteralPath $packagerDir -Recurse -Force
 
     # Build the complete zip before moving it into its final location.
+    # Compress-Archive writes backslash entry names (invalid per the ZIP spec and rejected by the
+    # updater's strict manifest checks), so create entries manually with forward slashes.
     $stagedArchive = Join-Path $stageDir "$packageName.zip"
-    Compress-Archive -LiteralPath $stagedPackage -DestinationPath $stagedArchive -CompressionLevel Optimal
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::Open($stagedArchive, 'Create')
+    try {
+        $rootName = Split-Path -Leaf $stagedPackage
+        foreach ($item in Get-ChildItem -LiteralPath $stagedPackage -Recurse -Force) {
+            $relative = ($item.FullName.Substring($stagedPackage.Length).TrimStart('\') -replace '\\', '/')
+            if ($item.PSIsContainer) {
+                $zip.CreateEntry("$rootName/$relative/") | Out-Null
+            } else {
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $item.FullName, "$rootName/$relative", 'Optimal') | Out-Null
+            }
+        }
+    } finally {
+        $zip.Dispose()
+    }
     $archiveHash = (Get-FileHash -LiteralPath $stagedArchive -Algorithm SHA256).Hash.ToLowerInvariant()
     "$archiveHash  $packageName.zip" | Set-Content -LiteralPath "$stagedArchive.sha256" -Encoding ASCII
     # Replace an earlier package only after the new one is complete, so a failed build keeps it.

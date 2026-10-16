@@ -16,6 +16,17 @@ pub type Result<T> = std::result::Result<T, String>;
 pub const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_FEED_BYTES: usize = 256 * 1024;
 
+/// 官方更新源，构建时内置；用户留空即可使用，无需手动导入。
+pub const DEFAULT_FEED_URL: &str =
+    "https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json";
+/// 官方 Ed25519 公钥，构建时内置；清单永远不能用来自报或替换它。
+pub const OFFICIAL_PUBLIC_KEY: &str =
+    "76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1";
+/// v0.1.0 文档公布、v0.6.0 起被 OFFICIAL_PUBLIC_KEY 轮换替换的旧公钥。
+/// 存量配置中等于该值的公钥在加载时迁移到内置新公钥。
+pub const LEGACY_PUBLIC_KEY: &str =
+    "f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a";
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Channel {
     #[default]
@@ -23,7 +34,7 @@ pub enum Channel {
     Preview,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct UpdateConfig {
     pub feed_url: String,
@@ -35,8 +46,8 @@ pub struct UpdateConfig {
 impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
-            feed_url: String::new(),
-            public_key: String::new(),
+            feed_url: DEFAULT_FEED_URL.into(),
+            public_key: OFFICIAL_PUBLIC_KEY.into(),
             channel: Channel::Stable,
             automatic_check: false,
             interval_hours: 168,
@@ -44,6 +55,16 @@ impl Default for UpdateConfig {
     }
 }
 impl UpdateConfig {
+    /// 把留空的更新源/公钥和已轮换的旧公钥迁移到内置官方值；自定义值原样保留。
+    /// 幂等，可在每次加载和每次检查前调用。
+    pub fn migrate(&mut self) {
+        if self.feed_url.is_empty() {
+            self.feed_url = DEFAULT_FEED_URL.into();
+        }
+        if self.public_key.is_empty() || self.public_key.eq_ignore_ascii_case(LEGACY_PUBLIC_KEY) {
+            self.public_key = OFFICIAL_PUBLIC_KEY.into();
+        }
+    }
     pub fn validate(&self) -> Result<()> {
         if !(1..=8760).contains(&self.interval_hours) {
             return Err("更新间隔必须为 1–8760 小时".into());
@@ -165,10 +186,9 @@ async fn response(value: &str, cancel: &CancellationToken) -> Result<reqwest::Re
     Err("更新重定向次数过多".into())
 }
 pub async fn check(config: &UpdateConfig, current: &str, cancel: &CancellationToken) -> Result<Option<Candidate>> {
+    let mut config = config.clone();
+    config.migrate();
     config.validate()?;
-    if config.feed_url.is_empty() {
-        return Err("请先设置更新源和签名公钥".into());
-    }
     let mut response = response(&config.feed_url, cancel).await?;
     let mut bytes = Vec::new();
     loop {
