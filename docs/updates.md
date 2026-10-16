@@ -32,9 +32,12 @@
 
 | 配置项 | 值 |
 | --- | --- |
-| 更新源（内置默认） | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json` |
+| 主更新源（内置默认） | `https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json`（又拍云 CDN，国内直连） |
+| 备用更新源（自动回退） | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json`（主源请求失败时自动切换，两源同一把内置公钥验签） |
 | Ed25519 公钥（内置） | `76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1` |
 | 通道 | stable |
+
+客户端「设置 → 关于」留空即用上述内置源；主更新源传输或清单失败时自动回退备用源，用户主动取消不回退。`swoop-release/feed.json` 是稳定地址，每次发版覆盖它即成为「最新」；带版本号的副本保留在 `swoop-release/vX.Y.Z/` 便于追溯。
 
 `releases/latest/download/` 始终解析到最新 Release；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台。
 
@@ -43,6 +46,19 @@
 发布流程（无 CI 额度时全本地执行）：打包脚本产出 ZIP（Windows ZIP 条目名使用正斜杠，符合 ZIP 规范与验签要求）→ 用 `sign_feed` 与生产私钥签名生成 `feed.json` → 扩展包与应用同版本构建（`extension/package.json` 与 `public/manifest.json` 版本必须等于应用版本，`scripts/package.mjs` 会校验）→ 打 tag 推送 → `gh release create` 上传应用包、扩展包、清单与公钥。生产签名密钥由发行方本地保管于项目外目录，权限仅限发行账户，不入库；公钥以内置常量、上表和 Release 资产形式分发。
 
 在启用应用程序控制策略（WDAC）的机器上，`target\examples` 下的独立签名 exe 可能被拦截；此时改用 `sign_feed` 内置的环境变量门控测试入口执行同一签名流程（`SWOOP_RELEASE_SIGN=1` 加上 `SWOOP_SIGN_*` 参数，见 `crates/updater/examples/sign_feed.rs`），测试宿主不受该限制。
+
+## 国内更新源（又拍云主源 + GitHub 自动回退）
+
+GitHub 在国内访问不稳定，又拍云（Upyun）云存储 + CDN 是内置**主更新源**，GitHub 官方源作为**备用源**：主源请求失败时客户端自动回退，两源清单用同一把内置 Ed25519 公钥验签。清单带签名，托管方无需可信，CDN 回源或缓存不一致不会影响验签安全，最多导致检查失败。
+
+- 内置主源地址：`https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json`（`crates/updater/src/lib.rs` 的 `DEFAULT_FEED_URL`）。
+- 又拍云需要**绑定已备案域名**后才对外开放访问（默认 `b0.upaiyun.com` 域名默认不可见）。绑定后在控制台开放默认域名访问，或把 `DEFAULT_FEED_URL` 换成绑定的域名；换域名只需改这一处常量，备用回退逻辑不变。
+- 每次发版除了上传 `swoop-release/vX.Y.Z/` 版本目录，还要覆盖稳定地址 `swoop-release/feed.json`：
+  `bash scripts/publish-upyun.sh --dir /releases/0.7.0 --remote-prefix swoop-release/v0.7.0 --cdn-base <你的域名>`
+  再用同一凭据把 `feed.json` 上传到 `swoop-release/feed.json`。
+- 签名 `feed.json` 时各 `--artifact` 的 URL 应使用又拍云域名（国内用户下载安装包也走 CDN），例如 `https://<你的域名>/swoop-release/v0.7.0/Swoop-0.7.0-windows-x86_64-release.zip`。
+
+脚本按「安装包 → feed.json」的顺序上传（客户端永远不会看到指向未完成上传的清单），`--cdn-base` 会在上传后自动刷新 feed 与各包的 CDN 缓存。建议为发布单独创建一个仅云存储权限的 API 操作员，密码只放在发行账户的环境变量里。
 
 ## 离线生成签名清单
 

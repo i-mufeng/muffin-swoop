@@ -38,7 +38,13 @@ use swoop_core::{Config, Engine, Store};
 use crate::settings::{AppSettings, default_download_dir};
 
 fn main() -> eframe::Result {
-    let args: Vec<_> = std::env::args_os().collect();
+    let mut args: Vec<_> = std::env::args_os().collect();
+    // 登录自启的启动项会带上 --background（见 startup.rs）：开机后直接驻留托盘，不显示主窗口。
+    // 先剥离该参数，其余参数仍按 CLI 处理；双击快捷方式等正常启动不受影响。
+    let start_hidden = args.iter().skip(1).any(|arg| arg == crate::startup::BACKGROUND_ARG);
+    if start_hidden {
+        args.retain(|arg| arg != crate::startup::BACKGROUND_ARG);
+    }
     if args.get(1).is_some_and(|arg| arg == "--swoop-install-update") {
         let result = if args.len() == 5 {
             swoop_updater::run_helper_ready(
@@ -145,6 +151,9 @@ fn main() -> eframe::Result {
     {
         viewport = viewport.with_drag_and_drop(false);
     }
+    if start_hidden {
+        viewport = viewport.with_visible(false);
+    }
 
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions { viewport, ..Default::default() };
@@ -163,7 +172,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx);
-            let app = app::SwoopApp::new(cc, handle.clone(), engine.clone(), store, settings, events);
+            let app = app::SwoopApp::new(cc, handle.clone(), engine.clone(), store, settings, events, start_hidden);
             *control_slot.lock().unwrap() = Some(instance::ControlServer::start(
                 &instance_for_gui,
                 engine,

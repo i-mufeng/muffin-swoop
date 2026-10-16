@@ -100,6 +100,7 @@ impl SwoopApp {
         store: Arc<Store>,
         settings: AppSettings,
         events: broadcast::Receiver<Event>,
+        start_hidden: bool,
     ) -> Self {
         let language = store
             .get_setting("language")
@@ -147,6 +148,12 @@ impl SwoopApp {
         let window_guard = crate::window_state::WindowGuard::new(cc.storage);
         let mut add_dialog = AddDialog::new(&settings.default_dir);
         add_dialog.ftp = crate::ftp_settings::FtpEditor::load(&store);
+        // 登录自启（--background）直接驻留托盘；托盘不可用时没有途径唤回窗口，回退为正常显示
+        let tray = Tray::new(&cc.egui_ctx);
+        let start_hidden = start_hidden && tray.is_some();
+        if start_hidden {
+            crate::tray::set_dock_visible(false);
+        }
         let mut app = Self {
             engine,
             store,
@@ -173,7 +180,7 @@ impl SwoopApp {
             bridge,
             bridge_error: None,
             toasts,
-            tray: Tray::new(&cc.egui_ctx),
+            tray,
             close_to_tray: settings.close_to_tray,
             tray_speed: settings.tray_speed,
             notifications: settings.notifications,
@@ -211,7 +218,7 @@ impl SwoopApp {
             cards: Default::default(),
             popup_host: Default::default(),
             window_guard,
-            hidden: false,
+            hidden: start_hidden,
             quitting: false,
             clipboard: ClipboardWatcher::new(),
             events,
@@ -870,11 +877,9 @@ impl eframe::App for SwoopApp {
             ui.label(swoop_i18n::tr!("正在退出…"));
             return;
         }
-        if self.updates.installing() {
-            // All other entry points remain disabled until install preparation is cancelled or fails.
-            self.updates.open = true;
-            self.updates_ui(&ctx);
-            return;
+        if self.updates.installing() && !self.show_settings {
+            // 安装准备期间设置页保持打开，进度与结果在关于分类里始终可见
+            self.open_settings_about(&ctx);
         }
         if self.hidden {
             // 主窗口隐藏时只画独立弹窗（有弹窗可见时 eframe 仍会跑根视口的 ui）
@@ -890,7 +895,6 @@ impl eframe::App for SwoopApp {
         self.topbar(ui);
         self.task_list(ui);
         self.settings_ui(&ctx);
-        self.updates_ui(&ctx);
         if self.updates.installing() {
             return;
         }

@@ -131,7 +131,7 @@ impl SwoopApp {
                                         Tab::Download => self.settings_download(ui, &mut changes),
                                         Tab::Notify => self.settings_notify(ui, &mut changes),
                                         Tab::Integration => self.settings_integration(ui, ctx, &mut changes),
-                                        Tab::About => self.settings_about(ui, &mut changes),
+                                        Tab::About => self.settings_about(ui, ctx),
                                     }
                                 },
                             );
@@ -464,7 +464,7 @@ impl SwoopApp {
         });
     }
 
-    fn settings_about(&mut self, ui: &mut egui::Ui, changes: &mut Changes) {
+    fn settings_about(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = self.palette;
         ui.add_space(4.0);
         ui.horizontal(|ui| {
@@ -480,14 +480,80 @@ impl SwoopApp {
             });
         });
         ui.add_space(14.0);
+        let busy = self.updates.busy();
+        let idle = self.update_install_idle();
         dialog::group(ui, &p, None, |ui| {
-            if dialog::link_row(ui, &p, egui_phosphor::regular::ARROWS_CLOCKWISE, swoop_i18n::tr!("软件更新"), None)
-                .clicked()
-            {
-                self.updates.open = true;
-                changes.close = true;
-            }
+            dialog::row(ui, &p, swoop_i18n::tr!("自动更新"), None, |ui| {
+                let mut automatic = self.updates.config.automatic_check;
+                if super::toggle(ui, &p, &mut automatic).changed() {
+                    self.updates.set_automatic_check(automatic);
+                }
+            });
+            dialog::row(ui, &p, swoop_i18n::tr!("软件更新"), None, |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    if super::ghost_button(ui, &p, swoop_i18n::tr!("检查更新")).clicked() {
+                        self.updates.check(ctx);
+                    }
+                });
+                if busy {
+                    ui.spinner();
+                }
+                if !self.updates.message.is_empty() {
+                    ui.label(RichText::new(&self.updates.message).size(12.0).color(p.text_muted));
+                }
+            });
         });
+        if let Some(candidate) = self.updates.candidate.clone() {
+            ui.add_space(8.0);
+            Frame::new()
+                .fill(p.group)
+                .stroke(Stroke::new(1.0, p.border))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(Margin::same(14))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&candidate.release.version).size(16.0).strong().color(p.text));
+                        super::pill(ui, swoop_i18n::tr!("新版本"), p.accent_soft, p.accent);
+                    });
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(140.0).show(ui, |ui| {
+                        ui.label(RichText::new(&candidate.release.notes).color(p.text_muted));
+                    });
+                    ui.add_space(8.0);
+                    if self.updates.archive.is_none() {
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if super::primary_button(ui, &p, swoop_i18n::tr!("下载更新")).clicked() {
+                                self.updates.download(ctx);
+                            }
+                        });
+                    } else {
+                        if !idle {
+                            ui.label(
+                                RichText::new(swoop_i18n::tr!("请先暂停或结束当前任务"))
+                                    .size(12.0)
+                                    .color(p.tint_amber),
+                            );
+                            ui.add_space(4.0);
+                        }
+                        ui.add_enabled_ui(!busy && idle, |ui| {
+                            if super::primary_button(ui, &p, swoop_i18n::tr!("安装并重启")).clicked() {
+                                self.begin_update_install(ctx);
+                            }
+                        });
+                    }
+                });
+        }
+        if let Some(error) = &self.updates.error {
+            ui.add_space(8.0);
+            dialog::error(ui, &p, error);
+        }
+    }
+
+    /// 安装更新期间保证设置页停留在关于分类，进度与结果始终可见
+    pub(crate) fn open_settings_about(&mut self, ctx: &egui::Context) {
+        self.show_settings = true;
+        ctx.data_mut(|d| d.insert_temp(tab_id(), Tab::About));
     }
 
     /// 端口后面的一行状态：运行情况 + 扩展最近一次心跳

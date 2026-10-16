@@ -445,6 +445,7 @@
   "已复制链接": "URL copied",
   "已导出 {count} 条链接": "Exported {count} URLs",
   "已有 Swoop 启动命令不是单一程序路径，未覆盖": "Existing Swoop startup command is not a single executable path; entry unchanged",
+  "已有 Swoop 启动命令包含无法识别的参数，未覆盖": "Existing Swoop startup command has unrecognized arguments; entry unchanged",
   "已配置其他位置，应用可更新为当前位置": "Another location is configured; it can be updated to this location",
   "应用": "Apply",
   "当前已是最新版本": "You are up to date",
@@ -861,5 +862,8 @@
   "还有 {} 个下载": "{} more downloads",
   "官方更新源与签名公钥已内置，留空即可自动更新": "The official update feed and signing public key are built in; leave blank to update automatically",
   "留空使用官方更新源": "Leave blank to use the official update feed",
-  "留空使用内置官方公钥": "Leave blank to use the built-in official public key"
+  "留空使用内置官方公钥": "Leave blank to use the built-in official public key",
+  "自动更新": "Automatic updates",
+  "已开启自动检查更新": "Automatic update checks enabled",
+  "已关闭自动检查更新": "Automatic update checks disabled"
 }

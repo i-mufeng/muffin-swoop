@@ -117,7 +117,9 @@ fn open_view(app: &mut SwoopApp, ctx: &egui::Context, view: &str) -> bool {
             app.completion_editor = Some(crate::ui::completion::CompletionEditor::new(&app.completion.settings));
         }
         "site-auth" => app.site_auth_editor = Some(crate::ui::site_auth::SiteAuthEditor::new(&app.engine)),
-        "updates" => app.updates.open = true,
+        "updates" => {
+            app.open_settings_about(ctx);
+        }
         "media" => app.media_window.open = true,
         "grabber" => app.grabber.open = true,
         "add" => app.add_dialog.open_with(None),
