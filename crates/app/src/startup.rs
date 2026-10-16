@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(any(target_os = "macos", test))]
 const LABEL: &str = "com.muffin.swoop";
+/// 登录自启启动项附带的参数：程序以此识别“开机启动”，直接驻留托盘、不显示主窗口
+pub const BACKGROUND_ARG: &str = "--background";
 #[derive(Clone, Debug, Default)]
 pub struct StartupState {
     pub enabled: bool,
@@ -121,6 +123,23 @@ fn packaged_path(exe: &Path) -> bool {
     }
 }
 
+/// 校验启动命令格式并取出路径范围：命令必须是 `"路径"`，之后只允许为空（旧格式）
+/// 或 ` --background`（登录自启格式）；其余一律拒绝，避免覆盖用户手改过的启动项
+fn command_path_range(units: &[u16]) -> Result<std::ops::Range<usize>, String> {
+    if units.len() < 2 || units.first() != Some(&34) {
+        return Err(swoop_i18n::tr!("已有 Swoop 启动命令不是单一程序路径，未覆盖").into());
+    }
+    let Some(end) = units[1..].iter().position(|&unit| unit == 34).map(|position| position + 1) else {
+        return Err(swoop_i18n::tr!("已有 Swoop 启动命令不是单一程序路径，未覆盖").into());
+    };
+    let tail = &units[end + 1..];
+    let background: Vec<u16> = std::iter::once(0x20).chain(BACKGROUND_ARG.encode_utf16()).collect();
+    if !tail.is_empty() && tail != background {
+        return Err(swoop_i18n::tr!("已有 Swoop 启动命令包含无法识别的参数，未覆盖").into());
+    }
+    Ok(1..end)
+}
+
 fn state(exe: &Path, configured: Option<PathBuf>, disabled: bool) -> StartupState {
     let packaged = packaged_path(exe);
     match configured {
@@ -217,7 +236,7 @@ mod platform {
         }
         let args = value["ProgramArguments"]
             .as_array()
-            .filter(|args| args.len() == 1)
+            .filter(|args| args.len() == 1 || (args.len() == 2 && args[1] == BACKGROUND_ARG))
             .ok_or(swoop_i18n::tr!("启动参数不兼容，未覆盖"))?;
         let path = args[0].as_str().ok_or(swoop_i18n::tr!("启动路径无效"))?;
         if value["RunAtLoad"] != true || value["Disabled"] == true {
@@ -263,7 +282,7 @@ fn launch_agent(exe: &Path) -> Result<String, String> {
         .replace('"', "&quot;")
         .replace('\'', "&apos;");
     Ok(format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>{LABEL}</string><key>ProgramArguments</key><array><string>{escaped}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><false/></dict></plist>\n"
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>{LABEL}</string><key>ProgramArguments</key><array><string>{escaped}</string><string>{BACKGROUND_ARG}</string></array><key>RunAtLoad</key><true/><key>KeepAlive</key><false/></dict></plist>\n"
     ))
 }
 
@@ -327,14 +346,8 @@ mod platform {
         if units.last() == Some(&0) {
             units.pop();
         }
-        if units.len() < 2
-            || units.first() != Some(&34)
-            || units.last() != Some(&34)
-            || units[1..units.len() - 1].contains(&34)
-        {
-            return Err(swoop_i18n::tr!("已有 Swoop 启动命令不是单一程序路径，未覆盖").into());
-        }
-        Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(&units[1..units.len() - 1]))))
+        let range = command_path_range(&units)?;
+        Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(&units[range]))))
     }
     pub fn read(exe: &Path) -> Result<StartupState, String> {
         let configured = current()?;
@@ -377,7 +390,7 @@ mod platform {
         let result = if enabled {
             let mut command = vec![34u16];
             command.extend(exe.as_os_str().encode_wide());
-            command.extend([34, 0]);
+            command.extend(std::iter::once(34).chain(BACKGROUND_ARG.encode_utf16()).chain(Some(0)));
             unsafe {
                 RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, command.as_ptr().cast(), (command.len() * 2) as u32)
             }
@@ -413,10 +426,28 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wide(text: &str) -> Vec<u16> {
+        text.encode_utf16().collect()
+    }
+    #[test]
+    fn startup_command_accepts_plain_path_and_background_flag_only() {
+        let plain = wide("\"C:\\Apps\\swoop.exe\"");
+        assert_eq!(command_path_range(&plain).unwrap(), 1..plain.len() - 1);
+
+        let with_flag = wide("\"C:\\Apps\\swoop.exe\" --background");
+        assert_eq!(command_path_range(&with_flag).unwrap(), 1..plain.len() - 1);
+
+        // 旧版本注册的纯路径和当前版本带参数的命令都合法；其余格式一律拒绝
+        assert!(command_path_range(&wide("C:\\Apps\\swoop.exe")).is_err());
+        assert!(command_path_range(&wide("\"C:\\Apps\\swoop.exe\" --tray")).is_err());
+        assert!(command_path_range(&wide("\"C:\\Apps\\swoop.exe\" --background extra")).is_err());
+        assert!(command_path_range(&wide("\"unterminated")).is_err());
+    }
     #[test]
     fn serialization_preserves_unicode_spaces_and_xml_specials() {
         let path = Path::new("/Applications/中文 & <test> 'a' \"b\".app/Contents/MacOS/swoop");
         let xml = launch_agent(path).unwrap();
+        assert!(xml.contains(BACKGROUND_ARG));
         assert!(xml.contains("中文 &amp; &lt;test&gt; &apos;a&apos; &quot;b&quot;"));
         assert!(launch_agent(Path::new("bad\npath")).is_err());
         assert!(!packaged_path(Path::new("/missing/swoop")));
@@ -433,6 +464,7 @@ mod tests {
         let agent = dir.path().join("LaunchAgents/test.plist");
         assert!(platform::read_file(&agent).unwrap().is_none());
         platform::write_file(&agent, &exe, true).unwrap();
+        assert!(std::fs::read_to_string(&agent).unwrap().contains(BACKGROUND_ARG));
         assert_eq!(platform::read_file(&agent).unwrap(), Some(exe.clone()));
         assert!(state(&exe, Some(exe.clone()), false).enabled);
         std::fs::rename(&exe, exe.with_file_name("moved")).unwrap();
