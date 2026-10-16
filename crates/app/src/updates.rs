@@ -13,9 +13,7 @@ enum Event {
 }
 
 pub struct Updates {
-    pub open: bool,
     pub config: UpdateConfig,
-    pub draft: UpdateConfig,
     pub candidate: Option<Candidate>,
     pub archive: Option<PathBuf>,
     pub error: Option<String>,
@@ -29,29 +27,24 @@ pub struct Updates {
 }
 impl Updates {
     pub fn load(store: Arc<Store>, handle: tokio::runtime::Handle) -> Self {
-        let stored = store.get_setting("updates").ok().flatten();
-        let (config, error) = match stored {
-            Some(value) => match serde_json::from_str::<UpdateConfig>(&value) {
-                Ok(mut config) => {
-                    config.migrate();
-                    match config.validate() {
-                        Ok(()) => (config, None),
-                        Err(error) => (UpdateConfig::default(), Some(error)),
-                    }
-                }
-                Err(_) => (UpdateConfig::default(), Some(swoop_i18n::tr!("更新设置损坏，请重新保存").into())),
-            },
-            None => (UpdateConfig::default(), None),
-        };
+        // 只读取自动检查开关；更新源/公钥/通道/间隔一律使用内置官方值，
+        // 历史版本存过的自定义配置在加载时清除并规范化存储。
+        let automatic_check = store
+            .get_setting("updates")
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_str::<UpdateConfig>(&value).ok())
+            .map(|config| config.automatic_check)
+            .unwrap_or(false);
+        let config = UpdateConfig { automatic_check, ..UpdateConfig::default() };
+        let _ = store.set_setting("updates", &Self::stored_config(automatic_check));
         let last_attempt =
             store.get_setting("update_last_check").ok().flatten().and_then(|value| value.parse().ok()).unwrap_or(0);
         Self {
-            open: false,
-            draft: config.clone(),
             config,
             candidate: None,
             archive: None,
-            error,
+            error: None,
             message: String::new(),
             handle,
             store,
@@ -60,6 +53,9 @@ impl Updates {
             last_attempt,
             installing: false,
         }
+    }
+    fn stored_config(automatic_check: bool) -> String {
+        serde_json::json!({ "automatic_check": automatic_check }).to_string()
     }
     pub fn busy(&self) -> bool {
         self.receiver.is_some()
@@ -70,20 +66,27 @@ impl Updates {
     pub fn cancel(&self) {
         self.cancel.cancel();
     }
-    pub fn save(&mut self) -> Result<(), String> {
-        if self.busy() {
-            return Err(swoop_i18n::tr!("请等待当前更新操作结束").into());
+    /// 自动检查开关即时保存；持久化失败时回滚并保留生效值。
+    pub fn set_automatic_check(&mut self, enabled: bool) {
+        if self.config.automatic_check == enabled {
+            return;
         }
-        self.draft.validate()?;
-        self.store
-            .set_setting("updates", &serde_json::to_string(&self.draft).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        self.config = self.draft.clone();
-        self.candidate = None;
-        self.archive = None;
+        self.config.automatic_check = enabled;
+        if let Err(error) = self
+            .store
+            .set_setting("updates", &Self::stored_config(enabled))
+            .map_err(|error| error.to_string())
+        {
+            self.config.automatic_check = !enabled;
+            self.error = Some(error);
+            return;
+        }
         self.error = None;
-        self.message = swoop_i18n::tr!("更新设置已保存").into();
-        Ok(())
+        self.message = if enabled {
+            swoop_i18n::tr!("已开启自动检查更新").into()
+        } else {
+            swoop_i18n::tr!("已关闭自动检查更新").into()
+        };
     }
     pub fn check(&mut self, ctx: &egui::Context) {
         if self.busy() {
@@ -164,9 +167,6 @@ impl Updates {
                             swoop_i18n::tr!("当前已是最新版本")
                         }
                         .into();
-                        if candidate.is_some() && !quitting {
-                            self.open = true;
-                        }
                         self.candidate = candidate;
                     }
                     Event::Downloaded(Ok(path)) => {
@@ -366,19 +366,17 @@ mod tests {
         let path = directory.path().join("settings.db");
         let store = Arc::new(Store::open(&path).unwrap());
         let mut updates = Updates::load(store.clone(), rt.handle().clone());
-        updates.draft.interval_hours = 24;
-        updates.save().unwrap();
         rusqlite::Connection::open(&path).unwrap().execute_batch(
             "CREATE TRIGGER reject_updates BEFORE INSERT ON settings WHEN NEW.key IN ('updates', 'update_last_check') BEGIN SELECT RAISE(FAIL, 'test update setting failure'); END;"
         ).unwrap();
-        updates.draft.interval_hours = 12;
-        assert!(updates.save().is_err());
-        assert_eq!(updates.config.interval_hours, 24);
+        updates.set_automatic_check(true);
+        assert!(!updates.config.automatic_check);
+        assert!(updates.error.is_some());
         updates.check(&egui::Context::default());
         assert!(!updates.busy());
         assert!(updates.error.is_some());
         assert_eq!(updates.last_attempt, 0);
-        assert_eq!(Updates::load(store, rt.handle().clone()).config.interval_hours, 24);
+        assert!(!Updates::load(store, rt.handle().clone()).config.automatic_check);
     }
 
     #[test]
@@ -404,20 +402,25 @@ mod tests {
         }
     }
     #[test]
-    fn defaults_disable_unconfigured_network_and_save_before_applying() {
+    fn defaults_disable_unconfigured_network_and_toggle_persists() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let store = Arc::new(Store::in_memory().unwrap());
         let mut updates = Updates::load(store.clone(), rt.handle().clone());
         assert!(!updates.config.automatic_check);
-        updates.draft.interval_hours = 24;
-        updates.save().unwrap();
-        assert_eq!(Updates::load(store.clone(), rt.handle().clone()).config.interval_hours, 24);
-        updates.draft.interval_hours = 0;
-        assert!(updates.save().is_err());
-        assert_eq!(updates.config.interval_hours, 24);
-        store.set_setting("updates", "broken").unwrap();
-        let damaged = Updates::load(store, rt.handle().clone());
-        assert!(damaged.error.is_some());
-        assert!(!damaged.config.automatic_check);
+        assert_eq!(updates.config.feed_url, swoop_updater::DEFAULT_FEED_URL);
+        updates.set_automatic_check(true);
+        assert!(Updates::load(store.clone(), rt.handle().clone()).config.automatic_check);
+        // 历史版本存过的自定义源/公钥/通道/间隔在加载时清除，只保留开关。
+        store
+            .set_setting(
+                "updates",
+                r#"{"feed_url":"https://mirror.example/feed.json","public_key":"aa","channel":"Preview","automatic_check":false,"interval_hours":1}"#,
+            )
+            .unwrap();
+        let migrated = Updates::load(store, rt.handle().clone());
+        assert!(!migrated.config.automatic_check);
+        assert_eq!(migrated.config.feed_url, swoop_updater::DEFAULT_FEED_URL);
+        assert_eq!(migrated.config.public_key, swoop_updater::OFFICIAL_PUBLIC_KEY);
+        assert_eq!(migrated.config.interval_hours, 168);
     }
 }

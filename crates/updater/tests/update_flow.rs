@@ -67,7 +67,10 @@ fn built_in_official_defaults_need_no_user_imported_key() {
     let config = UpdateConfig::default();
     assert_eq!(config.feed_url, swoop_updater::DEFAULT_FEED_URL);
     assert_eq!(config.public_key, swoop_updater::OFFICIAL_PUBLIC_KEY);
-    assert!(config.feed_url.starts_with("https://github.com/i-mufeng/muffin-swoop/"));
+    // 主更新源是国内又拍云 CDN，备用更新源是官方 GitHub Releases。
+    assert!(config.feed_url.starts_with("https://"));
+    assert!(swoop_updater::FALLBACK_FEED_URL.starts_with("https://github.com/i-mufeng/muffin-swoop/"));
+    assert_ne!(config.feed_url, swoop_updater::FALLBACK_FEED_URL);
     assert_ne!(swoop_updater::OFFICIAL_PUBLIC_KEY, swoop_updater::LEGACY_PUBLIC_KEY);
     // 内置公钥必须是合法 Ed25519 公钥（validate 内部完成解码校验）。
     assert!(config.validate().is_ok());
@@ -165,6 +168,80 @@ async fn real_http_signed_feed_and_verified_download() {
     let directory = tempfile::tempdir().unwrap();
     let path = swoop_updater::download(&found, directory.path(), &cancel).await.unwrap();
     assert_eq!(std::fs::read(path).unwrap(), body);
+}
+
+#[tokio::test]
+async fn primary_failure_falls_back_to_backup_feed_and_downloads() {
+    let body = b"fallback package payload";
+    let files = server(body.to_vec(), None).await;
+    let (feed, key) = signed(&format!("{}/package.zip", files.base), body);
+    let feeds = server(serde_json::to_vec(&feed).unwrap(), None).await;
+    let config = UpdateConfig { public_key: key, ..Default::default() };
+    let cancel = CancellationToken::new();
+    // 主源指向未监听的回环端口（连接立即失败），备用源返回合法签名清单。
+    let found =
+        swoop_updater::check_sources(&config, env!("CARGO_PKG_VERSION"), &cancel, "http://127.0.0.1:1/feed.json", Some(
+            &feeds.base,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = swoop_updater::download(&found, directory.path(), &cancel).await.unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), body);
+}
+
+#[tokio::test]
+async fn backup_feed_failure_reports_both_errors() {
+    let config = UpdateConfig::default();
+    let cancel = CancellationToken::new();
+    let error = swoop_updater::check_sources(
+        &config,
+        env!("CARGO_PKG_VERSION"),
+        &cancel,
+        "http://127.0.0.1:1/a.json",
+        Some("http://127.0.0.1:1/b.json"),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("备用更新源也失败"), "{error}");
+}
+
+#[tokio::test]
+async fn cancellation_during_primary_check_never_touches_backup() {
+    let body = b"backup payload";
+    let files = server(body.to_vec(), None).await;
+    let (feed, key) = signed(&files.base, body);
+    let feeds = server(serde_json::to_vec(&feed).unwrap(), None).await;
+    let config = UpdateConfig { public_key: key, ..Default::default() };
+    let cancel = CancellationToken::new();
+    cancel.cancel();
+    let error = swoop_updater::check_sources(
+        &config,
+        env!("CARGO_PKG_VERSION"),
+        &cancel,
+        &feeds.base,
+        Some(&feeds.base),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.contains("取消"), "{error}");
+}
+
+#[tokio::test]
+async fn primary_equal_to_backup_is_requested_once() {
+    let body = b"single source payload";
+    let files = server(body.to_vec(), None).await;
+    let (feed, key) = signed(&format!("{}/package.zip", files.base), body);
+    let feeds = server(serde_json::to_vec(&feed).unwrap(), None).await;
+    let config = UpdateConfig { public_key: key, ..Default::default() };
+    let cancel = CancellationToken::new();
+    let found =
+        swoop_updater::check_sources(&config, env!("CARGO_PKG_VERSION"), &cancel, &feeds.base, Some(&feeds.base))
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(found.artifact.size, body.len() as u64);
 }
 
 /// 发布验收：对线上官方更新源执行完整「检查 → 验签 → 下载 → 哈希校验」。

@@ -16,8 +16,13 @@ pub type Result<T> = std::result::Result<T, String>;
 pub const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_FEED_BYTES: usize = 256 * 1024;
 
-/// 官方更新源，构建时内置；用户留空即可使用，无需手动导入。
+/// 国内主更新源（又拍云 CDN），构建时内置；用户留空即可使用，无需手动导入。
+/// 注意：又拍云绑定自有域名后请在控制台开放默认域名访问，或把下方域名替换为绑定的域名。
 pub const DEFAULT_FEED_URL: &str =
+    "https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json";
+/// 官方备用更新源（GitHub Releases）。主更新源请求失败时自动回退；
+/// 两个源的清单使用同一把内置 Ed25519 公钥验签。
+pub const FALLBACK_FEED_URL: &str =
     "https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json";
 /// 官方 Ed25519 公钥，构建时内置；清单永远不能用来自报或替换它。
 pub const OFFICIAL_PUBLIC_KEY: &str =
@@ -185,11 +190,46 @@ async fn response(value: &str, cancel: &CancellationToken) -> Result<reqwest::Re
     }
     Err("更新重定向次数过多".into())
 }
+/// 检查更新：先请求主更新源，传输或清单失败时自动回退到备用更新源
+/// （[`FALLBACK_FEED_URL`]）；两个源用同一把内置公钥验签。用户主动取消时不回退。
 pub async fn check(config: &UpdateConfig, current: &str, cancel: &CancellationToken) -> Result<Option<Candidate>> {
+    check_sources(config, current, cancel, &config.feed_url, Some(FALLBACK_FEED_URL)).await
+}
+
+/// 依次尝试主更新源与备用更新源；备用源与主源相同时只请求一次。
+/// 暴露给集成测试与自定义镜像场景；正常使用请走 [`check`]。
+pub async fn check_sources(
+    config: &UpdateConfig,
+    current: &str,
+    cancel: &CancellationToken,
+    primary: &str,
+    fallback: Option<&str>,
+) -> Result<Option<Candidate>> {
     let mut config = config.clone();
     config.migrate();
     config.validate()?;
-    let mut response = response(&config.feed_url, cancel).await?;
+    match check_feed(&config, primary, current, cancel).await {
+        Ok(candidate) => Ok(candidate),
+        Err(error) => {
+            if cancel.is_cancelled() {
+                return Err(error);
+            }
+            let Some(fallback) = fallback.filter(|url| *url != primary) else {
+                return Err(error);
+            };
+            check_feed(&config, fallback, current, cancel)
+                .await
+                .map_err(|fallback_error| format!("{error}；备用更新源也失败：{fallback_error}"))
+        }
+    }
+}
+async fn check_feed(
+    config: &UpdateConfig,
+    feed_url: &str,
+    current: &str,
+    cancel: &CancellationToken,
+) -> Result<Option<Candidate>> {
+    let mut response = response(feed_url, cancel).await?;
     let mut bytes = Vec::new();
     loop {
         let chunk = tokio::select! { biased; _ = cancel.cancelled() => return Err("更新已取消".into()), chunk = response.chunk() => chunk.map_err(|_| "更新清单读取失败")? };
