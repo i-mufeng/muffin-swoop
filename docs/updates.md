@@ -34,14 +34,14 @@
 | --- | --- |
 | 主更新源（内置默认） | `https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json`（又拍云 CDN，国内直连） |
 | 备用更新源（自动回退） | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json`（主源请求失败时自动切换，两源同一把内置公钥验签） |
-| Ed25519 公钥（内置） | `76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1` |
+| Ed25519 公钥（内置） | `20cf8eda8be4fd6654093f05c5bd5abe794b60c12762832152ffe440c08a3673` |
 | 通道 | stable |
 
 客户端「设置 → 关于」留空即用上述内置源；主更新源传输或清单失败时自动回退备用源，用户主动取消不回退。`swoop-release/feed.json` 是稳定地址，每次发版覆盖它即成为「最新」；带版本号的副本保留在 `swoop-release/vX.Y.Z/` 便于追溯。
 
 `releases/latest/download/` 始终解析到最新 Release；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台。
 
-**密钥轮换**：v0.1.0 曾公布旧公钥 `f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a`，其生产私钥已不可用，v0.6.0 起由内置新公钥替换。存量配置中留空的更新源/公钥、或仍等于旧公钥的配置，加载与检查前自动迁移到内置官方值（`UpdateConfig::migrate`，幂等）；自定义镜像源与自定义公钥不受影响。v0.1.0 客户端需先升级到 v0.6.0 之后才能使用内置更新源。
+**密钥轮换**：v0.7.0 起内置公钥轮换为 `20cf8eda…`（v0.6.0 使用的旧公钥 `76f5ee41…` 的生产私钥已不可用，作为 `LEGACY_PUBLIC_KEY` 保留迁移逻辑）。**0.6.0 及更早版本的内置公钥仍是旧值，无法验签 v0.7.0 清单，需手动下载 v0.7.0 安装包升级，之后即可恢复自动更新**。存量配置中等于旧公钥的值在加载时自动迁移到内置新公钥（`UpdateConfig::migrate`，幂等）。更早的历史：v0.1.0 曾公布旧公钥 `f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a`，v0.6.0 起已轮换。
 
 发布流程（无 CI 额度时全本地执行）：打包脚本产出 ZIP（Windows ZIP 条目名使用正斜杠，符合 ZIP 规范与验签要求）→ 用 `sign_feed` 与生产私钥签名生成 `feed.json` → 扩展包与应用同版本构建（`extension/package.json` 与 `public/manifest.json` 版本必须等于应用版本，`scripts/package.mjs` 会校验）→ 打 tag 推送 → `gh release create` 上传应用包、扩展包、清单与公钥。生产签名密钥由发行方本地保管于项目外目录，权限仅限发行账户，不入库；公钥以内置常量、上表和 Release 资产形式分发。
 

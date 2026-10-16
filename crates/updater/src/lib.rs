@@ -25,12 +25,15 @@ pub const DEFAULT_FEED_URL: &str =
 pub const FALLBACK_FEED_URL: &str =
     "https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json";
 /// 官方 Ed25519 公钥，构建时内置；清单永远不能用来自报或替换它。
+/// v0.7.0 起使用；v0.6.0 及更早版本内置的旧公钥见 LEGACY_PUBLIC_KEY。
 pub const OFFICIAL_PUBLIC_KEY: &str =
-    "76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1";
-/// v0.1.0 文档公布、v0.6.0 起被 OFFICIAL_PUBLIC_KEY 轮换替换的旧公钥。
-/// 存量配置中等于该值的公钥在加载时迁移到内置新公钥。
+    "20cf8eda8be4fd6654093f05c5bd5abe794b60c12762832152ffe440c08a3673";
+/// v0.6.0 内置、v0.7.0 起被 OFFICIAL_PUBLIC_KEY 轮换替换的旧公钥。
+/// 生产私钥已不可用；存量配置中等于该值的公钥在加载时迁移到内置新公钥。
+/// 注意：0.6.0 及更早版本的内置公钥仍是旧值，无法验签 v0.7.0 清单，
+/// 需手动下载 v0.7.0 安装包升级，之后即可恢复自动更新。
 pub const LEGACY_PUBLIC_KEY: &str =
-    "f2946392673b322aacfc47046a7ab71e205fc75efe845c61c56e3b24c73d6a7a";
+    "76f5ee41fcec2fdadf59972b78351add0dfe44cf33baa18e7744599f763d40c1";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum Channel {
