@@ -1,7 +1,9 @@
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+#[cfg(target_os = "macos")]
 use std::io::{Cursor, Write};
+#[cfg(target_os = "macos")]
 use std::path::Path;
 use swoop_updater::{Artifact, Candidate, Channel, Release, SignedFeed, UpdateConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -185,6 +187,7 @@ async fn wrong_hash_short_response_and_cancellation_never_publish_a_package() {
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
+#[cfg(target_os = "macos")]
 fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for (name, body) in entries {

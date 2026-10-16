@@ -41,6 +41,7 @@ Grab the latest build from [GitHub Releases](https://github.com/i-mufeng/muffin-
 | Windows (x64 / ARM64) | per-user NSIS installer |
 
 - No installation privileges required — Swoop installs per user and stays out of your way.
+- Windows packages are built natively on Windows and published with the release; they are not Authenticode-signed yet, so SmartScreen may warn on first run. Interactive desktop validation items remain open; see [desktop validation](docs/desktop-validation.md).
 - **Signed auto-update** (Ed25519, stable/preview channels) built in; update source, public key, and check interval are configurable. See [updates](docs/updates.md).
 - **FFmpeg is only needed for media downloads** (HLS/DASH/MMS). Ordinary file downloads run entirely on Swoop's own engine.
 

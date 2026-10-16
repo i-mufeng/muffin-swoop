@@ -41,6 +41,7 @@ Swoop 是一个围绕多连接下载引擎构建的原生下载管理器。普�
 | Windows（x64 / ARM64） | 用户级 NSIS 安装包 |
 
 - 无需管理员权限——Swoop 按用户安装，不打扰系统。
+- Windows 安装包已在 Windows 平台原生构建发布，暂无 Authenticode 签名，首次运行可能触发 SmartScreen；交互桌面验收项保留，详见 [验收说明](docs/desktop-validation.md)。
 - 内置**签名自动更新**（Ed25519，稳定/预览通道）；更新源、公钥与检查间隔均可配置。见 [更新说明](docs/updates.md)。
 - **只有媒体下载（HLS/DASH/MMS）需要 FFmpeg**，普通文件下载完全运行在 Swoop 自研引擎上。
 
