@@ -21,12 +21,12 @@
 #                  swoop/latest/), giving stable direct-download URLs that
 #                  always point at the newest release. The latest dir is
 #                  EMPTIED first, then files are uploaded under version-less
-#                  names: only the version segment is dropped and the name
-#                  is lowercased (Swoop-0.6.0-windows-x86_64-release-setup.exe
-#                  -> swoop-windows-x86_64-release-setup.exe); the rest of
-#                  the name (arch, profile) is kept. feed.json and other
-#                  version-less files keep their names. The version tag is
-#                  taken from the last segment of --remote-prefix (v0.6.0).
+#                  names: the version segment and "-release" are dropped and
+#                  the name is lowercased (Swoop-0.6.0-windows-x86_64-release-setup.exe
+#                  -> swoop-windows-x86_64-setup.exe); the arch is kept.
+#                  feed.json and other version-less files keep their names.
+#                  The version tag is taken from the last segment of
+#                  --remote-prefix (v0.6.0).
 # --cdn-base:      if given, purge the CDN cache for the uploaded URLs after
 #                  upload so clients fetch the fresh feed immediately.
 # --include:       semicolon-separated glob list; only matching file names
@@ -118,12 +118,13 @@ upyun_delete() {
 }
 
 # Latest-dir rename rule: Swoop-0.6.0-windows-x86_64-release-setup.exe ->
-# swoop-windows-x86_64-release-setup.exe (strip the version segment and
-# lowercase; arch/profile are kept). Version-less files pass through
-# unchanged (feed.json, swoop-update-public-key.hex, ...).
+# swoop-windows-x86_64-setup.exe (strip the version segment and "-release",
+# lowercase; the arch is kept). Version-less files pass through unchanged
+# (feed.json, swoop-update-public-key.hex, ...).
 latest_name() {
   local name="$1"
   name="${name//-${VERSION_TAG#v}/}"  # version dir is v0.6.0, file names use 0.6.0
+  name="${name//-release/}"
   echo "${name,,}"
 }
 
