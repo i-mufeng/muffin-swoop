@@ -18,13 +18,15 @@
 #
 # --remote-prefix: remote directory inside the bucket (default: repo name).
 # --latest:        also publish to the sibling "latest" directory (e.g.
-#                  swoop-release/latest/), giving stable direct-download URLs
-#                  that always point at the newest release. The latest dir is
-#                  EMPTIED first, then files are uploaded with the version
-#                  segment replaced by "latest" (Swoop-v0.6.0-windows-...-setup.exe
-#                  -> Swoop-latest-windows-...-setup.exe); feed.json keeps its
-#                  name. The version tag is taken from the last segment of
-#                  --remote-prefix (e.g. v0.6.0).
+#                  swoop/latest/), giving stable direct-download URLs that
+#                  always point at the newest release. The latest dir is
+#                  EMPTIED first, then files are uploaded under version-less
+#                  names: only the version segment is dropped and the name
+#                  is lowercased (Swoop-0.6.0-windows-x86_64-release-setup.exe
+#                  -> swoop-windows-x86_64-release-setup.exe); the rest of
+#                  the name (arch, profile) is kept. feed.json and other
+#                  version-less files keep their names. The version tag is
+#                  taken from the last segment of --remote-prefix (v0.6.0).
 # --cdn-base:      if given, purge the CDN cache for the uploaded URLs after
 #                  upload so clients fetch the fresh feed immediately.
 # --include:       semicolon-separated glob list; only matching file names
@@ -115,10 +117,14 @@ upyun_delete() {
     -X DELETE "$url"
 }
 
-# Latest-dir rename rule: Swoop-v0.6.0-windows-... -> Swoop-latest-windows-...
+# Latest-dir rename rule: Swoop-0.6.0-windows-x86_64-release-setup.exe ->
+# swoop-windows-x86_64-release-setup.exe (strip the version segment and
+# lowercase; arch/profile are kept). Version-less files pass through
+# unchanged (feed.json, swoop-update-public-key.hex, ...).
 latest_name() {
   local name="$1"
-  echo "${name//-${VERSION_TAG}/-latest}"
+  name="${name//-${VERSION_TAG#v}/}"  # version dir is v0.6.0, file names use 0.6.0
+  echo "${name,,}"
 }
 
 for name in "${FILES[@]}"; do
@@ -166,7 +172,7 @@ fi
 
 echo "Published ${#FILES[@]} file(s) plus feed.json to Upyun bucket '${UPYUN_BUCKET}/${REMOTE_PREFIX}'."
 if [ -n "$LATEST_PREFIX" ]; then
-  echo "Published latest path (cleared first, version renamed to 'latest'): ${UPYUN_BUCKET}/${LATEST_PREFIX}"
+  echo "Published latest path (cleared first, version-less names): ${UPYUN_BUCKET}/${LATEST_PREFIX}"
   echo "Latest feed URL: https://<你的又拍云绑定域名>/${LATEST_PREFIX}/feed.json"
 fi
 echo "Feed URL: https://<你的又拍云绑定域名>/${REMOTE_PREFIX}/feed.json"
