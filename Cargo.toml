@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/app", "crates/media", "crates/grabber", "crates/ftp", "crates/updater", "crates/i18n", "crates/i18n-macros"]
+members = ["crates/core", "crates/app", "crates/media", "crates/grabber", "crates/ftp", "crates/updater", "crates/i18n", "crates/i18n-macros", "crates/browser-bridge"]
 
 [workspace.package]
 version = "0.7.0"
@@ -16,6 +16,7 @@ swoop-grabber = { path = "crates/grabber" }
 swoop-ftp = { path = "crates/ftp" }
 swoop-updater = { path = "crates/updater" }
 swoop-i18n = { path = "crates/i18n" }
+swoop-browser-bridge = { path = "crates/browser-bridge" }
 
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "sync"] }
 tokio-util = { version = "0.7" }

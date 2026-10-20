@@ -16,10 +16,12 @@ pub type Result<T> = std::result::Result<T, String>;
 pub const MAX_ARCHIVE_BYTES: u64 = 1024 * 1024 * 1024;
 pub const MAX_FEED_BYTES: usize = 256 * 1024;
 
-/// 国内主更新源（又拍云 CDN），构建时内置；用户留空即可使用，无需手动导入。
-/// 注意：又拍云绑定自有域名后请在控制台开放默认域名访问，或把下方域名替换为绑定的域名。
+/// 国内主更新源（又拍云 CDN + 绑定域名），构建时内置；用户留空即可使用，无需手动导入。
+/// 注意：又拍云绑定自有域名后默认域名（<bucket>.b0.upaiyun.com）会关闭（405），
+/// 这里必须使用绑定域名；发布时以 --remote-prefix swoop/vX.Y.Z --latest 同步，
+/// 稳定地址即 swoop/latest/feed.json。
 pub const DEFAULT_FEED_URL: &str =
-    "https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json";
+    "https://cdn.muffin.xin/swoop/latest/feed.json";
 /// 官方备用更新源（GitHub Releases）。主更新源请求失败时自动回退；
 /// 两个源的清单使用同一把内置 Ed25519 公钥验签。
 pub const FALLBACK_FEED_URL: &str =

@@ -1,0 +1,83 @@
+/* popup 与设置页共用。配色对齐 crates/app/src/theme.rs 的 Palette。 */
+:root {
+  --bg: #f6f7fb;
+  --surface: #ffffff;
+  --border: #e3e5ec;
+  --text: #1c1e26;
+  --muted: #6b6f80;
+  --accent: #4a6cf2;
+  --accent-soft: rgba(74, 108, 242, 0.13);
+  --success: #2f9e6a;
+  --danger: #e5484d;
+  --track: #d9dce6;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161b;
+    --surface: #1d1f26;
+    --border: #2c2f39;
+    --text: #e8e9ee;
+    --muted: #9095a6;
+    --accent: #6d8cff;
+    --accent-soft: rgba(109, 140, 255, 0.18);
+    --success: #4cc38a;
+    --danger: #ff6369;
+    --track: #3a3d49;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+h1 { font-size: 15px; margin: 0; font-weight: 600; }
+.muted { color: var(--muted); }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.row { display: flex; align-items: center; gap: 10px; }
+.spacer { flex: 1; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--track); flex: none; }
+.dot.on { background: var(--success); }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+button {
+  font: inherit;
+  border-radius: 7px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:hover { filter: brightness(1.05); }
+input[type="number"], textarea, select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 10px;
+}
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+/* 开关 */
+.switch { position: relative; width: 34px; height: 20px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span {
+  position: absolute; inset: 0; border-radius: 10px; background: var(--track);
+  transition: background 0.15s; cursor: pointer;
+}
+.switch span::after {
+  content: ""; position: absolute; left: 3px; top: 3px; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; transition: transform 0.15s;
+}
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::after { transform: translateX(14px); }
+.switch input:focus-visible + span { outline: 2px solid var(--accent-soft); }

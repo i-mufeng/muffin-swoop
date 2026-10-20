@@ -40,7 +40,7 @@ Grab the latest build from [GitHub Releases](https://github.com/i-mufeng/muffin-
 | macOS (Apple Silicon) | `.dmg` / signed update `.zip` |
 | Windows (x64 / ARM64) | per-user NSIS installer |
 
-- No installation privileges required — Swoop installs per user and stays out of your way.
+- Installs per user by default — no system directories required; a single UAC prompt is only used for system-level steps such as registering the browser extension.
 - Windows packages are built natively on Windows and published with the release; they are not Authenticode-signed yet, so SmartScreen may warn on first run. Interactive desktop validation items remain open; see [desktop validation](docs/desktop-validation.md).
 - **Signed auto-update** (Ed25519, stable/preview channels) built in; update source, public key, and check interval are configurable. See [updates](docs/updates.md).
 - **FFmpeg is only needed for media downloads** (HLS/DASH/MMS). Ordinary file downloads run entirely on Swoop's own engine.
@@ -63,6 +63,7 @@ Grab the latest build from [GitHub Releases](https://github.com/i-mufeng/muffin-
 ### Browser integration
 
 - **Chromium & Firefox extension (MV3)** intercepts downloads *before* the browser's download panel appears — on Chromium at the filename-determination stage, with automatic fallback to the browser if Swoop can't take over. See [protocol & security](docs/browser-extension.md).
+  Edge users can install it in one click from the [Edge Add-ons store](https://microsoftedge.microsoft.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh); other Chromium-based browsers (360 Extreme/Secure, QQ, etc.) can drag the `.crx` from Releases onto the extensions page (360 Secure: `se://extensions/`; 360 Extreme: `chrome://myextensions/`).
 - **Passive media detection** records video/audio candidates on the page for you to pick; nothing downloads automatically.
 - Right-click any link, image, or video to send it to Swoop; the popup lists all links on the current page.
 
@@ -96,6 +97,7 @@ crates/ftp      swoop-ftp       Cancellable FTP/FTPS transport
 crates/updater  swoop-updater   Signed updates, install, and recovery
 crates/i18n     swoop-i18n      Desktop language resources (compile-time checked)
 extension/      Chromium / Firefox MV3 extension (TypeScript + esbuild)
+crates/browser-bridge  Browser detection & extension install strategies (policy table: crates/browser-bridge/browsers.toml)
 docs/           Design and validation docs
 assets/         Brand assets, screenshots, embedded font subsets
 scripts/        Packaging, installer, and font-subset tooling

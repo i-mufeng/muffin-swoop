@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Swoop — Rust 编写的轻量多线程下载管理器。分段加速、断点续传、流媒体录制、整站镜像。" />
+    <title>Swoop · 轻量、快速的下载管理器</title>
+    <style>
+      /* 开屏加载动画：在 Vue 挂载前即刻显示 */
+      #splash {
+        position: fixed; inset: 0; z-index: 9999;
+        display: grid; place-items: center;
+        background: #0a0a0b;
+        transition: opacity 0.45s ease;
+      }
+      #splash.hide { opacity: 0; pointer-events: none; }
+      /* 用 div 圆点而非 SVG circle：CSS transform 动画在所有浏览器都可靠生效 */
+      #splash .dots { display: flex; gap: 12px; }
+      #splash .dots i {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #34d399; opacity: 0.45;
+        animation: splash-jump 0.9s ease-in-out infinite;
+        will-change: transform, opacity;
+      }
+      #splash .dots i:nth-child(2) { animation-delay: 0.08s; }
+      #splash .dots i:nth-child(3) { animation-delay: 0.16s; }
+      #splash .dots i:nth-child(4) { animation-delay: 0.24s; }
+      #splash .dots i:nth-child(5) { animation-delay: 0.32s; }
+      @keyframes splash-jump {
+        0%, 55%, 100% { transform: translateY(0); opacity: 0.45; }
+        25% { transform: translateY(-9px); opacity: 1; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #splash .dots i { animation: none; opacity: 0.8; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="splash" aria-hidden="true">
+      <div class="dots"><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

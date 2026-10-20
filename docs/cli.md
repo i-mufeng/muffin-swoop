@@ -99,6 +99,18 @@ HTTP(S)/FTP(S) 和媒体 worker 共用输出路径占用锁，正在写入的路
 
 控制协议新增 command 为 `media-add/media-status/media-stop/media-retry/media-resolve/grabber-create/grabber-open/grabber-run/grabber-stop/grabber-status`，仅通过已有认证 `/v1/control` 使用，不扩展浏览器 `/tasks` 权限。例如 `{"command":"media-add","url":"https://example.com/a.m3u8","output":"/absolute/a.mp4","duration":null,"max_height":720,"audio_language":null}` 和 `{"command":"grabber-open","directory":"/absolute/site"}`。未知字段、越界参数和非绝对目标路径均拒绝。
 
+## 浏览器扩展
+
+`browsers list` 扫描已安装的浏览器（注册表卸载登记 / URL 协议 / 已知安装路径三路并集），输出每个浏览器的扩展登记状态：已登记 / 未安装 / 未知。仅 Windows 可用，不连接桌面实例。
+
+`browsers install --all|--id ID [--silent] [--ext-dir PATH]` 把随安装包携带的扩展登记到识别到的浏览器，安装包（crx / xpi / swoop-extension-info.json）默认取 swoop-cli 所在目录，可用 `--ext-dir` 覆盖。策略按浏览器区分：Edge 写企业策略 `ExtensionInstallForcelist`（重启后从商店强制静默安装）；Firefox 写官方企业策略 `distribution/policies.json`（可靠）；360 极速/安全、QQ 等 Chromium 系写外部扩展注册表（是否生效取决于浏览器内核版本，可能无效）；Chrome 引导拖拽。`--silent` 时跳过引导类策略（不弹浏览器窗口）。
+
+注意策略写入的权限：`HKCU\Software\Policies` 的默认 ACL 只允许管理员写入，Firefox 的 `distribution\policies.json` 也在 Program Files 下，未提权执行会得到“写入浏览器策略被拒绝”（退出码 1）。设置页的“一键安装”会在被拒时自动用 UAC 提权拉起 `swoop-cli browsers install --id <ID> --silent` 补登记；用户取消授权则降级为引导安装（Edge 打开商店页，Firefox 打开 about:addons 并定位 xpi）。
+
+`browsers guide --id ID` 打开对应浏览器的扩展页并定位 crx 文件，引导用户拖拽安装；`browsers uninstall` 移除全部已登记项（注册表键 / policies.json 条目）。安装与卸载均输出 JSON 且尽力而为，单浏览器失败不影响其他浏览器。
+
+Windows 安装包在安装收尾时自动执行 `browsers install --all --silent`（结果记入安装日志，失败会附一行提示），卸载时自动执行 `browsers uninstall`。安装器以 Highest 执行级别启动：管理员账号启动时即完成 UAC 提权，收尾登记能直接成功；普通账号不弹窗、此步失败属预期，用户可在设置页用“一键安装”提权补登记。
+
 ## 登录启动
 
 设置中的“登录时启动”读取真实用户启动项；仅点击“应用”才写入或删除。普通启动和自动刷新均不修改系统配置。默认未配置，开发态二进制不可启用；macOS 要求 `.app/Contents/MacOS` 及 Info.plist，Windows 要求完整包中的 `swoop.exe`、`swoop-cli.exe` 和 build-info.txt。启动路径移动或丢失后会显示失效，可从新位置重新应用。

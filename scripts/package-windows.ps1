@@ -114,6 +114,32 @@ try {
     Copy-Item -LiteralPath 'docs/desktop-validation.md' -Destination $stagedPackage
     Copy-Item -LiteralPath 'docs/cli.md' -Destination $stagedPackage
     Copy-Item -LiteralPath 'assets/fonts/NOTICE.md' -Destination (Join-Path $stagedPackage 'FONT-NOTICE.md')
+
+    # Browser extension payload: build it (requires Node.js) and stage under stable file names
+    # so swoop-cli can find the crx/xpi next to the executables after installation.
+    $extensionCrx = Join-Path $stagedPackage 'swoop-extension.crx'
+    $extensionXpi = Join-Path $stagedPackage 'swoop-extension.xpi'
+    $extensionInfo = Join-Path $stagedPackage 'swoop-extension-info.json'
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        $extVersion = (Get-Content -LiteralPath (Join-Path $repoRoot 'extension/package.json') -Raw | ConvertFrom-Json).version
+        Push-Location -LiteralPath (Join-Path $repoRoot 'extension')
+        try {
+            & npm run build:chromium
+            if ($LASTEXITCODE -ne 0) { throw "extension build (chromium) failed: $LASTEXITCODE" }
+            & npm run build:firefox
+            if ($LASTEXITCODE -ne 0) { throw "extension build (firefox) failed: $LASTEXITCODE" }
+            & npm run package:crx
+            if ($LASTEXITCODE -ne 0) { throw "extension package:crx failed: $LASTEXITCODE" }
+        }
+        finally { Pop-Location }
+        $extPackages = Join-Path $metadata.target_directory 'packages'
+        Copy-Item -LiteralPath (Join-Path $extPackages "swoop-extension-chromium-$extVersion.crx") -Destination $extensionCrx
+        Copy-Item -LiteralPath (Join-Path $extPackages "swoop-extension-firefox-$extVersion.xpi") -Destination $extensionXpi
+        Copy-Item -LiteralPath (Join-Path $extPackages 'swoop-extension-info.json') -Destination $extensionInfo
+        Write-Output "Extension payload staged (chromium + firefox, $extVersion)."
+    } else {
+        Write-Output 'npm not found; the installer will ship without the browser extension payload.'
+    }
     $binaryHash = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
     $cliHash = (Get-FileHash -LiteralPath $cliBinary -Algorithm SHA256).Hash.ToLowerInvariant()
     $revision = 'unknown'
@@ -164,6 +190,15 @@ authenticode_signature=none
         }
     }
     # An explicit name keeps cargo-packager 0.11 from probing the config file path as a directory.
+    $packagerResources = @(
+        [ordered]@{ src = (Join-Path $stagedPackage 'build-info.txt'); target = 'build-info.txt' },
+        [ordered]@{ src = (Join-Path $stagedPackage 'FONT-NOTICE.md'); target = 'FONT-NOTICE.md' }
+    )
+    if (Test-Path -LiteralPath $extensionCrx -PathType Leaf) {
+        $packagerResources += [ordered]@{ src = $extensionCrx; target = 'swoop-extension.crx' }
+        $packagerResources += [ordered]@{ src = $extensionXpi; target = 'swoop-extension.xpi' }
+        $packagerResources += [ordered]@{ src = $extensionInfo; target = 'swoop-extension-info.json' }
+    }
     $packagerConfig = [ordered]@{
         name         = 'swoop-app'
         productName  = 'Swoop'
@@ -180,12 +215,9 @@ authenticode_signature=none
             [ordered]@{ path = 'swoop-cli'; main = $false }
         )
         icons        = @((Join-Path $repoRoot 'assets/brand/swoop/swoop.ico'))
-        resources    = @(
-            [ordered]@{ src = (Join-Path $stagedPackage 'build-info.txt'); target = 'build-info.txt' },
-            [ordered]@{ src = (Join-Path $stagedPackage 'FONT-NOTICE.md'); target = 'FONT-NOTICE.md' }
-        )
+        resources    = $packagerResources
         nsis         = [ordered]@{
-            installMode   = 'currentUser'
+            installMode   = 'both'
             template      = (Join-Path $repoRoot 'scripts/windows-installer/installer.nsi')
             installerIcon = (Join-Path $repoRoot 'assets/brand/swoop/swoop.ico')
             sidebarImage  = (Join-Path $artDir 'sidebar-100.bmp')

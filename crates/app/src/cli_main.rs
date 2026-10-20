@@ -1,5 +1,7 @@
 // Console-subsystem binary on Windows: stdout, redirection and process waiting
 // work without attaching a console to the graphical executable.
+#[allow(dead_code)] // The CLI drives browser actions but not the GUI-only integration helpers.
+mod browsers;
 mod cli;
 #[allow(dead_code)] // The GUI owns the server half; this binary only uses its client.
 mod instance;

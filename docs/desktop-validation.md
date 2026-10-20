@@ -90,7 +90,7 @@ Swoop-0.1.0-windows-x86_64-release-setup.exe
 Swoop-0.1.0-windows-x86_64-release-setup.exe.sha256
 ```
 
-`-setup.exe` 是按当前用户安装的 NSIS 安装包：默认装到 `%LOCALAPPDATA%\Swoop\`，不需要管理员权限，写入的是当前用户的「已安装应用」卸载项。安装目录与 zip 一样把 `swoop.exe`、`swoop-cli.exe`、`build-info.txt` 放在一起，签名更新可以原地替换。安装界面按系统语言显示简体中文或英文。卸载时可勾选删除应用数据 `%APPDATA%\com.muffin.swoop`，默认不勾选；已下载的文件不会被删除。静默安装用 `setup.exe /S /NS`，`/NS` 表示不建快捷方式，`/D=路径` 可改安装目录（必须放在最后且不加引号）。CI 会做一次静默安装、校验文件哈希、运行已安装的 CLI，然后静默卸载。
+`-setup.exe` 是 NSIS 安装包（`installMode = both`）：安装器以 Highest 执行级别启动，管理员账号会看到一次 UAC 授权（用于写入 Edge/Firefox 的扩展登记策略），普通账号不弹窗、仍可纯按用户安装。默认按当前用户装到 `%LOCALAPPDATA%\Swoop\`（可在安装模式页选“为所有用户安装”到 Program Files），写入对应范围的「已安装应用」卸载项。安装目录与 zip 一样把 `swoop.exe`、`swoop-cli.exe`、`build-info.txt` 放在一起，签名更新可以原地替换。安装界面按系统语言显示简体中文或英文。卸载时可勾选删除应用数据 `%APPDATA%\com.muffin.swoop`，默认不勾选；已下载的文件不会被删除。静默安装用 `setup.exe /S /NS`（默认当前用户，可加 `/AllUsers`），`/NS` 表示不建快捷方式，`/D=路径` 可改安装目录（必须放在最后且不加引号）。CI 会做一次静默安装、校验文件哈希、运行已安装的 CLI，然后静默卸载。
 
 安装界面用的是自定义模板 `scripts/windows-installer/installer.nsi`，在 cargo-packager 0.11.8 默认模板的基础上修改，改动处都标了 `Swoop:`；升级 cargo-packager 时要对照上游模板合并。主要改动：声明 DPI 感知，高分屏上不再被系统按位图拉伸；中文界面用 Microsoft YaHei UI，英文用 Segoe UI，替换语言文件里默认的宋体 / MS Shell Dlg 点阵字体；页面精简为欢迎 → 目录 → 安装 → 完成，开始菜单快捷方式直接放进「开始」的应用列表，完成页可勾选创建桌面快捷方式、安装后启动。侧栏和页眉的品牌图由 `python3 scripts/make_installer_art.py` 生成 100%–250% 共六档 PNG（`assets/brand/swoop/installer/`），打包脚本再转成 24 位 BMP；安装器运行时按控件的实际像素尺寸挑选一档，避免小图被放大。
 

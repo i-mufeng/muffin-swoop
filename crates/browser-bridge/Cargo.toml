@@ -1,0 +1,19 @@
+[package]
+name = "swoop-browser-bridge"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+description = "Detect installed browsers and install the Swoop extension by per-browser strategy"
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = "0.9"
+thiserror = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+
+[dev-dependencies]
+tempfile = "3"

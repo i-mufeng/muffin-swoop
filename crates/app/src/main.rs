@@ -4,6 +4,7 @@ mod app;
 mod batch;
 mod brand;
 mod bridge;
+mod browsers;
 mod categories;
 mod cli;
 mod clipboard;

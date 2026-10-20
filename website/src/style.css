@@ -1,0 +1,132 @@
+/* ========== 主题变量（方案 B · 墨黑极简） ========== */
+:root {
+  --font-sans: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  --max-width: 1120px;
+  --radius: 12px;
+  --transition: 0.25s ease;
+}
+
+:root[data-theme='dark'] {
+  --bg: #0a0a0b;
+  --bg-image: url('/bg-dark.png');
+  --ink: #f4f4f5;
+  --dim: #8b8e98;
+  --accent: #34d399;
+  --accent-ink: #06251b;
+  --accent-soft: rgba(52, 211, 153, 0.08);
+  --accent-border: rgba(52, 211, 153, 0.3);
+  --hairline: rgba(244, 244, 245, 0.1);
+  --card-bg: rgba(255, 255, 255, 0.025);
+  --card-bg-hover: rgba(255, 255, 255, 0.05);
+  --particle-color: #34d399;
+  --particle-link: #1f8f68;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --bg: #fafafa;
+  --bg-image: none;
+  --ink: #17181a;
+  --dim: #6b7280;
+  --accent: #0d9463;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(13, 148, 99, 0.07);
+  --accent-border: rgba(13, 148, 99, 0.35);
+  --hairline: rgba(23, 24, 26, 0.12);
+  --card-bg: rgba(23, 24, 26, 0.02);
+  --card-bg-hover: rgba(23, 24, 26, 0.045);
+  --particle-color: #0d9463;
+  --particle-link: #6bbfa0;
+  color-scheme: light;
+}
+
+/* ========== 基础 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg);
+  color: var(--ink);
+  transition: background-color var(--transition), color var(--transition);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 背景图独立为 fixed 合成层：滚动时不再逐帧重绘整屏图片，避免卡顿。
+   （background-attachment: fixed 会让浏览器在滚动的每一帧都重新绘制背景） */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image: var(--bg-image);
+  background-size: cover;
+  background-position: center;
+  pointer-events: none;
+  will-change: transform;
+}
+
+a { color: inherit; }
+
+/* ========== 主题切换圆形蔓延动效（View Transitions API） ========== */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2147483646; }
+
+.container {
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: 0 32px;
+}
+
+.mono { font-family: var(--font-mono); }
+
+/* ========== 通用按钮 ========== */
+.btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 14px 30px; border-radius: 10px;
+  font-size: 15px; font-weight: 600; font-family: var(--font-sans);
+  cursor: pointer; text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform var(--transition), background var(--transition),
+    border-color var(--transition), filter var(--transition);
+}
+.btn:active { transform: scale(0.98); }
+
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { filter: brightness(1.08); transform: translateY(-1px); }
+
+.btn-ghost {
+  background: transparent; color: var(--ink);
+  border: none; border-radius: 0;
+  padding: 14px 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+.btn-ghost:hover { border-bottom-color: var(--accent); color: var(--accent); background: transparent; }
+
+/* ========== 区块标题 ========== */
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--accent);
+  letter-spacing: 1px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-label::before {
+  content: ""; width: 28px; height: 1px; background: var(--accent);
+}
+
+.section-title {
+  margin-top: 16px;
+  font-size: 38px; font-weight: 700; letter-spacing: -0.5px;
+}
+
+@media (max-width: 640px) {
+  .section-title { font-size: 28px; }
+}

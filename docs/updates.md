@@ -32,12 +32,12 @@
 
 | 配置项 | 值 |
 | --- | --- |
-| 主更新源（内置默认） | `https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json`（又拍云 CDN，国内直连） |
+| 主更新源（内置默认） | `https://cdn.muffin.xin/swoop/latest/feed.json`（又拍云 CDN 绑定域名，国内直连） |
 | 备用更新源（自动回退） | `https://github.com/i-mufeng/muffin-swoop/releases/latest/download/feed.json`（主源请求失败时自动切换，两源同一把内置公钥验签） |
 | Ed25519 公钥（内置） | `20cf8eda8be4fd6654093f05c5bd5abe794b60c12762832152ffe440c08a3673` |
 | 通道 | stable |
 
-客户端「设置 → 关于」留空即用上述内置源；主更新源传输或清单失败时自动回退备用源，用户主动取消不回退。`swoop-release/feed.json` 是稳定地址，每次发版覆盖它即成为「最新」；带版本号的副本保留在 `swoop-release/vX.Y.Z/` 便于追溯。
+客户端「设置 → 关于」留空即用上述内置源；主更新源传输或清单失败时自动回退备用源，用户主动取消不回退。`swoop/latest/feed.json` 是稳定地址，每次发版用 `--latest` 覆盖同步它即成为「最新」；带版本号的副本保留在 `swoop/vX.Y.Z/` 便于追溯。
 
 `releases/latest/download/` 始终解析到最新 Release；每个 Release 上传固定文件名的 `feed.json`（签名清单）与 `swoop-update-public-key.hex`（公钥），同时保留带版本号的副本便于追溯。清单只覆盖有产物的平台。
 
@@ -51,12 +51,12 @@
 
 GitHub 在国内访问不稳定，又拍云（Upyun）云存储 + CDN 是内置**主更新源**，GitHub 官方源作为**备用源**：主源请求失败时客户端自动回退，两源清单用同一把内置 Ed25519 公钥验签。清单带签名，托管方无需可信，CDN 回源或缓存不一致不会影响验签安全，最多导致检查失败。
 
-- 内置主源地址：`https://muffin-cdn.b0.upaiyun.com/swoop-release/feed.json`（`crates/updater/src/lib.rs` 的 `DEFAULT_FEED_URL`）。
-- 又拍云需要**绑定已备案域名**后才对外开放访问（默认 `b0.upaiyun.com` 域名默认不可见）。绑定后在控制台开放默认域名访问，或把 `DEFAULT_FEED_URL` 换成绑定的域名；换域名只需改这一处常量，备用回退逻辑不变。
+- 内置主源地址：`https://cdn.muffin.xin/swoop/latest/feed.json`（`crates/updater/src/lib.rs` 的 `DEFAULT_FEED_URL`）。
+- 又拍云需要**绑定已备案域名**后才对外开放访问；绑定自有域名后默认 `b0.upaiyun.com` 域名会被关闭（请求返回 405），所以 `DEFAULT_FEED_URL` 必须写绑定域名（`cdn.muffin.xin`），不能写默认域名。换域名只需改这一处常量，备用回退逻辑不变。
 - 每次发版除了上传 `swoop/vX.Y.Z/` 版本目录，最新版再同步一份到 `latest/` 目录方便直接下载。签名 + 上传 + 刷新缓存一条龙：
   `bash scripts/publish-upyun.sh --dir /releases/0.7.0 --remote-prefix swoop/v0.7.0 --latest --sign-key <私钥路径> --cdn-base https://cdn.muffin.xin`
   `--sign-key` 在 `feed.json` 缺失时用 `sign_feed` 离线签名（自动从文件名映射平台键、用 `--cdn-base` + `--remote-prefix` 拼产物 URL；需要 cargo）。`--latest` 会先**清空** `latest/` 目录再上传（先删再发，旧文件不会残留），文件名去掉版本段和 `-release` 并转小写，架构部分原样保留（`Swoop-0.7.0-windows-x86_64-release-setup.exe` → `swoop-windows-x86_64-setup.exe`），`feed.json`、公钥等无版本文件名字不变。`--remote-prefix` 最后一段必须是版本号。固定下载地址示例：`https://cdn.muffin.xin/swoop/latest/swoop-windows-x86_64-setup.exe`。
-- 签名 `feed.json` 时各 `--artifact` 的 URL 应使用又拍云域名（国内用户下载安装包也走 CDN），例如 `https://<你的域名>/swoop-release/v0.7.0/Swoop-0.7.0-windows-x86_64-release.zip`。
+- 签名 `feed.json` 时各 `--artifact` 的 URL 应使用又拍云域名（国内用户下载安装包也走 CDN），例如 `https://cdn.muffin.xin/swoop/v0.7.0/Swoop-0.7.0-windows-x86_64-release.zip`。
 
 脚本按「安装包 → feed.json」的顺序上传（客户端永远不会看到指向未完成上传的清单），`--cdn-base` 会在上传后自动刷新 feed 与各包的 CDN 缓存。建议为发布单独创建一个仅云存储权限的 API 操作员，密码只放在发行账户的环境变量里。
 

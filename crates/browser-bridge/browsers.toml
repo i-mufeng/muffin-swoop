@@ -1,0 +1,89 @@
+# Swoop 浏览器扩展的识别与安装策略表。
+# 静默安装的现实约束（2026-10 调研 + 实测）：
+# - Edge：已上架官方商店；支持 ExtensionInstallForcelist 企业策略，重启浏览器后
+#   从商店强制静默安装，主策略 store-force-list。注意：HKCU\Software\Policies 的
+#   默认 ACL 只给普通用户读取权限（实测 Windows 11 专业版），写入需 UAC 提权，
+#   GUI 会在权限被拒时自动请求管理员授权，再不行降级为打开商店页。
+# - Chrome：商店外强制安装被官方封禁（ExtensionInstallForcelist 仅对商店内
+#   扩展有效，Swoop 未上架 Chrome Web Store），只能引导拖拽。
+# - 360 极速/安全：官方确认不支持任何静默安装（360 社区 2025-04 版主回复），
+#   注册表外部扩展（chromium-external-ext）属于内核遗留行为，写了无害、可能无效，
+#   所以 fallback 必须指向引导拖拽。
+# - QQ/搜狗等国产 Chromium：无文档，同 360 策略，实测后回填本表。
+# - Firefox：官方企业策略支持静默安装（distribution/policies.json，写浏览器安装目录；
+#   Firefox 装在 Program Files 时需要提权，GUI 被拒后同样自动请求 UAC）。
+
+[[browser]]
+id = "edge"
+name = "Microsoft Edge"
+uninstall_names = ["Microsoft Edge"]
+exe_candidates = [
+  "%ProgramFiles(x86)%\\Microsoft\\Edge\\Application\\msedge.exe",
+  "%ProgramFiles%\\Microsoft\\Edge\\Application\\msedge.exe",
+]
+install = "store-force-list"
+store_url = "https://microsoftedge.microsoft.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh"
+policy_root = "Software\\Policies\\Microsoft\\Edge"
+update_url = "https://edge.microsoft.com/extensionwebstorebase/v1/crx"
+
+[[browser]]
+id = "chrome"
+name = "Google Chrome"
+uninstall_names = ["Google Chrome"]
+exe_candidates = [
+  "%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe",
+  "%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe",
+  "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe",
+]
+extensions_page = "chrome://extensions/"
+install = "guided-drag"
+
+[[browser]]
+id = "360chrome"
+name = "360极速浏览器"
+uninstall_names = ["360极速浏览器"]
+protocols = ["360ChromeX", "360Chrome"]
+exe_candidates = [
+  "%ProgramFiles(x86)%\\360\\360Chrome\\Chrome\\Application\\360chrome.exe",
+  "%LOCALAPPDATA%\\360Chrome\\Chrome\\Application\\360chrome.exe",
+]
+extensions_page = "chrome://myextensions/"
+install = "chromium-external-ext"
+fallback = "guided-drag"
+
+[[browser]]
+id = "360se"
+name = "360安全浏览器"
+uninstall_names = ["360安全浏览器"]
+protocols = ["360se", "se360"]
+exe_candidates = [
+  "%ProgramFiles(x86)%\\360\\360se6\\Application\\360se.exe",
+  "%ProgramFiles(x86)%\\360\\360SafeBrowser\\Application\\360se.exe",
+]
+extensions_page = "se://extensions/"
+install = "chromium-external-ext"
+fallback = "guided-drag"
+
+[[browser]]
+id = "qqbrowser"
+name = "QQ浏览器"
+uninstall_names = ["QQ浏览器", "QQBrowser"]
+protocols = ["QQBrowser"]
+exe_candidates = [
+  "%ProgramFiles(x86)%\\Tencent\\QQBrowser\\QQBrowser.exe",
+  "%ProgramFiles%\\Tencent\\QQBrowser\\QQBrowser.exe",
+]
+extensions_page = "qqbrowser://extensions/"
+install = "chromium-external-ext"
+fallback = "guided-drag"
+
+[[browser]]
+id = "firefox"
+name = "Mozilla Firefox"
+uninstall_names = ["Mozilla Firefox"]
+exe_candidates = [
+  "%ProgramFiles%\\Mozilla Firefox\\firefox.exe",
+  "%ProgramFiles(x86)%\\Mozilla Firefox\\firefox.exe",
+]
+extensions_page = "about:addons"
+install = "firefox-policy"

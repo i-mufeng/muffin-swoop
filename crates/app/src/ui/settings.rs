@@ -9,6 +9,14 @@ use crate::bridge::BridgeMode;
 use crate::notifications::NotificationTiming;
 use crate::theme::Mode;
 
+/// 浏览器扩展一键安装的后台任务（可能弹 UAC 等用户操作，不能卡在 UI 线程上）
+#[cfg(windows)]
+#[derive(Default)]
+struct ExtInstallJob {
+    running: std::sync::atomic::AtomicBool,
+    result: std::sync::Mutex<Option<Result<String, String>>>,
+}
+
 /// 设置页左侧分类
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Tab {
@@ -401,6 +409,119 @@ impl SwoopApp {
             }
         });
 
+        #[cfg(windows)]
+        {
+            dialog::group(ui, &p, Some(swoop_i18n::tr!("浏览器扩展")), |ui| {
+                dialog::info(ui, &p, swoop_i18n::tr!("扫描并安装到识别到的浏览器"));
+                let rows_id = ui.id().with("browser_ext_rows");
+                let scanned_id = ui.id().with("browser_ext_scanned");
+                let feedback_id = ui.id().with("browser_ext_feedback");
+                let job_id = ui.id().with("browser_ext_job");
+                let mut rows: Vec<crate::browsers::BrowserRow> =
+                    ui.data_mut(|d| d.get_temp(rows_id)).unwrap_or_default();
+                let scanned: bool = ui.data_mut(|d| d.get_temp(scanned_id)).unwrap_or(false);
+                // 一键安装可能弹 UAC 等用户操作，放后台线程；结果跨帧留在 egui 内存里
+                let job: std::sync::Arc<ExtInstallJob> = ui.data_mut(|d| d.get_temp(job_id)).unwrap_or_default();
+                // 首帧新建后必须立刻存回去，否则下一帧拿到的又是新对象，后台结果会丢
+                ui.data_mut(|d| d.insert_temp(job_id, job.clone()));
+                let running = job.running.load(std::sync::atomic::Ordering::Relaxed);
+                if let Some(result) = job.result.lock().unwrap().take() {
+                    let entry = match result {
+                        Ok(message) => Some((message, false, std::time::Instant::now())),
+                        Err(message) => Some((message, true, std::time::Instant::now())),
+                    };
+                    ui.data_mut(|d| d.insert_temp(feedback_id, entry));
+                    // 操作完成后立刻重扫，刷新登记状态
+                    rows = crate::browsers::scan_rows();
+                    ui.data_mut(|d| d.insert_temp(rows_id, rows.clone()));
+                }
+                if running {
+                    ui.ctx().request_repaint_after(Duration::from_millis(200));
+                }
+                if ui.button(swoop_i18n::tr!("重新扫描")).clicked() || !scanned {
+                    rows = crate::browsers::scan_rows();
+                    ui.data_mut(|d| {
+                        d.insert_temp(rows_id, rows.clone());
+                        d.insert_temp(scanned_id, true);
+                    });
+                }
+                if rows.is_empty() {
+                    if scanned {
+                        dialog::note(ui, &p, swoop_i18n::tr!("未检测到支持的浏览器"));
+                    }
+                } else {
+                    for row in &rows {
+                        let (row_id, row_name, row_version, row_status, row_action) =
+                            (row.id.clone(), row.name.clone(), row.version.clone(), row.status, row.action);
+                        let action_label = match row_action {
+                            crate::browsers::RowAction::Install => swoop_i18n::tr!("一键安装"),
+                            crate::browsers::RowAction::Guide => swoop_i18n::tr!("引导安装"),
+                            crate::browsers::RowAction::Store => swoop_i18n::tr!("商店安装"),
+                            crate::browsers::RowAction::None => swoop_i18n::tr!("已跳过"),
+                        };
+                        let version_hint = row_version.as_deref().map(|v| format!("v{v}"));
+                        dialog::row(ui, &p, &row_name, version_hint.as_deref(), |ui| {
+                            // 右到左布局：先加的在最右。动作按钮靠右，状态徽标在按钮左侧。
+                            // 安装进行中禁用所有动作，避免并发点击
+                            if row_action != crate::browsers::RowAction::None
+                                && ui.add_enabled(!running, egui::Button::new(action_label)).clicked()
+                            {
+                                match row_action {
+                                    crate::browsers::RowAction::Install => {
+                                        job.running.store(true, std::sync::atomic::Ordering::Relaxed);
+                                        ui.data_mut(|d| d.insert_temp::<Option<(String, bool, std::time::Instant)>>(feedback_id, None));
+                                        let job = job.clone();
+                                        std::thread::spawn(move || {
+                                            let result = crate::browsers::install_by_id(&row_id);
+                                            *job.result.lock().unwrap() = Some(result);
+                                            job.running.store(false, std::sync::atomic::Ordering::Relaxed);
+                                        });
+                                    }
+                                    _ => {
+                                        // 引导类只是打开页面，同步执行即可
+                                        let entry = match crate::browsers::guide_by_id(&row_id) {
+                                            Ok(outcome) => Some((outcome, false, std::time::Instant::now())),
+                                            Err(error) => Some((error, true, std::time::Instant::now())),
+                                        };
+                                        ui.data_mut(|d| d.insert_temp(feedback_id, entry));
+                                    }
+                                }
+                            }
+                            use swoop_browser_bridge::ExtensionStatus;
+                            match row_status {
+                                ExtensionStatus::Installed => {
+                                    super::pill(ui, crate::browsers::status_label(row_status), p.success_soft, p.success)
+                                }
+                                ExtensionStatus::NotInstalled => {
+                                    super::pill(ui, crate::browsers::status_label(row_status), p.inset, p.text_muted)
+                                }
+                                ExtensionStatus::Unknown => ui.label(""),
+                            };
+                        });
+                    }
+                }
+                if running {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(swoop_i18n::tr!("正在安装扩展…"));
+                    });
+                }
+                // 反馈跨帧保留 15 秒：egui 是立即模式，局部变量只会显示一帧，看起来像一闪而过
+                let feedback: Option<(String, bool, std::time::Instant)> =
+                    ui.data_mut(|d| d.get_temp(feedback_id)).unwrap_or_default();
+                if let Some((message, is_error, at)) = &feedback
+                    && at.elapsed() <= Duration::from_secs(15)
+                {
+                    if *is_error {
+                        dialog::error(ui, &p, message);
+                    } else {
+                        dialog::info(ui, &p, message);
+                    }
+                    ui.ctx().request_repaint_after(Duration::from_secs(1));
+                }
+            });
+        }
+
         dialog::group(ui, &p, Some(swoop_i18n::tr!("系统")), |ui| {
             dialog::row_stack(ui, &p, swoop_i18n::tr!("登录时启动"), None, |ui| {
                 let busy = self.startup.busy();
@@ -530,9 +651,7 @@ impl SwoopApp {
                     } else {
                         if !idle {
                             ui.label(
-                                RichText::new(swoop_i18n::tr!("请先暂停或结束当前任务"))
-                                    .size(12.0)
-                                    .color(p.tint_amber),
+                                RichText::new(swoop_i18n::tr!("请先暂停或结束当前任务")).size(12.0).color(p.tint_amber),
                             );
                             ui.add_space(4.0);
                         }

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swoop — 方案 B · 霓虹矩阵</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --cyan: #22d3ee;
+    --magenta: #e879f9;
+    --text: #f3f4ff;
+    --text-dim: #a5a8c8;
+    --mono: "Cascadia Code", "JetBrains Mono", Consolas, monospace;
+  }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #050508 url(assets/bg-b-grid.png) center / cover no-repeat fixed;
+    color: var(--text);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 26px 56px;
+    border-bottom: 1px solid rgba(34,211,238,.18);
+  }
+  .logo { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: 3px; }
+  .logo b { color: var(--cyan); text-shadow: 0 0 14px rgba(34,211,238,.8); }
+  .logo i { color: var(--magenta); font-style: normal; text-shadow: 0 0 14px rgba(232,121,249,.8); }
+  .nav-links { display: flex; gap: 30px; align-items: center; font-family: var(--mono); font-size: 13px; }
+  .nav-links a { color: var(--text-dim); text-decoration: none; }
+  .nav-links a::before { content: "~/ "; color: var(--cyan); }
+  .theme-toggle {
+    font-family: var(--mono); font-size: 12px; color: var(--cyan);
+    border: 1px solid rgba(34,211,238,.5); padding: 7px 14px; border-radius: 4px;
+    background: rgba(34,211,238,.06); cursor: pointer; letter-spacing: 1px;
+  }
+  main {
+    height: calc(100vh - 82px);
+    display: flex; align-items: center; justify-content: center; padding: 0 56px;
+  }
+  .panel {
+    position: relative;
+    max-width: 860px; width: 100%;
+    border: 1px solid rgba(34,211,238,.35);
+    background: rgba(6,8,16,.72); backdrop-filter: blur(10px);
+    padding: 56px 64px;
+    clip-path: polygon(0 0, calc(100% - 28px) 0, 100% 28px, 100% 100%, 28px 100%, 0 calc(100% - 28px));
+    box-shadow: 0 0 60px rgba(34,211,238,.12), 0 0 60px rgba(232,121,249,.08) inset;
+  }
+  .panel::before {
+    content: "SYS://SWOOP_DOWNLOAD_MANAGER";
+    position: absolute; top: -1px; left: 24px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 2px; color: var(--cyan);
+    background: #050508; padding: 4px 10px;
+  }
+  .status-line { font-family: var(--mono); font-size: 13px; color: #34d399; letter-spacing: 1px; }
+  .status-line .cursor { display: inline-block; width: 8px; height: 15px; background: #34d399; vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  h1 {
+    margin-top: 18px; font-size: 72px; font-weight: 900; letter-spacing: 4px; line-height: 1.1;
+    text-shadow: 0 0 30px rgba(34,211,238,.4);
+  }
+  h1 em {
+    font-style: normal;
+    color: var(--magenta); text-shadow: 0 0 30px rgba(232,121,249,.55);
+  }
+  .tagline { margin-top: 20px; font-size: 16px; color: var(--text-dim); line-height: 1.8; max-width: 560px; }
+  .tagline code { font-family: var(--mono); color: var(--cyan); background: rgba(34,211,238,.1); padding: 1px 8px; border-radius: 4px; font-size: 14px; }
+  .cta { margin-top: 40px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .btn-primary {
+    font-family: var(--mono); font-size: 15px; font-weight: 700; letter-spacing: 2px;
+    padding: 16px 38px; cursor: pointer; color: #03181d; border: none;
+    background: linear-gradient(90deg, var(--cyan), #67e8f9);
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+    box-shadow: 0 0 36px rgba(34,211,238,.5);
+  }
+  .btn-ghost {
+    font-family: var(--mono); font-size: 14px; letter-spacing: 2px;
+    padding: 16px 32px; cursor: pointer; color: var(--magenta);
+    background: transparent; border: 1px solid rgba(232,121,249,.55);
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+  }
+  .meta {
+    margin-top: 38px; padding-top: 22px; border-top: 1px dashed rgba(165,168,200,.25);
+    display: flex; gap: 26px; font-family: var(--mono); font-size: 12px; color: var(--text-dim); letter-spacing: 1px;
+  }
+  .meta a { color: var(--cyan); text-decoration: none; }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="logo"><b>SWOOP</b><i>_</i></div>
+    <div class="nav-links">
+      <a href="#">features</a><a href="#">download</a><a href="#">docs</a><a href="#">github</a>
+      <div class="theme-toggle">[ LIGHT ]</div>
+    </div>
+  </nav>
+  <main>
+    <div class="panel">
+      <div class="status-line">$ swoop --version&nbsp;&nbsp;▸ v1.2.0 stable&nbsp;&nbsp;<span class="cursor"></span></div>
+      <h1>DOWNLOAD<br>AT <em>WARP</em> SPEED</h1>
+      <p class="tagline">Rust 编写的多线程下载引擎：<code>32 连接分段加速</code>、断点续传、HLS/DASH 流录制、整站镜像 —— 全部装进一个小巧二进制。</p>
+      <div class="cta">
+        <button class="btn-primary">[↓] DOWNLOAD .EXE</button>
+        <button class="btn-ghost">macOS .DMG</button>
+      </div>
+      <div class="meta">
+        <span>CDN ▸ cdn.muffin.xin</span>
+        <span><a href="#">RELEASES ▸ github.com/i-mufeng/muffin-swoop</a></span>
+        <span>LIC ▸ MIT</span>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

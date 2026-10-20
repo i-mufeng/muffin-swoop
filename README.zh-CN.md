@@ -40,7 +40,7 @@ Swoop 是一个围绕多连接下载引擎构建的原生下载管理器。普�
 | macOS（Apple Silicon） | `.dmg` / 签名更新 `.zip` |
 | Windows（x64 / ARM64） | 用户级 NSIS 安装包 |
 
-- 无需管理员权限——Swoop 按用户安装，不打扰系统。
+- 默认按当前用户安装，不强制写入系统目录；仅登记浏览器扩展等系统级操作会请求一次管理员授权（UAC）。
 - Windows 安装包已在 Windows 平台原生构建发布，暂无 Authenticode 签名，首次运行可能触发 SmartScreen；交互桌面验收项保留，详见 [验收说明](docs/desktop-validation.md)。
 - 内置**签名自动更新**（Ed25519，稳定/预览通道）；更新源、公钥与检查间隔均可配置。见 [更新说明](docs/updates.md)。
 - **只有媒体下载（HLS/DASH/MMS）需要 FFmpeg**，普通文件下载完全运行在 Swoop 自研引擎上。
@@ -63,6 +63,7 @@ Swoop 是一个围绕多连接下载引擎构建的原生下载管理器。普�
 ### 浏览器集成
 
 - **Chromium 与 Firefox 扩展（MV3）**在浏览器下载面板弹出*之前*接管下载——Chromium 在文件名确定阶段介入，Swoop 无法接管时自动回退给浏览器。见 [协议与安全](docs/browser-extension.md)。
+  Edge 用户可从 [Edge 加载项商店一键安装](https://microsoftedge.microsoft.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh)；360 极速/安全、QQ 等国产 Chromium 浏览器可将 Releases 中的 `.crx` 拖入扩展管理页安装（360 安全浏览器用 `se://extensions/`，360 极速用 `chrome://myextensions/`）。
 - **被动媒体检测**记录页面上的音视频候选供你选择；不会自动开始下载。
 - 右键任意链接、图片、视频即可发送到 Swoop；扩展弹窗可列出当前页全部链接。
 
@@ -96,6 +97,7 @@ crates/ftp      swoop-ftp       可取消的 FTP/FTPS 传输
 crates/updater  swoop-updater   签名更新、安装与恢复
 crates/i18n     swoop-i18n      桌面语言资源（编译期检查）
 extension/      Chromium / Firefox MV3 扩展（TypeScript + esbuild）
+crates/browser-bridge  浏览器识别与扩展安装策略（策略表：crates/browser-bridge/browsers.toml）
 docs/           设计与验收文档
 assets/         品牌资源、截图、内嵌字体子集
 scripts/        打包、安装包与字体子集工具

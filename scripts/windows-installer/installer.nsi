@@ -91,6 +91,9 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
   !define MULTIUSER_INSTALLMODEPAGE_SHOWUSERNAME
   !define MULTIUSER_INSTALLMODE_FUNCTION RestorePreviousInstallLocation
   !define MULTIUSER_EXECUTIONLEVEL Highest
+  ; Swoop: 默认保持 per-user——历史版本（≤0.7.x，只有 per-user 安装包）升级时落在原目录，
+  ; 重装页才能检出旧安装；per-machine 仍可在安装模式页手动选择。
+  !define MULTIUSER_INSTALLMODE_DEFAULT_CURRENTUSER
   !include MultiUser.nsh
 !endif
 
@@ -391,14 +394,14 @@ FunctionEnd
 !ifdef LANG_SIMPCHINESE
   SetFont /LANG=${LANG_SIMPCHINESE} "Microsoft YaHei UI" 9
   LangString swoopWelcomeTitle ${LANG_SIMPCHINESE} "欢迎安装 ${PRODUCTNAME}"
-  LangString swoopWelcomeText ${LANG_SIMPCHINESE} "${PRODUCTNAME} ${VERSION} 是一款多连接分段下载器，支持断点续传、浏览器接管、FTP 与流媒体下载。$\r$\n$\r$\n只为当前用户安装，不需要管理员权限。$\r$\n$\r$\n点击“下一步”继续。"
+  LangString swoopWelcomeText ${LANG_SIMPCHINESE} "${PRODUCTNAME} ${VERSION} 是一款多连接分段下载器，支持断点续传、浏览器接管、FTP 与流媒体下载。$\r$\n$\r$\n默认只为当前用户安装。若你是管理员，启动时会收到一次 UAC 授权请求，用于把浏览器扩展登记到系统中。$\r$\n$\r$\n点击“下一步”继续。"
   LangString swoopFinishTitle ${LANG_SIMPCHINESE} "${PRODUCTNAME} 已安装完成"
   LangString swoopFinishText ${LANG_SIMPCHINESE} "${PRODUCTNAME} 已安装到这台电脑。$\r$\n$\r$\n点击“完成”退出安装程序。"
 !endif
 !ifdef LANG_ENGLISH
   SetFont /LANG=${LANG_ENGLISH} "Segoe UI" 9
   LangString swoopWelcomeTitle ${LANG_ENGLISH} "Welcome to ${PRODUCTNAME}"
-  LangString swoopWelcomeText ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is a multi-connection download manager with resumable downloads, browser integration, FTP and streaming media support.$\r$\n$\r$\nIt installs for the current user only and does not need administrator rights.$\r$\n$\r$\nClick Next to continue."
+  LangString swoopWelcomeText ${LANG_ENGLISH} "${PRODUCTNAME} ${VERSION} is a multi-connection download manager with resumable downloads, browser integration, FTP and streaming media support.$\r$\n$\r$\nInstalls for the current user by default. Administrators will see one UAC prompt at startup so the browser extension can be registered.$\r$\n$\r$\nClick Next to continue."
   LangString swoopFinishTitle ${LANG_ENGLISH} "${PRODUCTNAME} is ready"
   LangString swoopFinishText ${LANG_ENGLISH} "${PRODUCTNAME} has been installed on this computer.$\r$\n$\r$\nClick Finish to close Setup."
 !endif
@@ -591,6 +594,18 @@ Section Install
       Call CreateStartMenuShortcut
   shortcuts_done:
 
+  ; Swoop: 尽力把浏览器扩展登记到识别到的浏览器（失败不影响安装本身）。
+  ; 安装包以 Highest 请求执行级别：管理员启动时已带提权令牌，这里能直接写入
+  ; HKCU\Software\Policies 下的 Edge ExtensionInstallForcelist；普通用户（无管理员凭据）
+  ; 运行时此步会失败并只进日志，可在 Swoop 设置页点“一键安装”补登记（会请求 UAC）。
+  IfFileExists "$INSTDIR\swoop-cli.exe" 0 ext_install_done
+  DetailPrint "Registering browser extension..."
+  nsExec::ExecToLog '"$INSTDIR\swoop-cli.exe" browsers install --all --silent'
+  Pop $0
+  StrCmp $0 "0" ext_install_done 0
+    DetailPrint "Browser extension registration incomplete (exit $0); finish it later in Swoop Settings."
+  ext_install_done:
+
   ; Auto close this page for passive mode
   ${IfThen} $PassiveMode == 1 ${|} SetAutoClose true ${|}
 SectionEnd
@@ -620,6 +635,14 @@ FunctionEnd
 
 Section Uninstall
   !insertmacro CheckIfAppIsRunning
+
+  ; Swoop: 先清理浏览器扩展登记（此时扩展文件尚未删除）
+  IfFileExists "$INSTDIR\swoop-cli.exe" 0 un_ext_done
+  nsExec::ExecToLog '"$INSTDIR\swoop-cli.exe" browsers uninstall'
+  Pop $0
+  StrCmp $0 "0" un_ext_done 0
+    DetailPrint "Browser extension cleanup incomplete (exit $0); leftover policy entries can be removed in Swoop Settings."
+  un_ext_done:
 
   ; Delete the app directory and its content from disk
   ; Copy main executable

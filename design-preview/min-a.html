@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swoop — 方案 A · 素白</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --ink: #111214;
+    --dim: #6b7280;
+    --accent: #2563eb;
+    --hairline: rgba(17,18,20,.12);
+  }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #fafafa url(assets/bg-min-light.png) center / cover no-repeat fixed;
+    color: var(--ink);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 56px; height: 72px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .logo { font-size: 18px; font-weight: 700; letter-spacing: .5px; display: flex; align-items: center; gap: 10px; }
+  .logo-mark { width: 26px; height: 26px; border-radius: 7px; background: var(--ink); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 800; }
+  .nav-links { display: flex; gap: 32px; align-items: center; font-size: 14px; }
+  .nav-links a { color: var(--dim); text-decoration: none; }
+  .nav-links a:hover { color: var(--ink); }
+  .theme-toggle {
+    width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--hairline);
+    background: transparent; display: grid; place-items: center; font-size: 14px; cursor: pointer;
+  }
+  main {
+    height: calc(100vh - 72px);
+    display: flex; flex-direction: column; justify-content: center;
+    padding: 0 56px; max-width: 1200px; margin: 0 auto; width: 100%;
+  }
+  .ver {
+    font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; color: var(--dim);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .ver::before { content: ""; width: 32px; height: 1px; background: var(--accent); }
+  .ver b { color: var(--accent); font-weight: 600; }
+  h1 {
+    margin-top: 26px; font-size: 76px; font-weight: 700; letter-spacing: -2px; line-height: 1.12;
+  }
+  .tagline { margin-top: 24px; font-size: 17px; color: var(--dim); line-height: 1.9; max-width: 520px; }
+  .cta { margin-top: 48px; display: flex; gap: 14px; align-items: center; }
+  .btn-primary {
+    padding: 15px 34px; border-radius: 10px; border: none; cursor: pointer;
+    font-size: 15px; font-weight: 600; color: #fff; background: var(--ink);
+    transition: background .2s;
+  }
+  .btn-primary:hover { background: var(--accent); }
+  .btn-ghost {
+    padding: 14px 28px; border-radius: 10px; cursor: pointer;
+    font-size: 14.5px; font-weight: 500; color: var(--ink);
+    background: transparent; border: 1px solid var(--hairline);
+  }
+  .meta {
+    margin-top: 56px; padding-top: 24px; border-top: 1px solid var(--hairline);
+    display: flex; gap: 32px; font-size: 13px; color: var(--dim);
+  }
+  .meta a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--hairline); padding-bottom: 1px; }
+  .meta a:hover { border-color: var(--accent); color: var(--accent); }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="logo"><div class="logo-mark">S</div>Swoop</div>
+    <div class="nav-links">
+      <a href="#">功能</a><a href="#">下载</a><a href="#">文档</a><a href="#">GitHub</a>
+      <button class="theme-toggle">🌙</button>
+    </div>
+  </nav>
+  <main>
+    <div class="ver">最新版本 <b>v1.2.0</b> · 2026-10</div>
+    <h1>下载，本该如此简单。</h1>
+    <p class="tagline">Swoop 是一个用 Rust 编写的下载管理器。多连接分段加速、断点续传、流媒体录制、整站镜像——轻盈、快速、开源。</p>
+    <div class="cta">
+      <button class="btn-primary">下载 Windows 版</button>
+      <button class="btn-ghost">macOS 版</button>
+    </div>
+    <div class="meta">
+      <span>由 cdn.muffin.xin 分发</span>
+      <a href="#">GitHub Releases →</a>
+      <span>MIT License</span>
+    </div>
+  </main>
+</body>
+</html>

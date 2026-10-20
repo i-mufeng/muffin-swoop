@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Swoop — 方案 C · 极光流璃</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --teal: #2dd4bf;
+    --violet: #a78bfa;
+    --text: #f4f3ff;
+    --text-dim: #b6b3d6;
+  }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #07060f url(assets/bg-c-aurora.png) center / cover no-repeat fixed;
+    color: var(--text);
+    min-height: 100vh;
+    overflow: hidden;
+  }
+  nav {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 26px 60px;
+  }
+  .logo {
+    display: flex; align-items: center; gap: 12px; font-size: 21px; font-weight: 600; letter-spacing: .5px;
+  }
+  .logo-dot {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: conic-gradient(from 200deg, var(--teal), var(--violet), #f472b6, var(--teal));
+    display: grid; place-items: center; color: #0b0a16; font-weight: 800; font-size: 17px;
+    box-shadow: 0 0 30px rgba(167,139,250,.5);
+  }
+  .nav-pill {
+    display: flex; gap: 6px; align-items: center;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+    backdrop-filter: blur(18px); border-radius: 999px; padding: 6px;
+  }
+  .nav-pill a {
+    color: var(--text-dim); text-decoration: none; font-size: 14px;
+    padding: 8px 18px; border-radius: 999px; transition: all .2s;
+  }
+  .nav-pill a:hover, .nav-pill a.active { color: var(--text); background: rgba(255,255,255,.1); }
+  .theme-toggle {
+    width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(255,255,255,.15);
+    background: rgba(255,255,255,.07); backdrop-filter: blur(18px);
+    display: grid; place-items: center; font-size: 16px; cursor: pointer;
+  }
+  main {
+    height: calc(100vh - 92px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 0 24px; margin-top: -30px;
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+    backdrop-filter: blur(18px); border-radius: 999px;
+    padding: 9px 22px; font-size: 13px; color: var(--text-dim);
+  }
+  .badge b { color: var(--teal); font-weight: 600; }
+  h1 {
+    margin-top: 30px; font-size: 88px; font-weight: 700; letter-spacing: -1px; line-height: 1.08;
+    background: linear-gradient(115deg, #ffffff 10%, var(--teal) 45%, var(--violet) 75%, #f472b6 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .tagline { margin-top: 24px; font-size: 19px; color: var(--text-dim); max-width: 600px; line-height: 1.8; }
+  .glass-card {
+    margin-top: 46px;
+    display: flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.13);
+    backdrop-filter: blur(22px); border-radius: 22px; padding: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.35);
+  }
+  .glass-card .btn-primary {
+    padding: 15px 36px; border-radius: 16px; border: none; cursor: pointer;
+    font-size: 15px; font-weight: 700; color: #0b0a16;
+    background: linear-gradient(120deg, var(--teal), #7dd3fc);
+    box-shadow: 0 6px 26px rgba(45,212,191,.4);
+  }
+  .glass-card .btn-item {
+    padding: 15px 26px; border-radius: 16px; border: none; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: var(--text); background: transparent;
+    transition: background .2s;
+  }
+  .glass-card .btn-item:hover { background: rgba(255,255,255,.09); }
+  .meta { margin-top: 34px; display: flex; gap: 30px; font-size: 13px; color: var(--text-dim); }
+  .meta a { color: var(--violet); text-decoration: none; border-bottom: 1px dashed rgba(167,139,250,.5); padding-bottom: 1px; }
+</style>
+</head>
+<body>
+  <nav>
+    <div class="logo"><div class="logo-dot">S</div>Swoop</div>
+    <div class="nav-pill">
+      <a href="#" class="active">首页</a><a href="#">功能</a><a href="#">下载</a><a href="#">文档</a>
+    </div>
+    <div class="theme-toggle">☀️</div>
+  </nav>
+  <main>
+    <div class="badge">✨ <b>v1.2.0</b> 现已发布 — 多连接引擎全面升级</div>
+    <h1>让下载<br>如极光般流动</h1>
+    <p class="tagline">Rust 原生打造的现代下载管理器，多连接分段加速、流媒体录制、整站镜像，轻盈而强大。</p>
+    <div class="glass-card">
+      <button class="btn-primary">⬇ 下载 Windows 版</button>
+      <button class="btn-item">macOS 版</button>
+      <button class="btn-item">全部版本</button>
+    </div>
+    <div class="meta">
+      <span>⚡ cdn.muffin.xin 极速分发</span>
+      <span><a href="#">查看 GitHub Releases</a></span>
+      <span>MIT License</span>
+    </div>
+  </main>
+</body>
+</html>

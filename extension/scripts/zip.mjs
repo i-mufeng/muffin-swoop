@@ -21,15 +21,16 @@ export function listFiles(root, prefix = "") {
   return files.sort();
 }
 
-/** 把目录内容打成 zip（目录本身不进包，manifest.json 位于包根）。 */
-export function zipDirectory(root) {
+/** 把目录内容打成 zip（目录本身不进包，manifest.json 位于包根）。
+ *  prefix 给所有条目加顶层文件夹（如 "swoop-extension"），解压安装用。 */
+export function zipDirectory(root, prefix = "") {
   const locals = [];
   const centrals = [];
   let offset = 0;
   for (const path of listFiles(root)) {
     const data = readFileSync(join(root, path));
     const compressed = deflateRawSync(data, { level: 9 });
-    const name = Buffer.from(path, "utf8");
+    const name = Buffer.from(prefix ? `${prefix}/${path}` : path, "utf8");
     const crc = crc32(data);
 
     const local = Buffer.alloc(30);

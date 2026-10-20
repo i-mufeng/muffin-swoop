@@ -12,7 +12,8 @@
     "icons": "node scripts/make-icons.mjs",
     "build:chromium": "node esbuild.config.mjs --browser=chromium",
     "build:firefox": "node esbuild.config.mjs --browser=firefox",
-    "package": "node esbuild.config.mjs && node scripts/package.mjs"
+    "package": "node esbuild.config.mjs && node scripts/package.mjs && node scripts/package-crx.mjs",
+    "package:crx": "node scripts/package-crx.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.3.5",

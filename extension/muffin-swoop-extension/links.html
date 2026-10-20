@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="下载本页链接 · Swoop">下载本页链接 · Swoop</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="links.css">
+</head>
+<body>
+  <main>
+    <header class="row">
+      <img src="icons/icon-48.png" width="32" height="32" alt="">
+      <div class="source">
+        <h1 data-i18n="下载本页链接">下载本页链接</h1>
+        <div id="source" class="muted ellipsis"></div>
+      </div>
+      <button id="open-options" data-i18n="设置">设置</button>
+    </header>
+    <p id="notice" role="status" class="muted" data-i18n="正在读取链接…">正在读取链接…</p>
+    <div class="card filters">
+      <label class="search"><span class="sr-only" data-i18n="筛选名称或网址">筛选名称或网址</span><input id="query" type="search" placeholder="筛选名称或网址" data-i18n-placeholder="筛选名称或网址" autocomplete="off"></label>
+      <label><span class="sr-only" data-i18n="文件类型">文件类型</span><select id="extension"><option value="*" data-i18n="所有类型">所有类型</option></select></label>
+      <button id="select-visible" data-i18n="全选当前结果">全选当前结果</button>
+      <button id="clear-visible" data-i18n="取消当前选择">取消当前选择</button>
+    </div>
+    <div class="card list">
+      <table>
+        <thead><tr><th class="check-col"><span class="sr-only" data-i18n="选择">选择</span></th><th data-i18n="链接">链接</th><th class="status-col" data-i18n="提交结果">提交结果</th></tr></thead>
+        <tbody id="links"></tbody>
+      </table>
+      <div id="empty" class="muted empty" hidden data-i18n="没有符合条件的链接">没有符合条件的链接</div>
+    </div>
+    <footer class="card row">
+      <span id="summary" role="status" class="muted"></span>
+      <span class="spacer"></span>
+      <button id="stop" hidden data-i18n="停止后续提交">停止后续提交</button>
+      <button id="submit" class="primary" disabled data-i18n="提交所选">提交所选</button>
+    </footer>
+  </main>
+  <script src="links.js"></script>
+</body>
+</html>

@@ -2,14 +2,16 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+use crate::browsers;
 use crate::instance::{self, Command, ConflictAction};
 
-const HELP: &str = "Swoop 命令行\n\n用法：swoop-cli [--data-dir PATH] [--json] COMMAND\n  --help, -h             显示帮助\n  --version, -V          显示版本\n  status                 输出任务与队列 JSON（不含 URL 和请求头）\n  show                   显示已有桌面窗口\n  resolve ID --action overwrite|rename|skip\n                         处理单个同名冲突\n  conflict-policy [ask|rename|overwrite|skip]\n                         查询或保存同名文件默认策略\n  add URL [--dir PATH] [--name NAME] [--queue ID]\n                         将 HTTP(S)/FTP(S) 链接加入已有实例\n  pause ID               暂停任务\n  resume ID              继续任务\n  queue-start ID         启动队列\n  queue-stop ID          停止队列及其在途任务\n  media-add URL --output FILE [--duration SEC] [--max-height N] [--audio-language TAG] [--speed-limit BPS]\n  media-status [ID]       查询媒体任务（不含源链接/请求头）\n  media-stop ID          停止媒体任务\n  media-limit ID BPS     设置媒体任务限速，0 不限速\n  media-retry ID         继续已停止/失败媒体任务\n  media-resolve ID --action overwrite|rename|skip\n                         处理媒体同名冲突\n  grabber-create URL --dir PATH [--depth N] [--pages N] [--bytes N] [--concurrency N]\n                         创建项目（不开始抓取）\n  grabber-open PATH      打开已有项目\n  grabber-run            运行当前项目\n  grabber-stop           停止当前抓取\n  grabber-status         查询当前项目及最近异步操作\n\n所有控制命令均输出 JSON。没有实例时返回非零，不启动 GUI、不写数据库。\nWindows 脚本请使用 swoop-cli.exe；swoop.exe 保留无控制台桌面启动方式。\n";
+const HELP: &str = "Swoop 命令行\n\n用法：swoop-cli [--data-dir PATH] [--json] COMMAND\n  --help, -h             显示帮助\n  --version, -V          显示版本\n  status                 输出任务与队列 JSON（不含 URL 和请求头）\n  show                   显示已有桌面窗口\n  resolve ID --action overwrite|rename|skip\n                         处理单个同名冲突\n  conflict-policy [ask|rename|overwrite|skip]\n                         查询或保存同名文件默认策略\n  add URL [--dir PATH] [--name NAME] [--queue ID]\n                         将 HTTP(S)/FTP(S) 链接加入已有实例\n  pause ID               暂停任务\n  resume ID              继续任务\n  queue-start ID         启动队列\n  queue-stop ID          停止队列及其在途任务\n  media-add URL --output FILE [--duration SEC] [--max-height N] [--audio-language TAG] [--speed-limit BPS]\n  media-status [ID]       查询媒体任务（不含源链接/请求头）\n  media-stop ID          停止媒体任务\n  media-limit ID BPS     设置媒体任务限速，0 不限速\n  media-retry ID         继续已停止/失败媒体任务\n  media-resolve ID --action overwrite|rename|skip\n                         处理媒体同名冲突\n  grabber-create URL --dir PATH [--depth N] [--pages N] [--bytes N] [--concurrency N]\n                         创建项目（不开始抓取）\n  grabber-open PATH      打开已有项目\n  grabber-run            运行当前项目\n  grabber-stop           停止当前抓取\n  grabber-status         查询当前项目及最近异步操作\n  browsers list          扫描已安装的浏览器并输出扩展状态\n  browsers install --all|--id ID [--silent] [--ext-dir PATH]\n                         把扩展登记到识别到的浏览器；--silent 时跳过引导类策略\n  browsers uninstall     移除已登记的扩展（注册表 / policies.json）\n  browsers guide --id ID 打开扩展页并定位安装包，引导拖拽安装\n\n所有控制命令均输出 JSON。没有实例时返回非零，不启动 GUI、不写数据库。\nWindows 脚本请使用 swoop-cli.exe；swoop.exe 保留无控制台桌面启动方式。\n";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Invocation {
     Help(bool),
     Version(bool),
+    Browsers { json: bool, action: browsers::Action },
     Request { data: PathBuf, command: Command },
 }
 
@@ -115,6 +117,46 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Invocation, String>
                 data: absolute(data)?,
                 command: Command::Add { url, directory, name, queue },
             });
+        }
+        "browsers" => {
+            let sub =
+                text(rest.next().ok_or(swoop_i18n::tr!("browsers 需要子命令：list / install / uninstall / guide"))?)?;
+            let action = match sub.as_str() {
+                "list" => browsers::Action::List,
+                "install" | "uninstall" | "guide" => {
+                    let mut all = false;
+                    let mut id = None;
+                    let mut silent = false;
+                    let mut ext_dir = None;
+                    let mut rest_args = Vec::new();
+                    while let Some(option) = rest.next() {
+                        rest_args.push(option);
+                    }
+                    let mut iter = rest_args.into_iter();
+                    while let Some(option) = iter.next() {
+                        let option = text(option)?;
+                        let need = |value: Option<OsString>| -> Result<String, String> {
+                            text(value.ok_or_else(|| swoop_i18n::trf!("{option} 需要值"))?)
+                        };
+                        match option.as_str() {
+                            "--all" => all = true,
+                            "--id" if id.is_none() => id = Some(need(iter.next())?),
+                            "--silent" => silent = true,
+                            "--ext-dir" if ext_dir.is_none() => {
+                                ext_dir = Some(absolute(PathBuf::from(need(iter.next())?))?)
+                            }
+                            _ => return Err(swoop_i18n::trf!("未知选项：{option}")),
+                        }
+                    }
+                    match sub.as_str() {
+                        "install" => browsers::Action::Install { all, id, silent, ext_dir },
+                        "uninstall" => browsers::Action::Uninstall { ext_dir },
+                        _ => browsers::Action::Guide { id: id.ok_or(swoop_i18n::tr!("guide 需要 --id"))?, ext_dir },
+                    }
+                }
+                _ => return Err(swoop_i18n::tr!("未知的 browsers 子命令（list / install / uninstall / guide）").into()),
+            };
+            return Ok(Invocation::Browsers { json, action });
         }
         _ => return Err(swoop_i18n::trf!("未知命令：{command}；使用 --help 查看帮助")),
     };
@@ -230,6 +272,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> u8 {
             }
             0
         }
+        Invocation::Browsers { json, action } => browsers::run(action, json),
         Invocation::Request { data, command } => {
             let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
                 Ok(runtime) => runtime,
@@ -432,12 +475,16 @@ mod tests {
     }
     #[test]
     fn media_rate_cli_accepts_zero_and_rejects_invalid_limits() {
-
         let output = std::env::temp_dir().join("media-rate-fixture.mp4").to_string_lossy().into_owned();
-        let Invocation::Request { command: Command::MediaAdd { speed_limit_bps, .. }, .. } =
-            parse(args(&["media-add", "https://media.test/playlist.m3u8", "--output", &output, "--speed-limit", "65536"]))
-                .unwrap()
-        else {
+        let Invocation::Request { command: Command::MediaAdd { speed_limit_bps, .. }, .. } = parse(args(&[
+            "media-add",
+            "https://media.test/playlist.m3u8",
+            "--output",
+            &output,
+            "--speed-limit",
+            "65536",
+        ]))
+        .unwrap() else {
             panic!("expected media-add");
         };
         assert_eq!(speed_limit_bps, Some(65536));

@@ -331,6 +331,22 @@ pub fn note(ui: &mut Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(p.text_muted));
 }
 
+/// 行内信息提示（卡片外）：浅色底 + 图标
+pub fn info(ui: &mut Ui, p: &Palette, text: &str) {
+    Frame::new()
+        .fill(p.accent_soft)
+        .corner_radius(CornerRadius::same(R_CTRL))
+        .inner_margin(Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(egui_phosphor::regular::INFO).size(15.0).color(p.accent));
+                ui.add(egui::Label::new(RichText::new(text).size(12.5).color(p.text)).wrap());
+            });
+        });
+    ui.add_space(8.0);
+}
+
 pub fn error(ui: &mut Ui, p: &Palette, text: &str) {
     Frame::new()
         .fill(p.danger_soft)

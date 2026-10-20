@@ -11,3 +11,16 @@ __pycache__/
 
 # Upyun publish credentials (scripts/publish-upyun.sh)
 .env
+
+# 扩展签名私钥，绝不入库
+/extension/dist.pem
+
+# 发布产物
+/releases
+
+# 网站依赖与构建产物
+/website/node_modules
+/website/dist
+
+# 设计稿预览的依赖
+/design-preview/node_modules

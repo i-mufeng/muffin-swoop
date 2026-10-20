@@ -28,6 +28,7 @@ swoop-media = { workspace = true }
 swoop-grabber = { workspace = true }
 swoop-updater = { workspace = true }
 swoop-i18n = { workspace = true }
+swoop-browser-bridge = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
