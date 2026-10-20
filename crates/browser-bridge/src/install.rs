@@ -44,6 +44,7 @@ pub(crate) fn load_extension(dir: &Path) -> Result<ExtensionInfo, BridgeError> {
 // ---- Firefox distribution/policies.json 合并（纯函数） ----
 
 /// 把 xpi 路径合并进已有的 policies.json 内容（None 表示文件不存在）。
+#[cfg(any(windows, test))]
 pub(crate) fn merge_firefox_policy(existing: Option<serde_json::Value>, xpi: &str) -> serde_json::Value {
     let mut root = existing.unwrap_or_else(|| serde_json::json!({}));
     let root = root.as_object_mut().expect("policies.json 根必须是对象");
@@ -66,6 +67,7 @@ pub(crate) fn merge_firefox_policy(existing: Option<serde_json::Value>, xpi: &st
 }
 
 /// 从 policies 内容里移除指定 xpi 路径；返回清理后的内容（可能已无 Swoop 痕迹）。
+#[cfg(any(windows, test))]
 pub(crate) fn remove_firefox_policy(mut root: serde_json::Value, xpi: &str) -> serde_json::Value {
     let Some(policies) = root.get_mut("policies").and_then(|v| v.as_object_mut()) else {
         return root;
@@ -87,6 +89,7 @@ pub(crate) fn remove_firefox_policy(mut root: serde_json::Value, xpi: &str) -> s
 }
 
 /// 读取当前 Install 列表（仅当结构完整时）。
+#[cfg(any(windows, test))]
 pub(crate) fn firefox_install_list(root: &serde_json::Value) -> Option<Vec<String>> {
     let list = root.get("policies")?.get("Extensions")?.get("Install")?.as_array()?;
     Some(list.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())

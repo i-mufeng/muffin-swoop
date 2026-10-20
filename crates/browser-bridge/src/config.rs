@@ -1,5 +1,6 @@
 //! browsers.toml 解析与 %ENV% 路径展开。
 
+#[cfg(any(windows, test))]
 use std::collections::HashMap;
 
 use serde::Deserialize;
@@ -61,12 +62,14 @@ pub(crate) fn load() -> Vec<BrowserDef> {
 }
 
 /// 用真实环境变量展开 %VAR% 片段（Windows 环境变量不区分大小写）。
+#[cfg(windows)]
 pub(crate) fn expand(text: &str) -> String {
     let vars: HashMap<String, String> = std::env::vars().collect();
     expand_with(&vars, text)
 }
 
 /// 可注入变量的展开逻辑（测试用）。
+#[cfg(any(windows, test))]
 pub(crate) fn expand_with(vars: &HashMap<String, String>, text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;

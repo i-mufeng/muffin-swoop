@@ -128,10 +128,7 @@ fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Invocation, String>
                     let mut id = None;
                     let mut silent = false;
                     let mut ext_dir = None;
-                    let mut rest_args = Vec::new();
-                    while let Some(option) = rest.next() {
-                        rest_args.push(option);
-                    }
+                    let rest_args: Vec<_> = rest.collect();
                     let mut iter = rest_args.into_iter();
                     while let Some(option) = iter.next() {
                         let option = text(option)?;

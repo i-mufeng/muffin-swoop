@@ -331,7 +331,8 @@ pub fn note(ui: &mut Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).size(12.0).color(p.text_muted));
 }
 
-/// 行内信息提示（卡片外）：浅色底 + 图标
+/// 行内信息提示（卡片外）：浅色底 + 图标；目前只有 Windows 的浏览器扩展设置用到
+#[cfg(windows)]
 pub fn info(ui: &mut Ui, p: &Palette, text: &str) {
     Frame::new()
         .fill(p.accent_soft)

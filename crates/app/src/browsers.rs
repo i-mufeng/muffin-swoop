@@ -2,9 +2,11 @@
 
 use std::path::PathBuf;
 
+#[cfg(windows)]
 use swoop_browser_bridge::{DetectedBrowser, ExtensionInfo, ExtensionStatus, InstallOutcome};
 
 /// GUI 列表里的一行。
+#[cfg(windows)]
 #[derive(Debug, Clone)]
 pub struct BrowserRow {
     pub id: String,
@@ -15,6 +17,7 @@ pub struct BrowserRow {
 }
 
 /// 这一行能给用户的动作。
+#[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowAction {
     /// 无可做的（已登记，或平台不支持）。
@@ -37,6 +40,7 @@ pub enum Action {
 }
 
 /// 默认扩展目录：可执行文件旁边（安装包会把 crx/xpi 释放在那里）。
+#[cfg(windows)]
 fn default_ext_dir() -> Result<PathBuf, String> {
     std::env::current_exe()
         .ok()
@@ -44,6 +48,7 @@ fn default_ext_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| swoop_i18n::tr!("无法确定可执行文件目录").to_string())
 }
 
+#[cfg(windows)]
 fn load_ext(ext_dir: &Option<PathBuf>) -> Result<ExtensionInfo, String> {
     let dir = match ext_dir {
         Some(dir) => dir.clone(),
@@ -52,15 +57,10 @@ fn load_ext(ext_dir: &Option<PathBuf>) -> Result<ExtensionInfo, String> {
     ExtensionInfo::load(&dir).map_err(|e| e.to_string())
 }
 
-/// 扫描并生成 GUI 行（非 Windows 返回空列表）。
+/// 扫描并生成 GUI 行。
 #[cfg(windows)]
 pub fn scan_rows() -> Vec<BrowserRow> {
     scan_rows_impl()
-}
-
-#[cfg(not(windows))]
-pub fn scan_rows() -> Vec<BrowserRow> {
-    Vec::new()
 }
 
 #[cfg(windows)]
@@ -164,7 +164,9 @@ fn elevated_install(id: &str) -> ElevatedInstall {
     use std::time::{Duration, Instant};
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
-    use windows_sys::Win32::UI::Shell::{SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
+    use windows_sys::Win32::UI::Shell::{
+        SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW,
+    };
 
     /// 提权进程本身只做两次注册表写入，正常毫秒级；留足用户看 UAC 弹窗后的进程调度余量
     const WAIT: Duration = Duration::from_secs(120);
@@ -236,6 +238,7 @@ pub fn guide_by_id(id: &str) -> Result<String, String> {
     Ok(outcome_label(&outcome).to_string())
 }
 
+#[cfg(windows)]
 pub fn outcome_label(outcome: &InstallOutcome) -> &'static str {
     match outcome {
         InstallOutcome::Registered => swoop_i18n::tr!("已登记，重启浏览器后生效"),
@@ -247,6 +250,7 @@ pub fn outcome_label(outcome: &InstallOutcome) -> &'static str {
     }
 }
 
+#[cfg(windows)]
 pub fn status_label(status: ExtensionStatus) -> &'static str {
     match status {
         ExtensionStatus::Installed => swoop_i18n::tr!("已登记"),
@@ -270,7 +274,7 @@ fn run_inner(action: Action, json: bool) -> Result<u8, String> {
     #[cfg(not(windows))]
     {
         let _ = (action, json);
-        return Err(BridgeError::Unsupported("浏览器扩展集成仅支持 Windows".into()).to_string());
+        Err(swoop_browser_bridge::BridgeError::Unsupported("浏览器扩展集成仅支持 Windows".into()).to_string())
     }
     #[cfg(windows)]
     {
