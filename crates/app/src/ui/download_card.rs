@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use egui::{
-    Align, Align2, Color32, CornerRadius, CursorIcon, Id, Label, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
-    ViewportId, pos2, vec2,
+    Align, Align2, Color32, CornerRadius, CursorIcon, Id, Label, Layout, Mesh, Pos2, Rect, RichText, Sense, Stroke, Ui,
+    Vec2, ViewportId, pos2, vec2,
 };
 use swoop_core::{TaskId, TaskSnapshot, TaskStatus};
 
@@ -400,11 +400,7 @@ fn card_contents(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], mo
                     }
                 });
             }
-            _ => {
-                chart(ui, p, t, history, color);
-                ui.add_space(6.0);
-                bar(ui, p, t, color);
-            }
+            _ => progress_chart(ui, p, t, history, color),
         }
     });
     action
@@ -448,39 +444,133 @@ fn status_line(p: &Palette, t: &TaskSnapshot) -> (String, Color32) {
     (text, p.text_muted)
 }
 
-/// 最近一分钟的速度曲线；纵轴按这段的峰值留点余量，峰值变化时平滑过渡
-fn chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), CHART_H), Sense::hover());
+/// 进度图：横轴是下载进度（左 0%、右 100%）——上面是这段进度里的速度曲线，下面是透明渐变的进度条，
+/// 当前进度处一道柔和的渐隐光柱（压在曲线底下）标出曲线的右边缘。文件大小未知时曲线退回按时间横排、进度条整条淡色
+fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], color: Color32) {
+    // 曲线区 + 间距 + 进度条合成一块分配，柔光柱和电波才能一笔贯穿
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), CHART_H + 9.0), Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    if history.len() < 2 {
-        ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, Stroke::new(1.0, p.border));
-        return;
-    }
-    let recent = &history[history.len().saturating_sub(CHART_SPAN)..];
-    let peak = recent.iter().copied().fold(0.0, f64::max).max(64.0 * 1024.0);
-    let ymax = ui.ctx().animate_value_with_time(Id::new(("card_ymax", t.id)), (peak * 1.15) as f32, anim_secs(0.4));
-    let color = if t.status == TaskStatus::Downloading { color } else { p.text_muted };
-    super::detail::speed_curve(ui.painter(), rect, history, CHART_SPAN, ymax, color);
-}
-
-/// 细进度条；大小未知时整条淡色，表示还在下
-fn bar(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 3.0), Sense::hover());
     let painter = ui.painter();
-    let radius = CornerRadius::same(2);
-    painter.rect_filled(rect, radius, p.track);
-    match t.progress() {
-        Some(done) => {
-            let done = ui.ctx().animate_value_with_time(Id::new(("card_bar", t.id)), done, anim_secs(0.3));
-            painter.rect_filled(Rect::from_min_size(rect.min, vec2(rect.width() * done, rect.height())), radius, color);
+    let plot = Rect::from_min_size(rect.min, vec2(rect.width(), CHART_H));
+    let bar = Rect::from_min_size(pos2(rect.left(), rect.bottom() - 3.0), vec2(rect.width(), 3.0));
+    painter.rect_filled(bar, CornerRadius::same(2), p.track);
+
+    let color = if t.status == TaskStatus::Downloading { color } else { p.text_muted };
+    // 曲线右缘、渐变收尾、柔光位置共用这个平滑后的进度，走动时不一顿一顿
+    let done = t.progress().map(|d| ui.ctx().animate_value_with_time(Id::new(("card_bar", t.id)), d, anim_secs(0.3)));
+
+    // 横轴即进度，轨道画成坐标轴：四分之一处淡淡的网格线贯穿曲线区，轨道上每 10% 一个刻口
+    if done.is_some() {
+        for frac in [0.25, 0.5, 0.75] {
+            let x = bar.left() + bar.width() * frac;
+            painter.vline(x, plot.top()..=bar.bottom(), Stroke::new(1.0, p.border.gamma_multiply(0.35)));
         }
+        for i in 1..10 {
+            let x = bar.left() + bar.width() * i as f32 / 10.0;
+            painter.vline(x, bar.top()..=bar.bottom(), Stroke::new(1.0, p.surface));
+        }
+    }
+
+    // 进度位置先画柔光，压在曲线和渐变条底下：一根以进度线为中心的柔光柱，横向向两侧渐隐、
+    // 竖向越靠进度条越亮；再叠一条淡淡的细线指示精确位置
+    if let Some(done) = done {
+        let x = bar.left() + bar.width() * done;
+        painter.add(glow_band(
+            x,
+            14.0,
+            plot.top(),
+            bar.bottom(),
+            color.gamma_multiply(0.06),
+            color.gamma_multiply(0.25),
+        ));
+        painter.vline(x, plot.top()..=bar.bottom(), Stroke::new(1.0, color.gamma_multiply(0.45)));
+        if t.status == TaskStatus::Downloading {
+            // 电波：每秒从进度线向前送出一段柔光，边走边散，和每秒一个速度采样同拍
+            let phase = ui.input(|i| i.time).fract() as f32;
+            let fade = (1.0 - phase).powi(2);
+            let cx = x + 26.0 * phase;
+            painter.add(glow_band(
+                cx,
+                9.0,
+                plot.top(),
+                bar.bottom(),
+                color.gamma_multiply(0.05 * fade),
+                color.gamma_multiply(0.35 * fade),
+            ));
+            ui.ctx().request_repaint_after(Duration::from_millis(33));
+        }
+    }
+
+    if history.len() < 2 {
+        painter.hline(plot.x_range(), plot.bottom() - 0.5, Stroke::new(1.0, p.border));
+    } else {
+        let recent = &history[history.len().saturating_sub(CHART_SPAN)..];
+        let peak = recent.iter().copied().fold(0.0, f64::max).max(64.0 * 1024.0);
+        let ymax = ui.ctx().animate_value_with_time(Id::new(("card_ymax", t.id)), (peak * 1.15) as f32, anim_secs(0.4));
+        match done {
+            // 曲线从这段采样覆盖的起点进度铺到当前进度；覆盖的进度按这段下载的字节数估算
+            Some(done) => {
+                let covered = (recent.iter().sum::<f64>() / t.total.unwrap_or(1) as f64) as f32;
+                let start = (done - covered).max(0.0);
+                let n = recent.len();
+                let y_of = |v: f64| plot.bottom() - (v as f32 / ymax.max(1.0)).clamp(0.0, 1.0) * plot.height();
+                let pts: Vec<Pos2> = recent
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        let x =
+                            plot.left() + (start + (done - start) * i as f32 / (n - 1).max(1) as f32) * plot.width();
+                        pos2(x, y_of(*v))
+                    })
+                    .collect();
+                super::detail::paint_curve(painter, plot.bottom(), &pts, color);
+            }
+            None => {
+                super::detail::speed_curve(painter, plot, history, CHART_SPAN, ymax, color);
+            }
+        }
+    }
+
+    match done {
+        Some(done) => {
+            let fill = Rect::from_min_max(bar.min, pos2(bar.left() + bar.width() * done, bar.bottom()));
+            // 透明渐变：左端几乎透明，向右渐实，到当前进度收尾
+            let mut mesh = Mesh::default();
+            let faint = color.gamma_multiply(0.12);
+            mesh.colored_vertex(fill.left_top(), faint);
+            mesh.colored_vertex(fill.left_bottom(), faint);
+            mesh.colored_vertex(fill.right_bottom(), color);
+            mesh.colored_vertex(fill.right_top(), color);
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(mesh);
+        }
+        // 大小未知：整条淡色，表示还在下
         None if t.status.is_active() => {
-            painter.rect_filled(rect, radius, color.gamma_multiply(0.35));
+            painter.rect_filled(bar, CornerRadius::same(2), color.gamma_multiply(0.35));
         }
         None => {}
     }
+}
+
+/// 一段竖向柔光带：以 `x` 为中心、半宽 `half`，横向从中心向两侧渐隐到透明，
+/// 中心竖线上从 `top` 处的 `mid_top` 渐到 `bottom` 处的 `mid_bottom`
+fn glow_band(x: f32, half: f32, top: f32, bottom: f32, mid_top: Color32, mid_bottom: Color32) -> Mesh {
+    let mut mesh = Mesh::default();
+    let clear = Color32::TRANSPARENT;
+    mesh.colored_vertex(pos2(x - half, top), clear); // 0
+    mesh.colored_vertex(pos2(x - half, bottom), clear); // 1
+    mesh.colored_vertex(pos2(x, bottom), mid_bottom); // 2
+    mesh.colored_vertex(pos2(x, top), mid_top); // 3
+    mesh.colored_vertex(pos2(x + half, top), clear); // 4
+    mesh.colored_vertex(pos2(x + half, bottom), clear); // 5
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    mesh.add_triangle(3, 2, 5);
+    mesh.add_triangle(3, 5, 4);
+    mesh
 }
 
 #[cfg(test)]

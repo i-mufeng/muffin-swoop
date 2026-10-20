@@ -349,12 +349,18 @@ pub(super) fn speed_curve(
     let pts: Vec<Pos2> =
         history.iter().enumerate().map(|(i, v)| pos2(plot.right() - (n - 1 - i) as f32 * step, y_of(*v))).collect();
 
-    // 面积：从曲线到底部的竖向渐隐
+    paint_curve(painter, plot.bottom(), &pts, color);
+    pts
+}
+
+/// 曲线的画法（面积 + 折线）：面积从曲线到 `bottom` 竖向渐隐。各点由调用方按横轴的含义
+/// （详情面板按时间、右下角卡片按进度）排好后传入
+pub(super) fn paint_curve(painter: &egui::Painter, bottom: f32, pts: &[Pos2], color: Color32) {
     let mut mesh = Mesh::default();
     let fill = color.gamma_multiply(0.28);
     for (i, pt) in pts.iter().enumerate() {
         mesh.colored_vertex(*pt, fill);
-        mesh.colored_vertex(pos2(pt.x, plot.bottom()), Color32::TRANSPARENT);
+        mesh.colored_vertex(pos2(pt.x, bottom), Color32::TRANSPARENT);
         if i > 0 {
             let k = (i * 2) as u32;
             mesh.add_triangle(k - 2, k - 1, k);
@@ -362,8 +368,7 @@ pub(super) fn speed_curve(
         }
     }
     painter.add(mesh);
-    painter.add(Shape::line(pts.clone(), Stroke::new(1.6, color)));
-    pts
+    painter.add(Shape::line(pts.to_vec(), Stroke::new(1.6, color)));
 }
 
 fn speed_chart(ui: &mut Ui, p: &Palette, id: TaskId, history: &[f64], color: Color32, active: bool) {
