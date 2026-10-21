@@ -4919,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-app"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4984,7 +4984,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-core"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -5028,7 +5028,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-grabber"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "cssparser",
  "encoding_rs",
@@ -5050,7 +5050,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-i18n"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "serde",
  "swoop-i18n-macros",
@@ -5058,7 +5058,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-i18n-macros"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5068,7 +5068,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-media"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "futures-util",
  "http-body-util",
@@ -5090,7 +5090,7 @@ dependencies = [
 
 [[package]]
 name = "swoop-updater"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "ed25519-dalek",
  "fs2",
