@@ -1,0 +1,6 @@
+[env]
+# curl-sys 0.4.91 selects the NTLM sources but bundled curl 8.22 additionally
+# requires this opt-in macro. Keep the workaround scoped to Windows MSVC;
+# macOS uses the system libcurl. Remove when curl-sys defines it itself.
+CFLAGS_x86_64_pc_windows_msvc = "-DCURL_ENABLE_NTLM"
+CFLAGS_aarch64_pc_windows_msvc = "-DCURL_ENABLE_NTLM"

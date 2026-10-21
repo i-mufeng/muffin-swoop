@@ -16,6 +16,11 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync"] }
 url = "2"
 percent-encoding = "2"
 
+[target.'cfg(windows)'.dependencies]
+# The workspace's Windows curl build enables NTLM; include its sources even
+# when this crate is built independently of swoop-core (Cargo feature resolver 3).
+curl = { version = "0.4", features = ["ntlm"] }
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tempfile = "3"

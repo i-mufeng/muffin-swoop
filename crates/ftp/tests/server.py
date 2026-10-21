@@ -24,10 +24,12 @@ logging.disable(logging.CRITICAL)
 root = Path(sys.argv[1])
 mode = sys.argv[2]
 events_path = root / "events.jsonl"
+events_lock = threading.Lock()
 
 
 def event(kind):
-    with events_path.open("a", encoding="utf-8") as output:
+    # Windows CRT append writes from the FTP and proxy threads can race.
+    with events_lock, events_path.open("a", encoding="utf-8") as output:
         output.write(json.dumps(kind) + "\n")
 
 
@@ -178,6 +180,14 @@ class Tunnel(socketserver.StreamRequestHandler):
             event("http-tunnel")
             self.connection.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
             bridge(self.connection, remote)
+        if isinstance(self.connection, ssl.SSLSocket):
+            # End the HTTPS tunnel with close_notify. Closing the underlying
+            # socket directly truncates TLS and Schannel rejects the FTP EOF.
+            self.connection.settimeout(1)
+            try:
+                self.connection.unwrap().close()
+            except (OSError, ValueError):
+                pass
 
 
 class Socks(socketserver.StreamRequestHandler):
