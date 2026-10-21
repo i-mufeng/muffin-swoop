@@ -12,7 +12,7 @@ export const GITHUB_RELEASES_URL = `${GITHUB_URL}/releases`
 export const GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
 
 /** CDN 更新 feed（版本号与下载地址的唯一权威来源） */
-export const CDN_FEED_URL = `${CDN_BASE}-release/feed.json`
+export const CDN_FEED_URL = `${CDN_BASE}/latest/feed.json`
 
 /** 各平台下载地址（CDN 优先；feed 不可用时的兜底）
  *  与 scripts/publish-upyun.sh --latest 的改名规则保持一致：
