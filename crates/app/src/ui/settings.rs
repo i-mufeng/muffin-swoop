@@ -459,7 +459,18 @@ impl SwoopApp {
                             crate::browsers::RowAction::Store => swoop_i18n::tr!("商店安装"),
                             crate::browsers::RowAction::None => swoop_i18n::tr!("已跳过"),
                         };
-                        let version_hint = row_version.as_deref().map(|v| format!("v{v}"));
+                        let version_hint = if row_id == "chrome" {
+                            Some(
+                                swoop_i18n::tr!(
+                                    "开启开发者模式，点击“加载已解压的扩展程序”，选择 swoop-extension 文件夹。"
+                                )
+                                .into(),
+                            )
+                        } else if row_id == "firefox" {
+                            Some(swoop_i18n::tr!("正式版 Firefox 需要 Mozilla 签名的 XPI。").into())
+                        } else {
+                            row_version.as_deref().map(|v| format!("v{v}"))
+                        };
                         dialog::row(ui, &p, &row_name, version_hint.as_deref(), |ui| {
                             // 右到左布局：先加的在最右。动作按钮靠右，状态徽标在按钮左侧。
                             // 安装进行中禁用所有动作，避免并发点击
@@ -469,7 +480,12 @@ impl SwoopApp {
                                 match row_action {
                                     crate::browsers::RowAction::Install => {
                                         job.running.store(true, std::sync::atomic::Ordering::Relaxed);
-                                        ui.data_mut(|d| d.insert_temp::<Option<(String, bool, std::time::Instant)>>(feedback_id, None));
+                                        ui.data_mut(|d| {
+                                            d.insert_temp::<Option<(String, bool, std::time::Instant)>>(
+                                                feedback_id,
+                                                None,
+                                            )
+                                        });
                                         let job = job.clone();
                                         std::thread::spawn(move || {
                                             let result = crate::browsers::install_by_id(&row_id);
@@ -489,9 +505,12 @@ impl SwoopApp {
                             }
                             use swoop_browser_bridge::ExtensionStatus;
                             match row_status {
-                                ExtensionStatus::Installed => {
-                                    super::pill(ui, crate::browsers::status_label(row_status), p.success_soft, p.success)
-                                }
+                                ExtensionStatus::Installed => super::pill(
+                                    ui,
+                                    crate::browsers::status_label(row_status),
+                                    p.success_soft,
+                                    p.success,
+                                ),
                                 ExtensionStatus::NotInstalled => {
                                     super::pill(ui, crate::browsers::status_label(row_status), p.inset, p.text_muted)
                                 }
@@ -603,6 +622,36 @@ impl SwoopApp {
         ui.add_space(14.0);
         let busy = self.updates.busy();
         let idle = self.update_install_idle();
+        if self.updates.store_managed() {
+            dialog::group(ui, &p, Some("Microsoft Store"), |ui| {
+                dialog::note(ui, &p, swoop_i18n::tr!("此版本由 Microsoft Store 管理更新。"));
+                dialog::row(ui, &p, swoop_i18n::tr!("软件更新"), None, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| {
+                        if super::ghost_button(ui, &p, swoop_i18n::tr!("检查更新")).clicked() {
+                            self.updates.check(ctx);
+                        }
+                    });
+                    if busy {
+                        ui.spinner();
+                    }
+                });
+                if !self.updates.message.is_empty() {
+                    dialog::note(ui, &p, &self.updates.message);
+                }
+                if self.updates.store_update_available {
+                    if super::primary_button(ui, &p, swoop_i18n::tr!("前往 Microsoft Store 更新")).clicked() {
+                        self.updates.open_store(ctx);
+                    }
+                } else if super::ghost_button(ui, &p, swoop_i18n::tr!("打开 Microsoft Store")).clicked() {
+                    self.updates.open_store(ctx);
+                }
+                ui.add_space(12.0);
+            });
+            if let Some(error) = &self.updates.error {
+                dialog::error(ui, &p, error);
+            }
+            return;
+        }
         dialog::group(ui, &p, None, |ui| {
             dialog::row(ui, &p, swoop_i18n::tr!("自动更新"), None, |ui| {
                 let mut automatic = self.updates.config.automatic_check;
@@ -673,6 +722,12 @@ impl SwoopApp {
     pub(crate) fn open_settings_about(&mut self, ctx: &egui::Context) {
         self.show_settings = true;
         ctx.data_mut(|d| d.insert_temp(tab_id(), Tab::About));
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn open_settings_integration(&mut self, ctx: &egui::Context) {
+        self.show_settings = true;
+        ctx.data_mut(|d| d.insert_temp(tab_id(), Tab::Integration));
     }
 
     /// 端口后面的一行状态：运行情况 + 扩展最近一次心跳

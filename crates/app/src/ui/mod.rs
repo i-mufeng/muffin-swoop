@@ -28,6 +28,8 @@ pub mod task_table;
 pub mod task_window;
 pub mod toast;
 pub mod topbar;
+#[cfg(windows)]
+pub mod welcome;
 
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{

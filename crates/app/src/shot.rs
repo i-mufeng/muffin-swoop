@@ -18,6 +18,7 @@ use crate::app::SwoopApp;
 /// 可截取的视图
 pub const VIEWS: &[&str] = &[
     "home",
+    "welcome",
     "settings",
     "settings:general",
     "settings:download",
@@ -106,6 +107,8 @@ pub fn tick(app: &mut SwoopApp, ctx: &egui::Context) {
 fn open_view(app: &mut SwoopApp, ctx: &egui::Context, view: &str) -> bool {
     match view {
         "home" => {}
+        #[cfg(windows)]
+        "welcome" => app.welcome.preview(),
         "settings" => app.show_settings = true,
         "queues" => app.queue_editor.show(swoop_core::MAIN_QUEUE_ID),
         "categories" => app.category_editor = Some(app.categories.clone()),

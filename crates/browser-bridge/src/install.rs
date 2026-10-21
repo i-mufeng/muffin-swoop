@@ -23,9 +23,9 @@ pub enum ExtensionStatus {
     Unknown,
 }
 
-const INFO_FILE: &str = "swoop-extension-info.json";
-const CRX_FILE: &str = "swoop-extension.crx";
-const XPI_FILE: &str = "swoop-extension.xpi";
+pub const INFO_FILE: &str = "swoop-extension-info.json";
+pub const CRX_FILE: &str = "swoop-extension.crx";
+pub const XPI_FILE: &str = "swoop-extension.xpi";
 
 pub(crate) fn load_extension(dir: &Path) -> Result<ExtensionInfo, BridgeError> {
     let info_path = dir.join(INFO_FILE);

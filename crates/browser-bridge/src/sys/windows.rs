@@ -107,11 +107,7 @@ fn forcelist_key(root: &str) -> String {
 /// 从商店页 URL 提取扩展 id（路径最后一段，32 位字母数字）。
 fn store_id(url: &str) -> Option<String> {
     let last = url.trim_end_matches('/').rsplit('/').next()?;
-    if last.len() == 32 && last.chars().all(|c| c.is_ascii_alphanumeric()) {
-        Some(last.to_string())
-    } else {
-        None
-    }
+    if last.len() == 32 && last.chars().all(|c| c.is_ascii_alphanumeric()) { Some(last.to_string()) } else { None }
 }
 
 /// 查询四个视图：HKCU/HKLM × 64/32 位。
@@ -137,45 +133,51 @@ fn forcelist_registered(root: &str, id: &str) -> bool {
     })
 }
 
-/// HKCU 写入保证成功（无需管理员）；HKLM 需要管理员，失败忽略（按用户安装场景）。
+/// HKCU 策略键也可能受 ACL 限制，失败交给调用方引导；保留其他扩展的条目。
 fn write_forcelist(root: &str, id: &str, update_url: &str) -> std::io::Result<()> {
     let key_path = forcelist_key(root);
     let entry = format!("{id};{update_url}");
     let mut last_err = None;
-    for (predef, flags) in
-        [(HKEY_CURRENT_USER, KEY_SET_VALUE), (HKEY_CURRENT_USER, KEY_SET_VALUE | KEY_WOW64_32KEY)]
-    {
+    for (predef, flags) in [
+        (HKEY_CURRENT_USER, KEY_QUERY_VALUE | KEY_SET_VALUE),
+        (HKEY_CURRENT_USER, KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_32KEY),
+    ] {
         match RegKey::predef(predef).create_subkey_with_flags(&key_path, flags) {
             Ok((key, _)) => {
                 if forcelist_key_has(&key, id) {
                     continue;
                 }
-                // 值名取第一个空闲的数字名（"1".."99"），与常见企业管理工具习惯一致。
-                let name = (1..100).map(|n| n.to_string()).find(|n| key.get_value::<String, _>(n).is_err());
-                match name {
-                    Some(name) => {
-                        if let Err(e) = key.set_value(&name, &entry) {
-                            last_err = Some(e);
-                        }
-                    }
-                    None => last_err = Some(std::io::Error::other("forcelist 条目已满")),
+                if let Err(e) = append_forcelist(&key, &entry) {
+                    last_err = Some(e);
                 }
             }
             Err(e) => last_err = Some(e),
         }
     }
-    for flags in [KEY_SET_VALUE | KEY_WOW64_64KEY, KEY_SET_VALUE | KEY_WOW64_32KEY] {
+    for flags in [KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_64KEY, KEY_QUERY_VALUE | KEY_SET_VALUE | KEY_WOW64_32KEY]
+    {
         if let Ok((key, _)) = RegKey::predef(HKEY_LOCAL_MACHINE).create_subkey_with_flags(&key_path, flags)
             && !forcelist_key_has(&key, id)
-            && let Some(name) = (1..100).map(|n| n.to_string()).find(|n| key.get_value::<String, _>(n).is_err())
         {
-            let _ = key.set_value(&name, &entry);
+            let _ = append_forcelist(&key, &entry);
         }
     }
     match last_err {
         Some(e) => Err(e),
         None => Ok(()),
     }
+}
+
+fn append_forcelist(key: &RegKey, entry: &str) -> std::io::Result<()> {
+    for name in (1..100).map(|n| n.to_string()) {
+        match key.get_raw_value(&name) {
+            Ok(_) => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return key.set_value(&name, &entry),
+            // 读取被拒不能当成“空位”，否则会覆盖已有的企业策略。
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other("forcelist 条目已满"))
 }
 
 fn forcelist_key_has(key: &RegKey, id: &str) -> bool {
@@ -317,8 +319,17 @@ fn run_strategy(
                 None => open_in_default(page)?,
             }
             // Firefox 装 xpi，Chromium 系装 crx
-            let package =
-                if browser.def.install == InstallStrategy::FirefoxPolicy { ext.xpi.as_ref().unwrap_or(&ext.crx) } else { &ext.crx };
+            let unpacked = ext.crx.parent().unwrap_or(Path::new(".")).join("swoop-extension");
+            if browser.id() == "chrome" && unpacked.join("manifest.json").is_file() {
+                // Chrome 正式版可能拒绝商店外 CRX；提供“加载已解压的扩展程序”的完整目录。
+                reveal_in_explorer(&unpacked)?;
+                return Ok(InstallOutcome::Guided);
+            }
+            let package = if browser.def.install == InstallStrategy::FirefoxPolicy {
+                ext.xpi.as_ref().unwrap_or(&ext.crx)
+            } else {
+                &ext.crx
+            };
             reveal_in_explorer(package)?;
             Ok(InstallOutcome::Guided)
         }
@@ -364,7 +375,8 @@ pub(crate) fn uninstall_extension(browser: &DetectedBrowser, ext: &ExtensionInfo
             Ok(())
         }
         InstallStrategy::StoreForceList => {
-            if let (Some(root), Some(id)) = (&browser.def.policy_root, browser.def.store_url.as_deref().and_then(store_id))
+            if let (Some(root), Some(id)) =
+                (&browser.def.policy_root, browser.def.store_url.as_deref().and_then(store_id))
             {
                 delete_forcelist(root, &id);
             }
@@ -402,12 +414,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn forcelist_preserves_existing_values_and_requires_read_access() {
+        let path = format!(r"Software\SwoopTests\forcelist-{}", std::process::id());
+        let root = RegKey::predef(HKEY_CURRENT_USER);
+        let (key, _) = root.create_subkey(&path).unwrap();
+        key.set_value("1", &"other-extension;https://example.com/update").unwrap();
+        key.set_value("2", &42u32).unwrap();
+        append_forcelist(&key, "swoop;https://example.com/update").unwrap();
+        assert_eq!(key.get_value::<String, _>("1").unwrap(), "other-extension;https://example.com/update");
+        assert_eq!(key.get_value::<u32, _>("2").unwrap(), 42);
+        assert_eq!(key.get_value::<String, _>("3").unwrap(), "swoop;https://example.com/update");
+        let write_only = root.open_subkey_with_flags(&path, KEY_SET_VALUE).unwrap();
+        assert!(append_forcelist(&write_only, "must-not-overwrite").is_err());
+        drop(write_only);
+        drop(key);
+        root.delete_subkey_all(&path).unwrap();
+    }
+
+    #[test]
     fn store_id_picks_last_path_segment() {
         assert_eq!(
             store_id("https://microsoftedge.microsoft.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh"),
             Some("ecoapkmgaijhekboiplkojnpefddffkh".to_string())
         );
-        assert_eq!(store_id("https://example.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh/"), store_id("https://example.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh"));
+        assert_eq!(
+            store_id("https://example.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh/"),
+            store_id("https://example.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh")
+        );
         assert_eq!(store_id("https://example.com/"), None);
         assert_eq!(store_id("https://example.com/short"), None);
     }

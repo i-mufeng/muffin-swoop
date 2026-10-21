@@ -1,6 +1,6 @@
 //! 浏览器扩展识别与安装：swoop-cli `browsers` 子命令与 GUI 设置页共用。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
 use swoop_browser_bridge::{DetectedBrowser, ExtensionInfo, ExtensionStatus, InstallOutcome};
@@ -39,13 +39,120 @@ pub enum Action {
     Guide { id: String, ext_dir: Option<PathBuf> },
 }
 
-/// 默认扩展目录：可执行文件旁边（安装包会把 crx/xpi 释放在那里）。
+/// 打包渠道标记文件：MSIX 打包脚本会在 exe 旁写入 `msix-store`（scripts/package-msstore.ps1）。
+#[cfg(windows)]
+const CHANNEL_MARKER: &str = "swoop-channel.txt";
+
+/// 当前进程是否运行在 MSIX 包里（Microsoft Store / 侧载）。
+/// 首选 exe 旁的渠道标记；开发期直接跑包目录里的二进制时退回路径特征判断。
+#[cfg(windows)]
+pub fn is_msix() -> bool {
+    static MSIX: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *MSIX.get_or_init(|| {
+        let Ok(exe) = std::env::current_exe() else { return false };
+        let Some(dir) = exe.parent() else { return false };
+        if channel_marker(dir).is_some_and(|c| c.starts_with("msix")) {
+            return true;
+        }
+        exe.to_string_lossy().contains("\\WindowsApps\\")
+    })
+}
+
+/// 读取目录里的渠道标记内容（没有标记时返回 None）。
+#[cfg(windows)]
+fn channel_marker(dir: &Path) -> Option<String> {
+    let content = std::fs::read_to_string(dir.join(CHANNEL_MARKER)).ok()?;
+    Some(content.trim().to_string())
+}
+
+/// 把扩展负载（crx / xpi / info.json）从安装目录同步到稳定目录。
+/// MSIX 包的安装路径带版本号，更新后旧目录被删除；注册表里的登记必须指向
+/// 每用户稳定位置，否则应用一更新浏览器里的扩展就失效。返回是否有文件被更新。
+#[cfg(windows)]
+fn sync_payload(source: &Path, target: &Path) -> Result<bool, String> {
+    use swoop_browser_bridge::{CRX_FILE, INFO_FILE, XPI_FILE};
+    let staged_info = source.join(INFO_FILE);
+    let staged = std::fs::read(&staged_info).map_err(|e| format!("{}: {e}", staged_info.display()))?;
+    // 同版本重打包、文件丢失或上次复制中断也要修复；info 最后写，不能把半份负载标记为完成。
+    let payload = [CRX_FILE, XPI_FILE]
+        .into_iter()
+        .map(|name| std::fs::read(source.join(name)).map(|bytes| (name, bytes)))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    let unpacked = source.join("swoop-extension");
+    let directory_updated = if unpacked.is_dir() {
+        sync_directory(&unpacked, &target.join("swoop-extension")).map_err(|e| e.to_string())?
+    } else {
+        false
+    };
+    if std::fs::read(target.join(INFO_FILE)).is_ok_and(|current| current == staged)
+        && payload.iter().all(|(name, bytes)| std::fs::read(target.join(name)).is_ok_and(|current| current == *bytes))
+    {
+        return Ok(directory_updated);
+    }
+    std::fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
+    for (name, bytes) in payload {
+        std::fs::write(target.join(name), bytes).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(target.join(INFO_FILE), staged).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[cfg(windows)]
+fn sync_directory(source: &Path, target: &Path) -> std::io::Result<bool> {
+    std::fs::create_dir_all(target)?;
+    let mut updated = false;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let dest = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            updated |= sync_directory(&entry.path(), &dest)?;
+        } else if entry.file_type()?.is_file() {
+            let bytes = std::fs::read(entry.path())?;
+            if !std::fs::read(&dest).is_ok_and(|current| current == bytes) {
+                std::fs::write(dest, bytes)?;
+                updated = true;
+            }
+        }
+    }
+    Ok(updated)
+}
+
+/// 首次进入时只尝试 Edge 的自动登记，不弹 UAC 或浏览器窗口。
+/// 权限不足等失败由欢迎页显示，用户可在设置中主动安装。
+#[cfg(windows)]
+pub fn prepare_first_run(auto_edge: bool) -> (Vec<BrowserRow>, Option<String>) {
+    let ext = match load_ext(&None) {
+        Ok(ext) => ext,
+        Err(error) => return (scan_rows(), Some(error)),
+    };
+    let defs = swoop_browser_bridge::browsers();
+    let detected = swoop_browser_bridge::detect_installed(&defs);
+    let mut error = None;
+    if auto_edge
+        && let Some(edge) = detected.iter().find(|b| b.id() == "edge")
+        && swoop_browser_bridge::status(edge, &ext) != ExtensionStatus::Installed
+        && let Err(e) = swoop_browser_bridge::install_extension(edge, &ext)
+    {
+        error = Some(e.to_string());
+    }
+    (scan_rows(), error)
+}
+
+/// 默认扩展目录：安装包把 crx/xpi 释放在可执行文件旁边；MSIX 包则同步到
+/// 数据目录下的 `extension/`（稳定、每用户可写），登记与状态查询都指向那里。
 #[cfg(windows)]
 fn default_ext_dir() -> Result<PathBuf, String> {
-    std::env::current_exe()
+    let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))
-        .ok_or_else(|| swoop_i18n::tr!("无法确定可执行文件目录").to_string())
+        .ok_or_else(|| swoop_i18n::tr!("无法确定可执行文件目录").to_string())?;
+    if !is_msix() {
+        return Ok(exe_dir);
+    }
+    let target = crate::instance::data_dir().join("extension");
+    sync_payload(&exe_dir, &target)?;
+    Ok(target)
 }
 
 #[cfg(windows)]
@@ -181,7 +288,12 @@ fn elevated_install(id: &str) -> ElevatedInstall {
     };
     let file = wide(&cli.to_string_lossy());
     let verb = wide("runas");
-    let args = wide(&format!("browsers install --id {id} --silent"));
+    // 传稳定负载路径，避免提权账户或 MSIX 上下文变化导致辅助进程找错目录。
+    let ext_dir = match default_ext_dir() {
+        Ok(dir) => dir,
+        Err(error) => return ElevatedInstall::Unavailable(error),
+    };
+    let args = wide(&format!("browsers install --id {id} --silent --ext-dir \"{}\"", ext_dir.display()));
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
@@ -395,5 +507,43 @@ fn run_inner(action: Action, json: bool) -> Result<u8, String> {
                 Ok(0)
             }
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod payload_tests {
+    use super::*;
+    use swoop_browser_bridge::{CRX_FILE, INFO_FILE, XPI_FILE};
+
+    #[test]
+    fn repairs_missing_and_rebuilt_payload_even_with_unchanged_info() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        for name in [INFO_FILE, CRX_FILE, XPI_FILE] {
+            std::fs::write(source.path().join(name), name).unwrap();
+        }
+        let unpacked = source.path().join("swoop-extension");
+        std::fs::create_dir(&unpacked).unwrap();
+        std::fs::write(unpacked.join("manifest.json"), "{}").unwrap();
+        assert!(sync_payload(source.path(), target.path()).unwrap());
+        assert!(!sync_payload(source.path(), target.path()).unwrap());
+        std::fs::remove_file(target.path().join(CRX_FILE)).unwrap();
+        assert!(sync_payload(source.path(), target.path()).unwrap());
+        std::fs::write(source.path().join(XPI_FILE), "rebuilt").unwrap();
+        assert!(sync_payload(source.path(), target.path()).unwrap());
+        assert_eq!(std::fs::read(target.path().join(XPI_FILE)).unwrap(), b"rebuilt");
+        std::fs::write(unpacked.join("manifest.json"), "{\"version\":\"2\"}").unwrap();
+        assert!(sync_payload(source.path(), target.path()).unwrap());
+        assert_eq!(std::fs::read(target.path().join("swoop-extension/manifest.json")).unwrap(), b"{\"version\":\"2\"}");
+    }
+
+    #[test]
+    fn incomplete_source_does_not_publish_info() {
+        let source = tempfile::tempdir().unwrap();
+        let target = tempfile::tempdir().unwrap();
+        std::fs::write(source.path().join(INFO_FILE), "new version").unwrap();
+        std::fs::write(source.path().join(CRX_FILE), "crx").unwrap();
+        assert!(sync_payload(source.path(), target.path()).is_err());
+        assert!(!target.path().join(INFO_FILE).exists());
     }
 }

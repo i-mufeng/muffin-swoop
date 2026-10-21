@@ -90,6 +90,9 @@ pub struct SwoopApp {
     quitting: bool,
     clipboard: ClipboardWatcher,
     events: broadcast::Receiver<Event>,
+    background_memory: crate::background_memory::BackgroundMemory,
+    #[cfg(windows)]
+    pub(crate) welcome: crate::ui::welcome::Welcome,
 }
 
 impl SwoopApp {
@@ -155,6 +158,8 @@ impl SwoopApp {
             crate::tray::set_dock_visible(false);
         }
         let mut app = Self {
+            #[cfg(windows)]
+            welcome: crate::ui::welcome::Welcome::load(&store),
             engine,
             store,
             palette,
@@ -222,6 +227,7 @@ impl SwoopApp {
             quitting: false,
             clipboard: ClipboardWatcher::new(),
             events,
+            background_memory: Default::default(),
         };
         app.apply_bridge();
         app
@@ -615,7 +621,7 @@ impl SwoopApp {
     }
 
     pub(crate) fn begin_update_install(&mut self, ctx: &egui::Context) {
-        if self.updates.busy() || !self.update_install_idle() {
+        if self.updates.store_managed() || self.updates.busy() || !self.update_install_idle() {
             return;
         }
         let Some(guard) = self.engine.try_quiesce() else {
@@ -766,6 +772,8 @@ impl eframe::App for SwoopApp {
         self.handle_close(ctx);
         self.window_guard.check_startup(ctx, self.hidden);
         self.startup.poll();
+        #[cfg(windows)]
+        self.welcome.poll(ctx, self.hidden);
         self.media_tasks.update_file_policy(&self.engine);
         self.tasks = self.engine.snapshot();
         self.queues = self.engine.queues();
@@ -858,6 +866,16 @@ impl eframe::App for SwoopApp {
         // 有任务在跑就 10fps 刷新进度，否则低频；隐藏时只需维持菜单栏速度（右下角还有卡片时照常刷新）。
         // 剪贴板轮询也靠这个节拍
         let any_active = self.tasks.iter().any(|t| t.status.is_active()) || self.media_tasks.active();
+        let idle = !any_active
+            && !self.grabber.busy()
+            && !self.completion.busy()
+            && !self.updates.busy()
+            && !self.task_transfer.busy()
+            && !self.add_dialog.open
+            && self.cards.is_empty()
+            && self.task_windows.is_empty()
+            && self.completion.dialogs.is_empty();
+        self.background_memory.update(self.hidden, idle);
         let every = match (self.hidden && self.cards.is_empty(), any_active) {
             (true, _) => Duration::from_secs(1),
             (false, true) => Duration::from_millis(100),
@@ -910,6 +928,8 @@ impl eframe::App for SwoopApp {
         self.file_conflict_ui(&ctx);
         self.toasts_ui(&ctx);
         self.popups_ui(&ctx);
+        #[cfg(windows)]
+        self.welcome_ui(&ctx);
     }
 }
 

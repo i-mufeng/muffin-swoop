@@ -6,6 +6,8 @@ use swoop_updater::{Candidate, UpdateConfig};
 use tokio_util::sync::CancellationToken;
 
 enum Event {
+    #[cfg(windows)]
+    StoreChecked(Result<bool, String>),
     Checked(Result<Option<Candidate>, String>),
     Downloaded(Result<PathBuf, String>),
     Prepared(Result<(PathBuf, PathBuf, String), String>),
@@ -18,6 +20,8 @@ pub struct Updates {
     pub archive: Option<PathBuf>,
     pub error: Option<String>,
     pub message: String,
+    store_managed: bool,
+    pub store_update_available: bool,
     handle: tokio::runtime::Handle,
     store: Arc<Store>,
     receiver: Option<mpsc::Receiver<Event>>,
@@ -27,20 +31,31 @@ pub struct Updates {
 }
 impl Updates {
     pub fn load(store: Arc<Store>, handle: tokio::runtime::Handle) -> Self {
+        #[cfg(windows)]
+        let store_managed = crate::browsers::is_msix();
+        #[cfg(not(windows))]
+        let store_managed = false;
+        Self::load_for_channel(store, handle, store_managed)
+    }
+
+    fn load_for_channel(store: Arc<Store>, handle: tokio::runtime::Handle, store_managed: bool) -> Self {
         // 只读取自动检查开关；更新源/公钥/通道/间隔一律使用内置官方值，
         // 历史版本存过的自定义配置在加载时清除并规范化存储。
-        let automatic_check = store
-            .get_setting("updates")
-            .ok()
-            .flatten()
-            .and_then(|value| serde_json::from_str::<UpdateConfig>(&value).ok())
-            .map(|config| config.automatic_check)
-            .unwrap_or(false);
+        let automatic_check = !store_managed
+            && store
+                .get_setting("updates")
+                .ok()
+                .flatten()
+                .and_then(|value| serde_json::from_str::<UpdateConfig>(&value).ok())
+                .map(|config| config.automatic_check)
+                .unwrap_or(false);
         let config = UpdateConfig { automatic_check, ..UpdateConfig::default() };
         let _ = store.set_setting("updates", &Self::stored_config(automatic_check));
         let last_attempt =
             store.get_setting("update_last_check").ok().flatten().and_then(|value| value.parse().ok()).unwrap_or(0);
         Self {
+            store_managed,
+            store_update_available: false,
             config,
             candidate: None,
             archive: None,
@@ -53,6 +68,18 @@ impl Updates {
             last_attempt,
             installing: false,
         }
+    }
+    pub fn store_managed(&self) -> bool {
+        self.store_managed
+    }
+
+    pub fn open_store(&mut self, _ctx: &egui::Context) {
+        #[cfg(windows)]
+        if let Err(error) = crate::store_updates::open() {
+            self.error = Some(error);
+        }
+        #[cfg(not(windows))]
+        _ctx.open_url(egui::OpenUrl::new_tab("https://apps.microsoft.com/detail/9P9FNXJXK17N"));
     }
     fn stored_config(automatic_check: bool) -> String {
         serde_json::json!({ "automatic_check": automatic_check }).to_string()
@@ -68,14 +95,16 @@ impl Updates {
     }
     /// 自动检查开关即时保存；持久化失败时回滚并保留生效值。
     pub fn set_automatic_check(&mut self, enabled: bool) {
+        if self.store_managed {
+            self.config.automatic_check = false;
+            return;
+        }
         if self.config.automatic_check == enabled {
             return;
         }
         self.config.automatic_check = enabled;
-        if let Err(error) = self
-            .store
-            .set_setting("updates", &Self::stored_config(enabled))
-            .map_err(|error| error.to_string())
+        if let Err(error) =
+            self.store.set_setting("updates", &Self::stored_config(enabled)).map_err(|error| error.to_string())
         {
             self.config.automatic_check = !enabled;
             self.error = Some(error);
@@ -101,6 +130,7 @@ impl Updates {
         self.error = None;
         self.candidate = None;
         self.archive = None;
+        self.store_update_available = false;
         self.message = swoop_i18n::tr!("正在检查更新…").into();
         self.cancel = CancellationToken::new();
         let cancel = self.cancel.clone();
@@ -108,6 +138,16 @@ impl Updates {
         let ctx = ctx.clone();
         let (tx, rx) = mpsc::channel();
         self.receiver = Some(rx);
+        #[cfg(windows)]
+        if self.store_managed {
+            let window = crate::tray::window_handle();
+            std::thread::spawn(move || {
+                let result = crate::store_updates::check(window, &cancel);
+                let _ = tx.send(Event::StoreChecked(result));
+                ctx.request_repaint();
+            });
+            return;
+        }
         self.handle.spawn(async move {
             let result = swoop_updater::check(&config, env!("CARGO_PKG_VERSION"), &cancel).await;
             let _ = tx.send(Event::Checked(result));
@@ -115,7 +155,7 @@ impl Updates {
         });
     }
     pub fn download(&mut self, ctx: &egui::Context) {
-        if self.busy() {
+        if self.store_managed || self.busy() {
             return;
         }
         let Some(candidate) = self.candidate.clone() else { return };
@@ -134,7 +174,7 @@ impl Updates {
         });
     }
     pub fn prepare_install(&mut self, ctx: &egui::Context) {
-        if self.busy() {
+        if self.store_managed || self.busy() {
             return;
         }
         let (Some(candidate), Some(archive)) = (self.candidate.clone(), self.archive.clone()) else { return };
@@ -160,6 +200,23 @@ impl Updates {
             Some(Ok(event)) => {
                 self.receiver = None;
                 match event {
+                    #[cfg(windows)]
+                    Event::StoreChecked(result) => match result {
+                        Ok(available) => {
+                            self.store_update_available = available;
+                            self.message = if available {
+                                swoop_i18n::tr!("Microsoft Store 有可用更新")
+                            } else {
+                                swoop_i18n::tr!("Microsoft Store 暂无可用更新")
+                            }
+                            .into();
+                        }
+                        Err(error) => {
+                            self.store_update_available = false;
+                            self.message.clear();
+                            self.error = Some(swoop_i18n::trf!("无法检查商店更新：{error}"));
+                        }
+                    },
                     Event::Checked(Ok(candidate)) => {
                         self.message = if candidate.is_some() {
                             swoop_i18n::tr!("发现新版本")
@@ -173,7 +230,9 @@ impl Updates {
                         self.archive = Some(path);
                         self.message = swoop_i18n::tr!("更新包已验证，可安装并重启").into();
                     }
-                    Event::Prepared(Ok((plan, helper, token))) if idle && !quitting && !self.cancel.is_cancelled() => {
+                    Event::Prepared(Ok((plan, helper, token)))
+                        if !self.store_managed && idle && !quitting && !self.cancel.is_cancelled() =>
+                    {
                         let (tx, rx) = mpsc::channel();
                         self.receiver = Some(rx);
                         let cancel = self.cancel.clone();
@@ -187,7 +246,9 @@ impl Updates {
                             ctx.request_repaint();
                         });
                     }
-                    Event::Ready(Ok(mut child)) if idle && !quitting && !self.cancel.is_cancelled() => {
+                    Event::Ready(Ok(mut child))
+                        if !self.store_managed && idle && !quitting && !self.cancel.is_cancelled() =>
+                    {
                         // The helper has validated its inputs and is waiting on our instance lock.
                         if matches!(child.try_wait(), Ok(None)) {
                             drop(child);
@@ -240,6 +301,7 @@ impl Updates {
         }
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         if !quitting
+            && !self.store_managed
             && !self.busy()
             && self.config.automatic_check
             && now.saturating_sub(self.last_attempt)
@@ -311,6 +373,50 @@ fn launch_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn store_channel_disables_legacy_automatic_checks_and_installation() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let store = Arc::new(Store::in_memory().unwrap());
+        store.set_setting("updates", &Updates::stored_config(true)).unwrap();
+        let mut updates = Updates::load_for_channel(store.clone(), rt.handle().clone(), true);
+        let ctx = egui::Context::default();
+        assert!(!updates.config.automatic_check);
+        assert_eq!(store.get_setting("updates").unwrap().unwrap(), Updates::stored_config(false));
+        updates.set_automatic_check(true);
+        assert!(!updates.config.automatic_check);
+        // 即使调用方误改开关，poll 的渠道防线仍不发起站外请求。
+        updates.config.automatic_check = true;
+        assert!(!updates.poll(&ctx, true, false));
+        assert!(!updates.busy());
+        assert_eq!(updates.last_attempt, 0);
+        updates.download(&ctx);
+        updates.prepare_install(&ctx);
+        assert!(!updates.busy());
+        assert!(!updates.installing());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn store_results_do_not_create_external_candidates_and_errors_are_not_latest() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let mut updates = Updates::load_for_channel(Arc::new(Store::in_memory().unwrap()), rt.handle().clone(), true);
+        let ctx = egui::Context::default();
+        for available in [true, false] {
+            let (tx, rx) = mpsc::channel();
+            updates.receiver = Some(rx);
+            tx.send(Event::StoreChecked(Ok(available))).unwrap();
+            assert!(!updates.poll(&ctx, true, false));
+            assert_eq!(updates.store_update_available, available);
+            assert!(updates.candidate.is_none() && updates.archive.is_none());
+        }
+        let (tx, rx) = mpsc::channel();
+        updates.receiver = Some(rx);
+        tx.send(Event::StoreChecked(Err("offline".into()))).unwrap();
+        assert!(!updates.poll(&ctx, true, false));
+        assert!(updates.error.as_ref().unwrap().contains("offline"));
+        assert!(updates.message.is_empty());
+    }
     #[test]
     #[cfg(unix)]
     fn helper_must_acknowledge_before_app_exit_and_failed_start_stays_visible() {

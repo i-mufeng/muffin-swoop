@@ -170,6 +170,11 @@ impl Tray {
 #[cfg(target_os = "windows")]
 static WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
+#[cfg(windows)]
+pub(crate) fn window_handle() -> isize {
+    WINDOW.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 记下主窗口句柄，供 `raise_window` 在 egui 之外直接显示窗口
 pub fn register_window(handle: &impl raw_window_handle::HasWindowHandle) {
     #[cfg(target_os = "windows")]

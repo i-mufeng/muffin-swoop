@@ -39,6 +39,7 @@ Grab the latest build from [GitHub Releases](https://github.com/i-mufeng/muffin-
 | --- | --- |
 | macOS (Apple Silicon) | `.dmg` / signed update `.zip` |
 | Windows (x64 / ARM64) | per-user NSIS installer |
+| Microsoft Store (x64 / ARM64) | MSIX (`scripts/package-msstore.ps1`) |
 
 - Installs per user by default — no system directories required; a single UAC prompt is only used for system-level steps such as registering the browser extension.
 - Windows packages are built natively on Windows and published with the release; they are not Authenticode-signed yet, so SmartScreen may warn on first run. Interactive desktop validation items remain open; see [desktop validation](docs/desktop-validation.md).

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MSIX manifest template for Microsoft Store submission (scripts/package-msstore.ps1).
+  The script replaces the __TOKENS__ before packing:
+    __PACKAGE_NAME__       Store identity name; MUST equal the name reserved in Partner Center.
+    __PUBLISHER__          Publisher CN; MUST equal the publisher shown in Partner Center (e.g. "CN=...").
+    __VERSION__            Four-part version, e.g. 0.7.0.0. Must increase with every Store upload.
+    __ARCH__               x64 or arm64 (matches the rustc host / package arch).
+  Swoop is a classic Win32 desktop app, so the package uses the desktop bridge
+  (EntryPoint Windows.FullTrustApplication + windows.fullTrustProcess extension + runFullTrust).
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:virtualization="http://schemas.microsoft.com/appx/manifest/virtualization/windows10"
+  IgnorableNamespaces="uap rescap desktop desktop6 virtualization">
+  <Identity
+    Name="__PACKAGE_NAME__"
+    Publisher="__PUBLISHER__"
+    Version="__VERSION__"
+    ProcessorArchitecture="__ARCH__" />
+  <Properties>
+    <DisplayName>__DISPLAY_NAME__</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <!-- Windows 10 fallback; Windows 11 uses only the narrow exclusions below.
+         Browsers outside the package must see extension registration and payloads. -->
+    <desktop6:RegistryWriteVirtualization>disabled</desktop6:RegistryWriteVirtualization>
+    <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
+    <virtualization:RegistryWriteVirtualization>
+      <virtualization:ExcludedKeys>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Software\Policies\Microsoft\Edge\ExtensionInstallForcelist</virtualization:ExcludedKey>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Software\Google\Chrome\Extensions</virtualization:ExcludedKey>
+        <virtualization:ExcludedKey>HKEY_CURRENT_USER\Software\Chromium\Extensions</virtualization:ExcludedKey>
+      </virtualization:ExcludedKeys>
+    </virtualization:RegistryWriteVirtualization>
+    <virtualization:FileSystemWriteVirtualization>
+      <virtualization:ExcludedDirectories>
+        <virtualization:ExcludedDirectory>$(KnownFolder:RoamingAppData)\com.muffin.swoop\extension</virtualization:ExcludedDirectory>
+      </virtualization:ExcludedDirectories>
+    </virtualization:FileSystemWriteVirtualization>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.18362.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <!-- Keep in sync with the store listings completed in Partner Center:
+         every declared language needs a complete listing before submission. -->
+    <Resource Language="zh-cn" />
+    <Resource Language="zh-sg" />
+    <Resource Language="zh-hans" />
+    <Resource Language="zh-tw" />
+    <Resource Language="zh-hk" />
+    <Resource Language="zh-mo" />
+    <Resource Language="zh-hant" />
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="Swoop" Executable="swoop.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="__DISPLAY_NAME__"
+        Description="Swoop Download Manager"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <desktop:Extension Category="windows.fullTrustProcess" Executable="swoop.exe" />
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="unvirtualizedResources" />
+  </Capabilities>
+</Package>

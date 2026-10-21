@@ -15,7 +15,7 @@ mod install;
 mod sys;
 
 pub use config::{BrowserDef, InstallStrategy};
-pub use install::{ExtensionInfo, ExtensionStatus};
+pub use install::{CRX_FILE, ExtensionInfo, ExtensionStatus, INFO_FILE, XPI_FILE};
 
 pub(crate) use install::load_extension;
 

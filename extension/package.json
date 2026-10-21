@@ -1,6 +1,6 @@
 {
   "name": "swoop-extension",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "description": "把浏览器下载交给 Swoop",
   "type": "module",

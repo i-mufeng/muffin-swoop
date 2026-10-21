@@ -452,14 +452,16 @@ fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], c
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let painter = ui.painter();
+    let painter = &ui.painter().with_clip_rect(rect);
     let plot = Rect::from_min_size(rect.min, vec2(rect.width(), CHART_H));
     let bar = Rect::from_min_size(pos2(rect.left(), rect.bottom() - 3.0), vec2(rect.width(), 3.0));
     painter.rect_filled(bar, CornerRadius::same(2), p.track);
 
     let color = if t.status == TaskStatus::Downloading { color } else { p.text_muted };
     // 曲线右缘、渐变收尾、柔光位置共用这个平滑后的进度，走动时不一顿一顿
-    let done = t.progress().map(|d| ui.ctx().animate_value_with_time(Id::new(("card_bar", t.id)), d, anim_secs(0.3)));
+    let done = t
+        .progress()
+        .map(|d| ui.ctx().animate_value_with_time(Id::new(("card_bar", t.id)), d.clamp(0.0, 1.0), anim_secs(0.3)));
 
     // 横轴即进度，轨道画成坐标轴：四分之一处淡淡的网格线贯穿曲线区，轨道上每 10% 一个刻口
     if done.is_some() {
@@ -473,35 +475,15 @@ fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], c
         }
     }
 
-    // 进度位置先画柔光，压在曲线和渐变条底下：一根以进度线为中心的柔光柱，横向向两侧渐隐、
-    // 竖向越靠进度条越亮；再叠一条淡淡的细线指示精确位置
+    // 背景进度头先画，速率折线随后覆盖：宽幅渐隐打底，窄幅渐隐定位，避免明亮的硬竖线。
+    // 只跟随真实进度平滑移动，不持续发送闪动的光波。
     if let Some(done) = done {
         let x = bar.left() + bar.width() * done;
-        painter.add(glow_band(
-            x,
-            14.0,
-            plot.top(),
-            bar.bottom(),
-            color.gamma_multiply(0.06),
-            color.gamma_multiply(0.25),
-        ));
-        painter.vline(x, plot.top()..=bar.bottom(), Stroke::new(1.0, color.gamma_multiply(0.45)));
-        if t.status == TaskStatus::Downloading {
-            // 电波：每秒从进度线向前送出一段柔光，边走边散，和每秒一个速度采样同拍
-            let phase = ui.input(|i| i.time).fract() as f32;
-            let fade = (1.0 - phase).powi(2);
-            let cx = x + 26.0 * phase;
-            painter.add(glow_band(
-                cx,
-                9.0,
-                plot.top(),
-                bar.bottom(),
-                color.gamma_multiply(0.05 * fade),
-                color.gamma_multiply(0.35 * fade),
-            ));
-            ui.ctx().request_repaint_after(Duration::from_millis(33));
-        }
+        let (top, bottom) = p.card_head(color);
+        painter.add(progress_band(x, 11.0, plot.top(), bar.bottom(), top, bottom));
+        painter.add(progress_band(x, 1.25, plot.top(), bar.bottom(), top, bottom.gamma_multiply(1.5)));
     }
+    let curve_color = p.card_curve(color);
 
     if history.len() < 2 {
         painter.hline(plot.x_range(), plot.bottom() - 0.5, Stroke::new(1.0, p.border));
@@ -525,10 +507,10 @@ fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], c
                         pos2(x, y_of(*v))
                     })
                     .collect();
-                super::detail::paint_curve(painter, plot.bottom(), &pts, color);
+                super::detail::paint_curve(painter, plot.bottom(), &pts, curve_color);
             }
             None => {
-                super::detail::speed_curve(painter, plot, history, CHART_SPAN, ymax, color);
+                super::detail::speed_curve(painter, plot, history, CHART_SPAN, ymax, curve_color);
             }
         }
     }
@@ -538,11 +520,12 @@ fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], c
             let fill = Rect::from_min_max(bar.min, pos2(bar.left() + bar.width() * done, bar.bottom()));
             // 透明渐变：左端几乎透明，向右渐实，到当前进度收尾
             let mut mesh = Mesh::default();
-            let faint = color.gamma_multiply(0.12);
+            let end = p.card_progress(color);
+            let faint = end.gamma_multiply(0.16);
             mesh.colored_vertex(fill.left_top(), faint);
             mesh.colored_vertex(fill.left_bottom(), faint);
-            mesh.colored_vertex(fill.right_bottom(), color);
-            mesh.colored_vertex(fill.right_top(), color);
+            mesh.colored_vertex(fill.right_bottom(), end);
+            mesh.colored_vertex(fill.right_top(), end);
             mesh.add_triangle(0, 1, 2);
             mesh.add_triangle(0, 2, 3);
             painter.add(mesh);
@@ -557,7 +540,7 @@ fn progress_chart(ui: &mut Ui, p: &Palette, t: &TaskSnapshot, history: &[f64], c
 
 /// 一段竖向柔光带：以 `x` 为中心、半宽 `half`，横向从中心向两侧渐隐到透明，
 /// 中心竖线上从 `top` 处的 `mid_top` 渐到 `bottom` 处的 `mid_bottom`
-fn glow_band(x: f32, half: f32, top: f32, bottom: f32, mid_top: Color32, mid_bottom: Color32) -> Mesh {
+fn progress_band(x: f32, half: f32, top: f32, bottom: f32, mid_top: Color32, mid_bottom: Color32) -> Mesh {
     let mut mesh = Mesh::default();
     let clear = Color32::TRANSPARENT;
     mesh.colored_vertex(pos2(x - half, top), clear); // 0

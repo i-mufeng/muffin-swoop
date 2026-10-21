@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod background_memory;
 mod batch;
 mod brand;
 mod bridge;
@@ -25,6 +26,8 @@ mod settings;
 #[cfg(feature = "screenshot")]
 mod shot;
 mod startup;
+#[cfg(windows)]
+mod store_updates;
 mod task_transfer;
 mod theme;
 mod tray;
@@ -47,6 +50,11 @@ fn main() -> eframe::Result {
         args.retain(|arg| arg != crate::startup::BACKGROUND_ARG);
     }
     if args.get(1).is_some_and(|arg| arg == "--swoop-install-update") {
+        #[cfg(windows)]
+        if crate::browsers::is_msix() {
+            eprintln!("{}", swoop_i18n::tr!("此版本由 Microsoft Store 管理更新。"));
+            std::process::exit(1);
+        }
         let result = if args.len() == 5 {
             swoop_updater::run_helper_ready(
                 std::path::Path::new(&args[2]),
@@ -64,9 +72,9 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    if std::env::args_os().len() > 1 {
+    if args.len() > 1 {
         cli::attach_parent_console();
-        std::process::exit(cli::run(std::env::args_os().skip(1)) as i32);
+        std::process::exit(cli::run(args.into_iter().skip(1)) as i32);
     }
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -158,10 +166,32 @@ fn main() -> eframe::Result {
 
     #[allow(unused_mut)]
     let mut options = eframe::NativeOptions { viewport, ..Default::default() };
-    #[cfg(feature = "screenshot")]
-    if std::env::var("SWOOP_RENDERER").as_deref() == Ok("glow") {
-        options.renderer = eframe::Renderer::Glow;
+    // 下载器的二维界面不需要高性能显卡和吞吐优先的大块显存预分配。
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        use eframe::wgpu;
+        // Windows 默认枚举 Vulkan + DX12 会同时加载各显卡厂商的两套驱动。
+        // 只启用系统原生 DX12；诊断/兼容场景仍可用 WGPU_BACKEND 显式覆盖。
+        #[cfg(windows)]
+        {
+            setup.instance_descriptor.backends = wgpu::Backends::from_env().unwrap_or(wgpu::Backends::DX12);
+        }
+        setup.power_preference = wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower);
+        let descriptor = setup.device_descriptor.clone();
+        setup.device_descriptor = Arc::new(move |adapter| wgpu::DeviceDescriptor {
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            ..descriptor(adapter)
+        });
     }
+    #[cfg(any(windows, feature = "screenshot"))]
+    {
+        options.renderer = match std::env::var("SWOOP_RENDERER").as_deref() {
+            Ok("wgpu") => eframe::Renderer::Wgpu,
+            Ok("glow") => eframe::Renderer::Glow,
+            _ if cfg!(windows) => eframe::Renderer::Glow,
+            _ => options.renderer,
+        };
+    }
+    tracing::info!(renderer = ?options.renderer, "启动桌面渲染器");
 
     // 只把 handle 交给界面；rt 本身留在 main 栈上，活到窗口关闭
     let handle = rt.handle().clone();
@@ -173,6 +203,7 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             fonts::install(&cc.egui_ctx);
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             let app = app::SwoopApp::new(cc, handle.clone(), engine.clone(), store, settings, events, start_hidden);
             *control_slot.lock().unwrap() = Some(instance::ControlServer::start(
                 &instance_for_gui,

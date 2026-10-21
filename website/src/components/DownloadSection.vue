@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { DOWNLOADS, EDGE_ADDON_URL, EXTENSION_DOWNLOADS, GITHUB_RELEASES_URL, PLATFORM_KEYS } from '../config'
+import { DOWNLOADS, EDGE_ADDON_URL, EXTENSION_DOWNLOADS, GITHUB_RELEASES_URL, MICROSOFT_STORE_URL, PLATFORM_KEYS } from '../config'
 import { useLatestRelease } from '../composables/useLatestRelease'
 import { useI18n } from '../i18n'
 
@@ -38,6 +38,16 @@ const platforms = computed(() => [
       </p>
 
       <div class="platforms">
+        <a class="platform store" :href="MICROSOFT_STORE_URL" target="_blank" rel="noopener">
+          <span class="p-name">Microsoft Store</span>
+          <span class="p-arch mono">{{ t().download.storeArch }}</span>
+          <span class="p-action">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7 17L17 7M8 7h9v9" />
+            </svg>
+            {{ t().download.extAction }}
+          </span>
+        </a>
         <a
           v-for="p in platforms"
           :key="p.name + p.arch"
@@ -113,7 +123,7 @@ const platforms = computed(() => [
 .sub b { color: var(--ink); font-weight: 600; }
 .platforms {
   margin-top: 44px;
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
 }
 .platform {
   display: flex; flex-direction: column; gap: 6px;
@@ -128,6 +138,9 @@ const platforms = computed(() => [
   background: var(--card-bg-hover);
   transform: translateY(-3px);
 }
+/* Store 卡片：常驻 accent 描边，标记为推荐渠道 */
+.platform.store { border-color: var(--accent-border); }
+.platform.store:hover { background: var(--accent-soft); }
 .p-name { font-size: 18px; font-weight: 650; }
 .p-arch { font-size: 12px; color: var(--dim); }
 .p-action {
@@ -142,7 +155,6 @@ const platforms = computed(() => [
 }
 .all-releases a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 .ext-label { margin-top: 44px; font-size: 13px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
-.ext-grid { grid-template-columns: repeat(4, 1fr); }
-@media (max-width: 900px) { .ext-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 900px) { .platforms { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 760px) { .platforms { grid-template-columns: 1fr; } }
 </style>

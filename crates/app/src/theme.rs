@@ -145,6 +145,23 @@ impl Palette {
         }
     }
 
+    /// 浮窗的速率折线保留强调色，略降饱和度；背景进度头保持更低对比。
+    pub fn card_curve(&self, color: Color32) -> Color32 {
+        color.lerp_to_gamma(self.text_muted, 0.24)
+    }
+
+    pub fn card_progress(&self, color: Color32) -> Color32 {
+        color.lerp_to_gamma(self.surface, 0.30)
+    }
+
+    pub fn card_head(&self, color: Color32) -> (Color32, Color32) {
+        let alpha = match self.mode {
+            Mode::Dark => 0.14,
+            Mode::Light => 0.10,
+        };
+        (color.gamma_multiply(alpha * 0.12), color.gamma_multiply(alpha))
+    }
+
     /// 色块背景：取色 + 低透明度
     pub fn soft(&self, c: Color32) -> Color32 {
         let a = match self.mode {

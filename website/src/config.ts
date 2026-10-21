@@ -23,6 +23,10 @@ export const DOWNLOADS = {
   macos: `${CDN_BASE}/latest/swoop-macos-arm64.dmg`,
 }
 
+/** Microsoft Store 应用页（Swoop 桌面版） */
+export const MICROSOFT_STORE_URL =
+  'https://apps.microsoft.com/detail/9P9FNXJXK17N?hl=zh-cn&gl=CN&ocid=pdpshare'
+
 /** Edge 加载项商店（Swoop 扩展） */
 export const EDGE_ADDON_URL =
   'https://microsoftedge.microsoft.com/addons/detail/swoop/ecoapkmgaijhekboiplkojnpefddffkh'
