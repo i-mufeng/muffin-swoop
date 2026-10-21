@@ -39,6 +39,7 @@ pub const VIEWS: &[&str] = &[
     "task-window",
     "cards",
     "completed",
+    "extension-guide",
 ];
 
 /// 打开视图的帧（前几帧窗口和字体还在初始化）
@@ -142,6 +143,14 @@ fn open_view(app: &mut SwoopApp, ctx: &egui::Context, view: &str) -> bool {
             }
         }
         "completed" => app.completion.dialogs.push_back(app.default_dir.join("ubuntu-24.04.3-desktop-amd64.iso")),
+        #[cfg(windows)]
+        "extension-guide" => {
+            app.extension_guide = Some(crate::browsers::GuideInfo {
+                id: "chrome".into(),
+                name: "Google Chrome".into(),
+                unpacked: Some(PathBuf::from(r"C:\Users\Mufeng\AppData\Local\Swoop\extension\swoop-extension")),
+            });
+        }
         other => match other.strip_prefix("settings:") {
             Some(tab) => return app.show_settings_tab(ctx, tab),
             None => return false,

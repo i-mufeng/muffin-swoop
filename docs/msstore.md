@@ -114,7 +114,7 @@ MSIX 安装位置在 `Program Files\WindowsApps` 下；Swoop 的 per-user 数据
 - 首次显示主窗口时尝试登记 Edge 自动安装；不在后台启动时弹出引导或 UAC。登记失败显示
   可展开的原因，用户可从欢迎页进入「设置 → 集成」重试或打开商店。登记成功并不等于
   浏览器已安装，Edge 仍需运行、联网并接受相关策略。
-- Chrome 使用开发者模式加载 `swoop-extension` 文件夹；Firefox 正式版需要 Mozilla
+- Chrome 使用开发者模式加载 `swoop-extension` 文件夹。新包直接包含此目录；若扩展负载只有 CRX，新版引导会从 CRX3 包解压到用户数据目录后再打开该文件夹，不会提示安装 CRX。Firefox 正式版需要 Mozilla
   签名的 XPI。构建生成的 XPI 本身不带 Mozilla 签名，不能宣称可在正式版中静默安装。
 - MSIX 将扩展同步到 `%APPDATA%\com.muffin.swoop\extension`，避免版本化 WindowsApps
   路径在更新后失效。同版本重打包、文件丢失或复制中断也会修复。

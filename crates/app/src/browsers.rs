@@ -3,6 +3,9 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
+use std::io::Read;
+
+#[cfg(windows)]
 use swoop_browser_bridge::{DetectedBrowser, ExtensionInfo, ExtensionStatus, InstallOutcome};
 
 /// GUI 列表里的一行。
@@ -14,6 +17,14 @@ pub struct BrowserRow {
     pub version: Option<String>,
     pub status: ExtensionStatus,
     pub action: RowAction,
+}
+
+/// 手动安装引导所需的可用文件和浏览器信息。
+#[cfg(windows)]
+pub struct GuideInfo {
+    pub id: String,
+    pub name: String,
+    pub unpacked: Option<PathBuf>,
 }
 
 /// 这一行能给用户的动作。
@@ -164,6 +175,121 @@ fn load_ext(ext_dir: &Option<PathBuf>) -> Result<ExtensionInfo, String> {
     ExtensionInfo::load(&dir).map_err(|e| e.to_string())
 }
 
+/// 老版商店包只有 CRX，没有可供 Chrome「加载已解压的扩展程序」使用的文件夹。
+/// 将 CRX3 头部之后的 ZIP 解到每用户目录；manifest 最后写，失败时下次可以修复。
+#[cfg(windows)]
+fn unpack_crx(crx: &Path, target: &Path) -> Result<(), String> {
+    use std::path::Component;
+
+    const LIMIT: u64 = 16 * 1024 * 1024;
+    let bytes = std::fs::read(crx).map_err(|e| e.to_string())?;
+    if bytes.len() < 16 || bytes.len() > LIMIT as usize || &bytes[..4] != b"Cr24" || bytes[4..8] != 3_u32.to_le_bytes()
+    {
+        return Err(swoop_i18n::tr!("扩展 CRX 格式无效").into());
+    }
+    let header = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
+    let start = 12_usize
+        .checked_add(header)
+        .filter(|start| *start + 4 <= bytes.len())
+        .ok_or(swoop_i18n::tr!("扩展 CRX 格式无效"))?;
+    if &bytes[start..start + 4] != b"PK\x03\x04" {
+        return Err(swoop_i18n::tr!("扩展 CRX 格式无效").into());
+    }
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes[start..]))
+        .map_err(|_| swoop_i18n::tr!("扩展 CRX 格式无效"))?;
+    if zip.len() > 256 {
+        return Err(swoop_i18n::tr!("扩展文件数量异常").into());
+    }
+    let mut files = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0_u64;
+    for index in 0..zip.len() {
+        let entry = zip.by_index(index).map_err(|e| e.to_string())?;
+        let path = entry.enclosed_name().ok_or(swoop_i18n::tr!("扩展包含无效路径"))?;
+        if path.components().any(|part| !matches!(part, Component::Normal(_))) {
+            return Err(swoop_i18n::tr!("扩展包含无效路径").into());
+        }
+        if entry.is_dir() {
+            continue;
+        }
+        if !seen.insert(path.to_string_lossy().to_lowercase()) {
+            return Err(swoop_i18n::tr!("扩展包含重复文件").into());
+        }
+        let declared_size = entry.size();
+        total =
+            total.checked_add(declared_size).filter(|size| *size <= LIMIT).ok_or(swoop_i18n::tr!("扩展文件过大"))?;
+        let mut content = Vec::new();
+        entry.take(LIMIT + 1).read_to_end(&mut content).map_err(|e| e.to_string())?;
+        if content.len() as u64 != declared_size {
+            return Err(swoop_i18n::tr!("扩展文件大小不符").into());
+        }
+        files.push((path, content));
+    }
+    let manifest = files
+        .iter()
+        .find(|(path, _)| path == Path::new("manifest.json"))
+        .ok_or(swoop_i18n::tr!("扩展缺少 manifest.json"))?;
+    let parsed: serde_json::Value = serde_json::from_slice(&manifest.1).map_err(|e| e.to_string())?;
+    if parsed.get("manifest_version").and_then(serde_json::Value::as_u64) != Some(3) {
+        return Err(swoop_i18n::tr!("扩展清单格式无效").into());
+    }
+    std::fs::create_dir_all(target).map_err(|e| e.to_string())?;
+    for (path, content) in files.iter().filter(|(path, _)| path != Path::new("manifest.json")) {
+        let dest = target.join(path);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(dest, content).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(target.join("manifest.json"), &manifest.1).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn chrome_guide_ext(ext: &ExtensionInfo) -> Result<(ExtensionInfo, PathBuf), String> {
+    let source = ext.crx.parent().ok_or(swoop_i18n::tr!("无法确定扩展目录"))?;
+    let bundled = source.join("swoop-extension");
+    if manifest_matches_version(&bundled, &ext.version) {
+        return Ok((ext.clone(), bundled));
+    }
+    let stable = crate::instance::data_dir().join("extension");
+    let unpacked = stable.join("swoop-extension");
+    if !manifest_matches_version(&unpacked, &ext.version) {
+        unpack_crx(&ext.crx, &unpacked)?;
+    }
+    std::fs::create_dir_all(&stable).map_err(|e| e.to_string())?;
+    let copied_crx = stable.join(swoop_browser_bridge::CRX_FILE);
+    if !std::fs::read(&copied_crx)
+        .is_ok_and(|current| std::fs::read(&ext.crx).is_ok_and(|original| original == current))
+    {
+        std::fs::copy(&ext.crx, &copied_crx).map_err(|e| e.to_string())?;
+    }
+    let mut guided_ext = ext.clone();
+    guided_ext.crx = copied_crx;
+    Ok((guided_ext, unpacked))
+}
+
+#[cfg(windows)]
+fn manifest_matches_version(dir: &Path, version: &str) -> bool {
+    std::fs::read(dir.join("manifest.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|manifest| manifest.get("version").and_then(serde_json::Value::as_str).map(str::to_owned))
+        .is_some_and(|found| found == version)
+}
+
+#[cfg(windows)]
+fn guide_browser(browser: &DetectedBrowser, ext: &ExtensionInfo) -> Result<(InstallOutcome, Option<PathBuf>), String> {
+    if browser.id() == "chrome" {
+        let (guided_ext, folder) = chrome_guide_ext(ext)?;
+        let outcome = swoop_browser_bridge::guide(browser, &guided_ext).map_err(|e| e.to_string())?;
+        Ok((outcome, Some(folder)))
+    } else {
+        let outcome = swoop_browser_bridge::guide(browser, ext).map_err(|e| e.to_string())?;
+        Ok((outcome, None))
+    }
+}
+
 /// 扫描并生成 GUI 行。
 #[cfg(windows)]
 pub fn scan_rows() -> Vec<BrowserRow> {
@@ -245,7 +371,7 @@ fn guide_fallback(browser: &DetectedBrowser, ext: &ExtensionInfo, reason: String
         }
         _ => swoop_i18n::trf!("{reason}，已打开扩展页并定位安装包，请按提示完成安装"),
     };
-    match swoop_browser_bridge::guide(browser, ext) {
+    match guide_browser(browser, ext) {
         Ok(_) => Ok(note),
         Err(e) => Err(swoop_i18n::trf!("{note}（引导打开失败：{e}）").to_string()),
     }
@@ -341,13 +467,13 @@ fn elevated_install(id: &str) -> ElevatedInstall {
 
 /// 对指定 id 的浏览器执行引导安装。
 #[cfg(windows)]
-pub fn guide_by_id(id: &str) -> Result<String, String> {
+pub fn guide_by_id(id: &str) -> Result<GuideInfo, String> {
     let defs = swoop_browser_bridge::browsers();
     let detected = swoop_browser_bridge::detect_installed(&defs);
     let browser = detected.iter().find(|b| b.id() == id).ok_or_else(|| swoop_i18n::trf!("未检测到浏览器：{id}"))?;
     let ext = load_ext(&None)?;
-    let outcome = swoop_browser_bridge::guide(browser, &ext).map_err(|e| e.to_string())?;
-    Ok(outcome_label(&outcome).to_string())
+    let (_, unpacked) = guide_browser(browser, &ext)?;
+    Ok(GuideInfo { id: browser.id().into(), name: browser.name().into(), unpacked })
 }
 
 #[cfg(windows)]
@@ -458,7 +584,11 @@ fn run_inner(action: Action, json: bool) -> Result<u8, String> {
                         }));
                         continue;
                     }
-                    let outcome = swoop_browser_bridge::install_extension(browser, &ext);
+                    let outcome = if browser.id() == "chrome" && !silent {
+                        guide_browser(browser, &ext).map(|(outcome, _)| outcome)
+                    } else {
+                        swoop_browser_bridge::install_extension(browser, &ext).map_err(|e| e.to_string())
+                    };
                     match outcome {
                         Ok(outcome) => {
                             // 静默模式跳过引导类策略；交互模式自动降级到引导
@@ -499,10 +629,10 @@ fn run_inner(action: Action, json: bool) -> Result<u8, String> {
                 let ext = load_ext(&ext_dir)?;
                 let browser =
                     detected.iter().find(|b| b.id() == id).ok_or_else(|| swoop_i18n::trf!("未知的浏览器：{id}"))?;
-                let outcome = swoop_browser_bridge::guide(browser, &ext).map_err(|e| e.to_string())?;
+                let (outcome, unpacked) = guide_browser(browser, &ext)?;
                 println!(
                     "{}",
-                    serde_json::json!({"ok": true, "data": {"id": browser.id(), "outcome": outcome_label(&outcome)}})
+                    serde_json::json!({"ok": true, "data": {"id": browser.id(), "outcome": outcome_label(&outcome), "unpacked": unpacked}})
                 );
                 Ok(0)
             }
@@ -513,6 +643,7 @@ fn run_inner(action: Action, json: bool) -> Result<u8, String> {
 #[cfg(all(test, windows))]
 mod payload_tests {
     use super::*;
+    use std::io::Write;
     use swoop_browser_bridge::{CRX_FILE, INFO_FILE, XPI_FILE};
 
     #[test]
@@ -545,5 +676,28 @@ mod payload_tests {
         std::fs::write(source.path().join(CRX_FILE), "crx").unwrap();
         assert!(sync_payload(source.path(), target.path()).is_err());
         assert!(!target.path().join(INFO_FILE).exists());
+    }
+
+    #[test]
+    fn extracts_crx3_as_loadable_chrome_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let crx = temp.path().join(CRX_FILE);
+        let target = temp.path().join("swoop-extension");
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("manifest.json", options).unwrap();
+        writer.write_all(br#"{"manifest_version":3,"version":"0.7.0","name":"Swoop"}"#).unwrap();
+        writer.start_file("background.js", options).unwrap();
+        writer.write_all(b"export {};").unwrap();
+        let archive = writer.finish().unwrap().into_inner();
+        let mut package = b"Cr24".to_vec();
+        package.extend_from_slice(&3_u32.to_le_bytes());
+        package.extend_from_slice(&0_u32.to_le_bytes());
+        package.extend_from_slice(&archive);
+        std::fs::write(&crx, package).unwrap();
+
+        unpack_crx(&crx, &target).unwrap();
+        assert_eq!(std::fs::read(target.join("background.js")).unwrap(), b"export {};");
+        assert_eq!(std::fs::read(target.join("manifest.json")).unwrap(), br#"{"manifest_version":3,"version":"0.7.0","name":"Swoop"}"#);
     }
 }

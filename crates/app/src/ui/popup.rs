@@ -79,6 +79,33 @@ pub fn show(
     show_with_margin(ctx, id, builder, p, 20, add_contents)
 }
 
+/// 浏览器安装引导：原生置顶窗口；截图模式仍在主窗口右上角预览。
+#[cfg(windows)]
+pub fn show_guide(
+    ctx: &egui::Context,
+    id: ViewportId,
+    builder: ViewportBuilder,
+    p: &Palette,
+    add: impl FnOnce(&mut Ui),
+) -> bool {
+    #[cfg(feature = "screenshot")]
+    if crate::shot::active() {
+        let size = builder.inner_size.unwrap_or(vec2(390.0, 320.0));
+        egui::Area::new(id.0).order(egui::Order::Foreground).anchor(egui::Align2::RIGHT_TOP, [-16.0, 16.0]).show(
+            ctx,
+            |ui| {
+                crate::ui::dialog::frame(p).inner_margin(Margin::same(20)).show(ui, |ui| {
+                    ui.set_width(size.x - 40.0);
+                    ui.set_min_height(size.y - 40.0);
+                    add(ui);
+                });
+            },
+        );
+        return false;
+    }
+    show(ctx, id, builder, p, add)
+}
+
 /// 同 [`show`]，内容区边距自定
 pub fn show_with_margin(
     ctx: &egui::Context,
@@ -231,6 +258,16 @@ impl SwoopApp {
             || !self.task_windows.is_empty()
             || !self.cards.is_empty()
             || !self.completion.dialogs.is_empty()
+            || {
+                #[cfg(windows)]
+                {
+                    self.extension_guide.is_some()
+                }
+                #[cfg(not(windows))]
+                {
+                    false
+                }
+            }
     }
 
     /// 所有独立弹窗；宿主窗口必须最后画，才能在弹窗建好后藏起来
@@ -239,6 +276,8 @@ impl SwoopApp {
         self.task_windows_ui(ctx);
         self.cards_ui(ctx);
         self.completed_window_ui(ctx);
+        #[cfg(windows)]
+        self.extension_guide_ui(ctx);
         self.popup_host_ui(ctx);
     }
 

@@ -496,7 +496,14 @@ impl SwoopApp {
                                     _ => {
                                         // 引导类只是打开页面，同步执行即可
                                         let entry = match crate::browsers::guide_by_id(&row_id) {
-                                            Ok(outcome) => Some((outcome, false, std::time::Instant::now())),
+                                            Ok(guide) => {
+                                                self.extension_guide = Some(guide);
+                                                Some((
+                                                    swoop_i18n::tr!("已打开引导，请按提示完成安装").into(),
+                                                    false,
+                                                    std::time::Instant::now(),
+                                                ))
+                                            }
                                             Err(error) => Some((error, true, std::time::Instant::now())),
                                         };
                                         ui.data_mut(|d| d.insert_temp(feedback_id, entry));

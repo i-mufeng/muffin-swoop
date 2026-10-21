@@ -41,6 +41,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 serde = { workspace = true }
 serde_json = { workspace = true }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 url = { workspace = true }
 percent-encoding = { workspace = true }
 dirs = { workspace = true }

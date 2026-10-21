@@ -310,6 +310,10 @@ fn run_strategy(
             Ok(InstallOutcome::Registered)
         }
         InstallStrategy::GuidedDrag => {
+            let unpacked = ext.crx.parent().unwrap_or(Path::new(".")).join("swoop-extension");
+            if browser.id() == "chrome" && !unpacked.join("manifest.json").is_file() {
+                return Err(BridgeError::MissingExtension("Chrome 需要已解压的扩展文件夹".into()));
+            }
             let page = browser.def.extensions_page.as_deref().unwrap_or("chrome://extensions/");
             // 优先用浏览器自己的 exe 打开扩展页：about:addons / se:// 这类页面用默认浏览器打开可能是错的
             match &browser.exe {
@@ -319,8 +323,7 @@ fn run_strategy(
                 None => open_in_default(page)?,
             }
             // Firefox 装 xpi，Chromium 系装 crx
-            let unpacked = ext.crx.parent().unwrap_or(Path::new(".")).join("swoop-extension");
-            if browser.id() == "chrome" && unpacked.join("manifest.json").is_file() {
+            if browser.id() == "chrome" {
                 // Chrome 正式版可能拒绝商店外 CRX；提供“加载已解压的扩展程序”的完整目录。
                 reveal_in_explorer(&unpacked)?;
                 return Ok(InstallOutcome::Guided);

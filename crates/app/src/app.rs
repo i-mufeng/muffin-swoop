@@ -93,6 +93,8 @@ pub struct SwoopApp {
     background_memory: crate::background_memory::BackgroundMemory,
     #[cfg(windows)]
     pub(crate) welcome: crate::ui::welcome::Welcome,
+    #[cfg(windows)]
+    pub(crate) extension_guide: Option<crate::browsers::GuideInfo>,
 }
 
 impl SwoopApp {
@@ -160,6 +162,8 @@ impl SwoopApp {
         let mut app = Self {
             #[cfg(windows)]
             welcome: crate::ui::welcome::Welcome::load(&store),
+            #[cfg(windows)]
+            extension_guide: None,
             engine,
             store,
             palette,
@@ -875,6 +879,8 @@ impl eframe::App for SwoopApp {
             && self.cards.is_empty()
             && self.task_windows.is_empty()
             && self.completion.dialogs.is_empty();
+        #[cfg(windows)]
+        let idle = idle && self.extension_guide.is_none();
         self.background_memory.update(self.hidden, idle);
         let every = match (self.hidden && self.cards.is_empty(), any_active) {
             (true, _) => Duration::from_secs(1),
