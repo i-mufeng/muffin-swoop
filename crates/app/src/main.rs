@@ -99,6 +99,10 @@ fn main() -> eframe::Result {
         .expect(swoop_i18n::tr!("启动 tokio runtime 失败"));
 
     let Some(ownership) = ownership else {
+        // 登录自启只负责确保进程驻留，不能唤醒已在后台的窗口。
+        if start_hidden {
+            return Ok(());
+        }
         match rt.block_on(instance::send(&data, &instance::Command::Show, true)) {
             Ok(result) if result.get("ok").and_then(serde_json::Value::as_bool) == Some(true) => {
                 return Ok(());

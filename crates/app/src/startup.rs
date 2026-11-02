@@ -124,7 +124,8 @@ fn packaged_path(exe: &Path) -> bool {
 }
 
 /// 校验启动命令格式并取出路径范围：命令必须是 `"路径"`，之后只允许为空（旧格式）
-/// 或 ` --background`（登录自启格式）；其余一律拒绝，避免覆盖用户手改过的启动项
+/// 或后台参数。兼容旧版漏写分隔空格的命令，以便用户应用设置时修复。
+#[cfg(any(windows, test))]
 fn command_path_range(units: &[u16]) -> Result<std::ops::Range<usize>, String> {
     if units.len() < 2 || units.first() != Some(&34) {
         return Err(swoop_i18n::tr!("已有 Swoop 启动命令不是单一程序路径，未覆盖").into());
@@ -134,10 +135,35 @@ fn command_path_range(units: &[u16]) -> Result<std::ops::Range<usize>, String> {
     };
     let tail = &units[end + 1..];
     let background: Vec<u16> = std::iter::once(0x20).chain(BACKGROUND_ARG.encode_utf16()).collect();
-    if !tail.is_empty() && tail != background {
+    if !tail.is_empty() && tail != background && tail != &background[1..] {
         return Err(swoop_i18n::tr!("已有 Swoop 启动命令包含无法识别的参数，未覆盖").into());
     }
     Ok(1..end)
+}
+
+/// REG_SZ 的完整 UTF-16 数据（含 NUL）。路径与参数之间必须有空格。
+#[cfg(any(windows, test))]
+fn background_command(path: impl IntoIterator<Item = u16>) -> Vec<u16> {
+    std::iter::once(34).chain(path).chain([34, 32]).chain(BACKGROUND_ARG.encode_utf16()).chain([0]).collect()
+}
+
+#[cfg(any(windows, test))]
+#[derive(Debug, PartialEq, Eq)]
+enum Approval {
+    Enabled,
+    Disabled,
+    Unknown,
+}
+
+#[cfg(any(windows, test))]
+fn approval(bytes: Option<&[u8]>) -> Approval {
+    // StartupApproved 是系统维护的非公开格式，只识别已知状态，不改写它。
+    match bytes {
+        None => Approval::Enabled,
+        Some(bytes) if bytes.len() >= 12 && matches!(&bytes[..4], [2 | 6, 0, 0, 0]) => Approval::Enabled,
+        Some(bytes) if bytes.len() >= 12 && matches!(&bytes[..4], [3 | 7, 0, 0, 0]) => Approval::Disabled,
+        Some(_) => Approval::Unknown,
+    }
 }
 
 fn state(exe: &Path, configured: Option<PathBuf>, disabled: bool) -> StartupState {
@@ -293,6 +319,7 @@ mod platform {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::*;
     const KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+    const APPROVAL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     fn wide(value: &str) -> Vec<u16> {
         value.encode_utf16().chain(Some(0)).collect()
     }
@@ -335,8 +362,8 @@ mod platform {
         data.truncate(size as usize);
         Ok(Some(data))
     }
-    fn current() -> Result<Option<PathBuf>, String> {
-        let Some(bytes) = value(KEY, RRF_RT_REG_SZ)? else {
+    fn current(key: &str) -> Result<Option<(PathBuf, bool)>, String> {
+        let Some(bytes) = value(key, RRF_RT_REG_SZ)? else {
             return Ok(None);
         };
         if bytes.len() % 2 != 0 {
@@ -347,28 +374,34 @@ mod platform {
             units.pop();
         }
         let range = command_path_range(&units)?;
-        Ok(Some(PathBuf::from(std::ffi::OsString::from_wide(&units[range]))))
+        let background = units.get(range.end + 1) == Some(&32);
+        Ok(Some((PathBuf::from(std::ffi::OsString::from_wide(&units[range])), background)))
     }
     pub fn read(exe: &Path) -> Result<StartupState, String> {
-        let configured = current()?;
-        if configured.is_none() {
+        read_at(exe, KEY, APPROVAL_KEY)
+    }
+    fn read_at(exe: &Path, key: &str, approval_key: &str) -> Result<StartupState, String> {
+        let Some((configured, background)) = current(key)? else {
             return Ok(state(exe, None, false));
-        }
-        let approval =
-            value(r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run", RRF_RT_REG_BINARY)?;
-        // StartupApproved is OS-owned. Recognize established states, never mutate
-        // this implementation detail, and fail closed for an unknown format.
-        let disabled = match approval.as_deref() {
-            None => false,
-            Some(bytes) if bytes.len() >= 12 && matches!(bytes[0], 2 | 6) => false,
-            Some(bytes) if bytes.len() >= 12 && matches!(bytes[0], 3 | 7) => true,
-            Some(_) => return Err(swoop_i18n::tr!("系统启动应用状态无法识别，请到 Windows 设置确认").into()),
         };
-        Ok(state(exe, configured, disabled))
+        let approval = approval(value(approval_key, RRF_RT_REG_BINARY)?.as_deref());
+        let mut state = state(exe, Some(configured), approval == Approval::Disabled);
+        if approval == Approval::Unknown && state.enabled {
+            // 注册成功与系统是否允许启动是两件事；未知格式不应让配置本身失败。
+            state.detail = swoop_i18n::tr!("启动项已登记，请到 Windows 设置确认是否启用").into();
+        } else if state.enabled && !background {
+            state.detail = swoop_i18n::tr!("启动项需更新，点击应用后将在后台启动").into();
+        }
+        state.matches_current &= background;
+        Ok(state)
     }
     pub fn configure(exe: &Path, enabled: bool) -> Result<(), String> {
-        let _ = current()?;
-        let key = wide(KEY);
+        configure_at(exe, enabled, KEY, APPROVAL_KEY)
+    }
+    fn configure_at(exe: &Path, enabled: bool, key: &str, approval_key: &str) -> Result<(), String> {
+        let _ = current(key)?;
+        let key_name = key;
+        let key = wide(key);
         let name = wide("Swoop");
         let mut handle = std::ptr::null_mut();
         let open = unsafe {
@@ -388,9 +421,7 @@ mod platform {
             return Err(swoop_i18n::trf!("无法打开当前用户启动项（{open}）"));
         }
         let result = if enabled {
-            let mut command = vec![34u16];
-            command.extend(exe.as_os_str().encode_wide());
-            command.extend(std::iter::once(34).chain(BACKGROUND_ARG.encode_utf16()).chain(Some(0)));
+            let command = background_command(exe.as_os_str().encode_wide());
             unsafe {
                 RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, command.as_ptr().cast(), (command.len() * 2) as u32)
             }
@@ -403,12 +434,83 @@ mod platform {
         if result != ERROR_SUCCESS && !(result == ERROR_FILE_NOT_FOUND && !enabled) {
             return Err(swoop_i18n::trf!("保存启动项失败（{result}）"));
         }
-        if enabled && !read(exe)?.enabled {
+        if enabled && !read_at(exe, key_name, approval_key)?.enabled {
             return Err(
                 swoop_i18n::tr!("启动路径已登记，但系统仍禁用此启动项；请在 Windows 启动应用中启用并刷新").into()
             );
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        struct RegistryFixture(String);
+        impl Drop for RegistryFixture {
+            fn drop(&mut self) {
+                unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, wide(&self.0).as_ptr()) };
+            }
+        }
+        fn put(key: &str, kind: u32, bytes: &[u8]) {
+            let mut handle = std::ptr::null_mut();
+            assert_eq!(
+                unsafe {
+                    RegCreateKeyExW(
+                        HKEY_CURRENT_USER,
+                        wide(key).as_ptr(),
+                        0,
+                        std::ptr::null(),
+                        REG_OPTION_NON_VOLATILE,
+                        KEY_SET_VALUE,
+                        std::ptr::null(),
+                        &mut handle,
+                        std::ptr::null_mut(),
+                    )
+                },
+                ERROR_SUCCESS
+            );
+            let result =
+                unsafe { RegSetValueExW(handle, wide("Swoop").as_ptr(), 0, kind, bytes.as_ptr(), bytes.len() as u32) };
+            unsafe { RegCloseKey(handle) };
+            assert_eq!(result, ERROR_SUCCESS);
+        }
+        #[test]
+        fn registry_enable_repair_unknown_approval_and_disable() {
+            // 使用独立临时键，不改写真实登录启动配置。
+            let fixture = RegistryFixture(format!(r"Software\Swoop\StartupTests\{}", uuid::Uuid::new_v4()));
+            let run = format!(r"{}\Run", fixture.0);
+            let approved = format!(r"{}\Approved", fixture.0);
+            let exe = std::env::current_exe().unwrap();
+            assert!(!read_at(&exe, &run, &approved).unwrap().enabled);
+            configure_at(&exe, true, &run, &approved).unwrap();
+            let state = read_at(&exe, &run, &approved).unwrap();
+            assert!(state.enabled && state.matches_current);
+
+            // 复现旧版本少空格的命令，并通过重新应用修复。
+            let mut broken = background_command(exe.as_os_str().encode_wide());
+            let space = broken.len() - BACKGROUND_ARG.encode_utf16().count() - 2;
+            assert_eq!(broken.remove(space), 32);
+            let bytes: Vec<_> = broken.iter().flat_map(|unit| unit.to_le_bytes()).collect();
+            put(&run, REG_SZ, &bytes);
+            assert!(!read_at(&exe, &run, &approved).unwrap().matches_current);
+            configure_at(&exe, true, &run, &approved).unwrap();
+            assert!(read_at(&exe, &run, &approved).unwrap().matches_current);
+
+            put(&approved, REG_BINARY, &[0; 12]);
+            configure_at(&exe, true, &run, &approved).unwrap();
+            let state = read_at(&exe, &run, &approved).unwrap();
+            assert!(state.detail.contains("Windows"));
+            assert_eq!(value(&approved, RRF_RT_REG_BINARY).unwrap(), Some(vec![0; 12]));
+            let mut disabled = [0; 12];
+            disabled[0] = 3;
+            put(&approved, REG_BINARY, &disabled);
+            assert!(!read_at(&exe, &run, &approved).unwrap().enabled);
+            assert!(configure_at(&exe, true, &run, &approved).is_err());
+            configure_at(&exe, false, &run, &approved).unwrap();
+            assert!(current(&run).unwrap().is_none());
+            assert_eq!(value(&approved, RRF_RT_REG_BINARY).unwrap(), Some(disabled.to_vec()));
+        }
     }
 }
 
@@ -442,6 +544,35 @@ mod tests {
         assert!(command_path_range(&wide("\"C:\\Apps\\swoop.exe\" --tray")).is_err());
         assert!(command_path_range(&wide("\"C:\\Apps\\swoop.exe\" --background extra")).is_err());
         assert!(command_path_range(&wide("\"unterminated")).is_err());
+        assert!(command_path_range(&wide("\"C:\\Apps\\swoop.exe\"--background")).is_ok());
+    }
+    #[test]
+    fn windows_background_command_roundtrips_unicode_path_and_separates_flag() {
+        let path = wide(r"C:\应用 程序\swoop.exe");
+        let command = background_command(path.iter().copied());
+        assert_eq!(command.last(), Some(&0));
+        let command = &command[..command.len() - 1];
+        let range = command_path_range(command).unwrap();
+        assert_eq!(&command[range.clone()], path);
+        assert_eq!(&command[range.end + 1..], wide(" --background"));
+    }
+    #[test]
+    fn windows_unknown_approval_is_distinct_from_disabled() {
+        assert_eq!(approval(None), Approval::Enabled);
+        for (byte, expected) in [
+            (2, Approval::Enabled),
+            (6, Approval::Enabled),
+            (3, Approval::Disabled),
+            (7, Approval::Disabled),
+            (0, Approval::Unknown),
+            (9, Approval::Unknown),
+        ] {
+            let mut bytes = [0; 12];
+            bytes[0] = byte;
+            assert_eq!(approval(Some(&bytes)), expected);
+        }
+        assert_eq!(approval(Some(&[2])), Approval::Unknown);
+        assert_eq!(approval(Some(&[3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])), Approval::Unknown);
     }
     #[test]
     fn serialization_preserves_unicode_spaces_and_xml_specials() {

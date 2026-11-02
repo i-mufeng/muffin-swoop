@@ -35,6 +35,9 @@ pub struct Toast {
     pub closing: bool,
 }
 
+/// 保留最近三条，批量完成时淘汰旧提示，不排队补弹。
+const MAX_VISIBLE: usize = 3;
+
 #[derive(Default)]
 pub struct Toasts {
     pub items: Vec<Toast>,
@@ -43,6 +46,9 @@ pub struct Toasts {
 
 impl Toasts {
     fn push(&mut self, kind: ToastKind, title: String, body: String, ttl: Duration) {
+        if self.items.len() >= MAX_VISIBLE {
+            self.items.drain(..=self.items.len() - MAX_VISIBLE);
+        }
         self.next_id += 1;
         self.items.push(Toast { id: self.next_id, kind, title, body, created: Instant::now(), ttl, closing: false });
     }
@@ -52,17 +58,19 @@ impl Toasts {
         if urls.is_empty() {
             return;
         }
-        if let Some(t) = self.items.iter_mut().find(|t| matches!(t.kind, ToastKind::Links(_)) && !t.closing)
-            && let ToastKind::Links(list) = &mut t.kind
-        {
-            for u in urls {
-                if !list.contains(&u) {
-                    list.push(u);
+        if let Some(index) = self.items.iter().position(|t| matches!(t.kind, ToastKind::Links(_)) && !t.closing) {
+            let mut toast = self.items.remove(index);
+            if let ToastKind::Links(list) = &mut toast.kind {
+                for url in urls {
+                    if !list.contains(&url) {
+                        list.push(url);
+                    }
                 }
+                toast.title = swoop_i18n::trf!("检测到 {} 个链接", list.len());
+                toast.body = list.last().cloned().unwrap_or_default();
+                toast.created = Instant::now();
             }
-            t.title = swoop_i18n::trf!("检测到 {} 个链接", list.len());
-            t.body = list.last().cloned().unwrap_or_default();
-            t.created = Instant::now();
+            self.items.push(toast);
             return;
         }
         let title = if urls.len() == 1 {
@@ -255,5 +263,40 @@ impl SwoopApp {
         if !failed.is_empty() {
             self.toasts.push_error(swoop_i18n::tr!("部分链接未能添加"), failed.join("\n"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bursts_keep_only_the_latest_three_notifications() {
+        let mut toasts = Toasts::default();
+        for number in 0..100 {
+            toasts.push_info("下载完成", number.to_string());
+            assert!(toasts.items.len() <= MAX_VISIBLE);
+        }
+        assert_eq!(toasts.items.iter().map(|t| t.body.as_str()).collect::<Vec<_>>(), ["97", "98", "99"]);
+        toasts.items[0].closing = true;
+        toasts.push_error("下载失败", "100");
+        assert_eq!(toasts.items.iter().map(|t| t.body.as_str()).collect::<Vec<_>>(), ["98", "99", "100"]);
+    }
+
+    #[test]
+    fn mixed_notifications_share_the_same_limit_and_links_still_merge() {
+        let mut toasts = Toasts::default();
+        toasts.push_info("提示", "first");
+        toasts.push_completed("完成", "second", PathBuf::from("second.zip"));
+        toasts.push_error("失败", "third");
+        toasts.push_links(vec!["https://example.com/a".into()]);
+        toasts.push_links(vec!["https://example.com/b".into()]);
+        assert_eq!(toasts.items.len(), MAX_VISIBLE);
+        assert_eq!(toasts.items[0].body, "second");
+        assert!(matches!(&toasts.items[2].kind, ToastKind::Links(urls) if urls.len() == 2));
+        toasts.push_error("失败", "new error");
+        toasts.push_links(vec!["https://example.com/c".into()]);
+        assert!(matches!(&toasts.items[2].kind, ToastKind::Links(urls) if urls.len() == 3));
+        assert_eq!(toasts.items[1].body, "new error");
     }
 }

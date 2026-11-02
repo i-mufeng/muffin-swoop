@@ -155,6 +155,9 @@ impl SwoopApp {
         add_dialog.ftp = crate::ftp_settings::FtpEditor::load(&store);
         // 登录自启（--background）直接驻留托盘；托盘不可用时没有途径唤回窗口，回退为正常显示
         let tray = Tray::new(&cc.egui_ctx);
+        if start_hidden && tray.is_none() {
+            cc.egui_ctx.send_viewport_cmd(ViewportCommand::Visible(true));
+        }
         let start_hidden = start_hidden && tray.is_some();
         if start_hidden {
             crate::tray::set_dock_visible(false);
@@ -882,6 +885,10 @@ impl eframe::App for SwoopApp {
         #[cfg(windows)]
         let idle = idle && self.extension_guide.is_none();
         self.background_memory.update(self.hidden, idle);
+        if self.hidden {
+            // eframe 首次绘制（包括下载浮窗触发的绘制）会显示根窗口；持续声明后台状态。
+            ctx.send_viewport_cmd(ViewportCommand::Visible(false));
+        }
         let every = match (self.hidden && self.cards.is_empty(), any_active) {
             (true, _) => Duration::from_secs(1),
             (false, true) => Duration::from_millis(100),

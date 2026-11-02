@@ -1,4 +1,7 @@
 {
+  "启动项已登记，请到 Windows 设置确认是否启用": "Startup entry registered; check Windows Settings to confirm whether it is enabled",
+  "启动项需更新，点击应用后将在后台启动": "Startup entry needs updating; click Apply to start in the background",
+  "点击应用以更新启动项": "Click Apply to update the startup entry",
   "扩展 CRX 格式无效": "Invalid extension CRX format",
   "无法确定扩展目录": "Could not locate the extension directory",
   "扩展文件数量异常": "Too many extension files",

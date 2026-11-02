@@ -1,9 +1,10 @@
 //! 系统通知：策略与发送分离，系统调用在单独线程上执行。
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Condvar, Mutex};
 
 use swoop_core::Event;
 
@@ -98,7 +99,8 @@ pub enum NotificationAction {
 
 /// 带按钮的 macOS 通知会占住一个线程直到用户处理或清除它；超过上限的退回普通通知。
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const MAX_WAITING: usize = 4;
+const MAX_WAITING: usize = 3;
+const MAX_RECENT: usize = 3;
 
 #[derive(Clone)]
 pub struct Responder {
@@ -135,8 +137,14 @@ impl Drop for WaitSlot {
     }
 }
 
+#[derive(Default)]
+struct PendingNotifications {
+    queue: VecDeque<DesktopNotification>,
+    closed: bool,
+}
+
 pub struct Notifier {
-    tx: SyncSender<DesktopNotification>,
+    pending: Arc<(Mutex<PendingNotifications>, Condvar)>,
     actions: Receiver<NotificationAction>,
 }
 
@@ -155,24 +163,36 @@ impl Notifier {
         wake: impl Fn() + Send + Sync + 'static,
         mut show: impl FnMut(DesktopNotification, &Responder) -> Result<(), String> + Send + 'static,
     ) -> std::io::Result<Self> {
-        let (tx, rx) = mpsc::sync_channel(32);
+        let pending = Arc::new((Mutex::new(PendingNotifications::default()), Condvar::new()));
+        let worker_pending = pending.clone();
         let (action_tx, actions) = mpsc::channel();
         let responder = Responder { tx: action_tx, wake: Arc::new(wake), waiting: Arc::default() };
         std::thread::Builder::new().name("swoop-notifications".into()).spawn(move || {
-            while let Ok(message) = rx.recv() {
+            loop {
+                let (lock, ready) = &*worker_pending;
+                let mut pending = lock.lock().unwrap();
+                while pending.queue.is_empty() && !pending.closed {
+                    pending = ready.wait(pending).unwrap();
+                }
+                let Some(message) = pending.queue.pop_front() else { break };
+                drop(pending);
                 if let Err(error) = show(message, &responder) {
                     tracing::warn!(%error, "发送系统通知失败");
                 }
             }
         })?;
-        Ok(Self { tx, actions })
+        Ok(Self { pending, actions })
     }
 
     pub fn send(&self, message: DesktopNotification) {
-        // 通知服务卡住或大量任务同时结束，都不能卡住主界面或无限占用内存。
-        if self.tx.try_send(message).is_err() {
-            tracing::warn!("系统通知队列不可用，已跳过提醒");
+        // 后端调用不持锁；大量任务同时结束时只保留最近三条，淘汰旧消息。
+        let (lock, ready) = &*self.pending;
+        let mut pending = lock.lock().unwrap();
+        if pending.queue.len() == MAX_RECENT {
+            pending.queue.pop_front();
         }
+        pending.queue.push_back(message);
+        ready.notify_one();
     }
 
     /// 取出用户在通知上的操作
@@ -190,14 +210,28 @@ impl Notifier {
     }
 }
 
+impl Drop for Notifier {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.pending;
+        lock.lock().unwrap().closed = true;
+        ready.notify_one();
+    }
+}
+
+#[cfg(windows)]
+fn show_native(message: DesktopNotification, responder: &Responder) -> Result<(), String> {
+    show_windows(message, responder)
+}
+
+#[cfg(not(windows))]
 fn show_native(mut message: DesktopNotification, responder: &Responder) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     ensure_macos_application()?;
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(target_os = "macos")]
     if let Some(path) = message.file.take() {
         return show_actionable(message, path, responder);
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(target_os = "macos"))]
     let _ = (message.file.take(), responder);
     show_plain(message)
 }
@@ -309,8 +343,9 @@ fn register_windows_app_id() -> Result<(), String> {
     let mut result = ERROR_SUCCESS;
     for (name, value) in [("DisplayName", wide("Swoop".as_ref())), ("IconUri", wide(icon.as_os_str()))] {
         let name = wide(name.as_ref());
-        let status =
-            unsafe { RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32) };
+        let status = unsafe {
+            RegSetValueExW(handle, name.as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32)
+        };
         if status != ERROR_SUCCESS {
             result = status;
         }
@@ -321,28 +356,102 @@ fn register_windows_app_id() -> Result<(), String> {
     if result == ERROR_SUCCESS { Ok(()) } else { Err(format!("RegSetValueExW {result}")) }
 }
 
+/// 固定三个 tag 槽位：替换旧通知，并隐藏仍在屏幕上的旧横幅。
 #[cfg(windows)]
-fn show_actionable(message: DesktopNotification, path: PathBuf, responder: &Responder) -> Result<(), String> {
-    use tauri_winrt_notification::{Sound, Toast};
-    let responder = responder.clone();
-    Toast::new(windows_app_id())
-        .title(message.summary)
-        .text1(&message.body)
-        .sound(message.sound.then_some(Sound::Default))
-        .add_button(swoop_i18n::tr!("打开"), "open")
-        .add_button(swoop_i18n::tr!("打开文件夹"), "reveal")
-        .on_activated(move |action| {
-            responder.send(match action.as_deref() {
-                Some("open") => NotificationAction::Open(path.clone()),
-                Some("reveal") => NotificationAction::Reveal(path.clone()),
+fn show_windows(message: DesktopNotification, responder: &Responder) -> Result<(), String> {
+    use std::cell::RefCell;
+    use windows::Data::Xml::Dom::XmlDocument;
+    use windows::Foundation::TypedEventHandler;
+    use windows::UI::Notifications::{ToastActivatedEventArgs, ToastNotification, ToastNotificationManager};
+    use windows::core::{HSTRING, IInspectable, Interface};
+
+    #[derive(Default)]
+    struct Recent {
+        next: usize,
+        initialized: bool,
+        visible: [Option<ToastNotification>; MAX_RECENT],
+    }
+    thread_local! { static RECENT: RefCell<Recent> = RefCell::default(); }
+    let result = RECENT.with(|recent| -> windows::core::Result<()> {
+        let mut recent = recent.borrow_mut();
+        let app_id = HSTRING::from(windows_app_id());
+        let group = HSTRING::from("swoop-downloads");
+        let history = ToastNotificationManager::History()?;
+        let notifier = ToastNotificationManager::CreateToastNotifierWithId(&app_id)?;
+        if !recent.initialized {
+            // 清理本应用旧版无 tag 通知；借用的 PowerShell 标识只清理自己的分组。
+            if windows_app_id() == WINDOWS_APP_ID {
+                history.ClearWithId(&app_id)?;
+            } else {
+                history.RemoveGroupWithId(&group, &app_id)?;
+            }
+            recent.initialized = true;
+        }
+        let slot = recent.next;
+        let tag = HSTRING::from(format!("recent-{slot}"));
+        let document = XmlDocument::new()?;
+        document.LoadXml(&HSTRING::from(windows_toast_xml(&message)))?;
+        let toast = ToastNotification::CreateToastNotification(&document)?;
+        toast.SetTag(&tag)?;
+        toast.SetGroup(&group)?;
+        let responder = responder.clone();
+        let path = message.file;
+        toast.Activated(&TypedEventHandler::<ToastNotification, IInspectable>::new(move |_, args| {
+            let argument = args
+                .as_ref()
+                .and_then(|args| args.cast::<ToastActivatedEventArgs>().ok())
+                .and_then(|args| args.Arguments().ok())
+                .map(|args| args.to_string());
+            responder.send(match (argument.as_deref(), &path) {
+                (Some("open"), Some(path)) => NotificationAction::Open(path.clone()),
+                (Some("reveal"), Some(path)) => NotificationAction::Reveal(path.clone()),
                 _ => NotificationAction::Show,
             });
             Ok(())
-        })
-        .show()
-        .map_err(|error| format!("{error:?}"))
+        }))?;
+        if let Some(old) = &recent.visible[slot] {
+            notifier.Hide(old)?;
+            history.RemoveGroupedTagWithId(&tag, &group, &app_id)?;
+        }
+        notifier.Show(&toast)?;
+        recent.visible[slot] = Some(toast);
+        recent.next = (slot + 1) % MAX_RECENT;
+        Ok(())
+    });
+    result.map_err(|error| error.to_string())
 }
 
+#[cfg(any(windows, test))]
+fn windows_toast_xml(message: &DesktopNotification) -> String {
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    };
+    let actions = if message.file.is_some() {
+        format!(
+            r#"<actions><action content="{}" arguments="open" activationType="foreground"/><action content="{}" arguments="reveal" activationType="foreground"/></actions>"#,
+            escape(swoop_i18n::tr!("打开")),
+            escape(swoop_i18n::tr!("打开文件夹"))
+        )
+    } else {
+        String::new()
+    };
+    let audio = if message.sound {
+        r#"<audio src="ms-winsoundevent:Notification.Default"/>"#
+    } else {
+        r#"<audio silent="true"/>"#
+    };
+    format!(
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual>{actions}{audio}</toast>"#,
+        escape(message.summary),
+        escape(&message.body)
+    )
+}
+
+#[cfg(not(windows))]
 fn show_plain(message: DesktopNotification) -> Result<(), String> {
     // Linux 通知正文允许标记，文件名必须作为普通文本显示。
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -516,5 +625,53 @@ mod tests {
         assert!(responder.acquire().is_none());
         drop(slots);
         assert!(responder.acquire().is_some());
+    }
+
+    #[test]
+    fn slow_backend_discards_old_pending_messages_instead_of_newest() {
+        let (release, wait) = mpsc::channel::<()>();
+        let (sent, received) = mpsc::channel();
+        let notifier = Notifier::with_backend(
+            || {},
+            move |message, _| {
+                let first = message.body == "0";
+                sent.send(message.body).unwrap();
+                if first {
+                    wait.recv().unwrap();
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        let send = |number: usize| {
+            notifier.send(DesktopNotification { summary: "test", body: number.to_string(), sound: false, file: None })
+        };
+        send(0);
+        assert_eq!(received.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), "0");
+        for number in 1..=100 {
+            send(number);
+        }
+        assert_eq!(notifier.pending.0.lock().unwrap().queue.len(), MAX_RECENT);
+        release.send(()).unwrap();
+        for number in 98..=100 {
+            assert_eq!(received.recv_timeout(std::time::Duration::from_secs(2)).unwrap(), number.to_string());
+        }
+        assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn windows_toast_escapes_text_and_keeps_file_actions_and_sound() {
+        let mut message =
+            DesktopNotification { summary: "下载完成", body: "文件<&\"'".into(), sound: false, file: None };
+        let plain = windows_toast_xml(&message);
+        assert!(plain.contains("文件&lt;&amp;&quot;&apos;"));
+        assert!(plain.contains(r#"<audio silent="true"/>"#));
+        assert!(!plain.contains("<actions>"));
+        message.file = Some(PathBuf::from("file.zip"));
+        message.sound = true;
+        let actionable = windows_toast_xml(&message);
+        assert!(actionable.contains(r#"arguments="open""#));
+        assert!(actionable.contains(r#"arguments="reveal""#));
+        assert!(actionable.contains("Notification.Default"));
     }
 }

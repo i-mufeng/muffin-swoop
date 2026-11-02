@@ -575,7 +575,7 @@ impl SwoopApp {
                     if !state.packaged {
                         dialog::note(ui, &p, swoop_i18n::tr!("从完整安装包启动后可启用"));
                     } else if state.enabled && !state.matches_current {
-                        dialog::note(ui, &p, swoop_i18n::tr!("点击应用以更新启动路径"));
+                        dialog::note(ui, &p, swoop_i18n::tr!("点击应用以更新启动项"));
                     }
                 }
                 if let Some(error) = &self.startup.error {

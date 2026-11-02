@@ -50,8 +50,9 @@ impl ProgressPopup {
 }
 
 pub const SIZE: Vec2 = vec2(340.0, 110.0);
-/// 同时显示的卡片上限；其余排队，最上面那张标出还有几个
+/// 同时显示的卡片上限；其余轮转，最上面那张标出还有几个
 const MAX_VISIBLE: usize = 3;
+const ROTATE_EVERY: Duration = Duration::from_secs(5);
 /// 与屏幕可用区域边缘的距离、卡片之间的间距
 const MARGIN: f32 = 16.0;
 const GAP: f32 = 10.0;
@@ -101,6 +102,7 @@ pub struct Cards {
     cards: Vec<Card>,
     /// 屏幕可用区域：第一张卡片出现时按鼠标所在屏幕取，后来的卡片沿用，全部收起后再重新取
     area: Option<Rect>,
+    rotated_at: Option<Instant>,
 }
 
 impl Cards {
@@ -162,6 +164,53 @@ impl Cards {
         !self.cards.iter().any(|c| c.id == id && (c.held || c.motion.is_none_or(|m| m.started.is_none())))
     }
 
+    /// 所有卡片都及时消费终态，避免大量完成任务在排队后逐个补弹。
+    fn update(&mut self, tasks: &[&TaskSnapshot], now: Instant, interacting: bool) {
+        for card in &mut self.cards {
+            if let Some(task) = tasks.iter().find(|task| task.id == card.id) {
+                if matches!(task.status, TaskStatus::Completed | TaskStatus::Failed(_)) {
+                    card.done_since.get_or_insert(now);
+                } else {
+                    card.done_since = None;
+                }
+            }
+        }
+        // 完成和失败也只保留最近三条；进行中的下载不丢失，仍参与轮转。
+        let mut terminal: Vec<_> = self
+            .cards
+            .iter()
+            .filter_map(|card| {
+                let since = card.done_since?;
+                let completed = tasks.iter().find(|task| task.id == card.id).and_then(|task| task.completed_at);
+                Some((since, completed, card.id))
+            })
+            .collect();
+        terminal.sort_unstable_by(|left, right| right.cmp(left));
+        self.cards.retain(|card| {
+            (card.done_since.is_none() || terminal.iter().take(MAX_VISIBLE).any(|(_, _, id)| *id == card.id))
+                && tasks.iter().any(|task| task.id == card.id)
+                && card.done_since.is_none_or(|done| now.duration_since(done) < LINGER)
+        });
+        let waiting_for_handoff = self
+            .cards
+            .iter()
+            .any(|card| card.held || (card.in_place && card.motion.is_none_or(|motion| motion.started.is_none())));
+        if self.cards.len() <= MAX_VISIBLE || interacting || waiting_for_handoff {
+            self.rotated_at = Some(now);
+            return;
+        }
+        let since = *self.rotated_at.get_or_insert(now);
+        if now.duration_since(since) >= ROTATE_EVERY {
+            self.cards.rotate_left(MAX_VISIBLE);
+            for card in self.cards.iter_mut().take(MAX_VISIBLE) {
+                card.motion = None;
+                card.pos = None;
+                card.in_place = true;
+            }
+            self.rotated_at = Some(now);
+        }
+    }
+
     pub fn close(&mut self, id: TaskId) {
         self.cards.retain(|c| c.id != id);
         if self.cards.is_empty() {
@@ -181,8 +230,9 @@ fn fallback_area(ctx: &egui::Context) -> Rect {
     Rect::from_min_max(Pos2::ZERO, pos2(size.x, size.y - 48.0))
 }
 
-fn viewport_id(id: TaskId) -> ViewportId {
-    ViewportId::from_hash_of(("swoop-download-card", id))
+fn viewport_id(slot: usize) -> ViewportId {
+    // 槽位复用同一原生窗口，轮转时始终只有最多三个窗口。
+    ViewportId::from_hash_of(("swoop-download-card-slot", slot))
 }
 
 enum CardAction {
@@ -206,7 +256,9 @@ impl SwoopApp {
             .filter_map(|c| self.engine.snapshot_one(c.id))
             .collect();
         let tasks: Vec<&TaskSnapshot> = self.tasks.iter().chain(&fresh).collect();
-        self.cards.cards.retain(|c| tasks.iter().any(|t| t.id == c.id));
+        let interacting = (0..self.cards.cards.len().min(MAX_VISIBLE))
+            .any(|slot| ctx.input_for(viewport_id(slot), |input| input.pointer.has_pointer() || input.focused));
+        self.cards.update(&tasks, Instant::now(), interacting);
         if self.cards.cards.is_empty() {
             self.cards.area = None;
             return;
@@ -238,11 +290,6 @@ impl SwoopApp {
             moving |= !arrived;
             card.pos = Some(pos);
 
-            if task.status == TaskStatus::Completed {
-                card.done_since.get_or_insert_with(Instant::now);
-            } else {
-                card.done_since = None;
-            }
             let history = crate::demo::speed_history(task).unwrap_or_else(|| self.engine.speed_history(task.id));
             let extra = if slot + 1 == visible { more } else { 0 };
             // 窗口刚建好的第一帧也画卡片内容，不闪一帧空白（交接时盖在对话框上）
@@ -252,7 +299,7 @@ impl SwoopApp {
                     card_contents(ui, &p, &task, &history, extra);
                 }
             };
-            let shown = popup::show_card(ctx, viewport_id(card.id), SIZE, pos, slot, &p, placeholder, |ui| {
+            let shown = popup::show_card(ctx, viewport_id(slot), SIZE, pos, slot, &p, placeholder, |ui| {
                 let hovered = ui.input(|i| i.pointer.has_pointer());
                 (card_contents(ui, &p, task, &history, extra), hovered)
             });
@@ -275,7 +322,7 @@ impl SwoopApp {
         }
         if moving {
             ctx.request_repaint();
-        } else if self.cards.cards.iter().any(|c| c.done_since.is_some()) {
+        } else if self.cards.cards.len() > MAX_VISIBLE || self.cards.cards.iter().any(|c| c.done_since.is_some()) {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
 
@@ -627,5 +674,85 @@ mod tests {
         }
         assert!(!cards.open_held(TaskId(4)), "排在后面的不缩进来，照常排队");
         assert!(cards.contains(TaskId(4)) && !cards.cards[3].held);
+    }
+
+    fn task(id: u64, status: TaskStatus) -> TaskSnapshot {
+        TaskSnapshot {
+            id: TaskId(id),
+            url: "https://example.test/file".into(),
+            file_name: format!("file-{id}"),
+            path: PathBuf::from(format!("file-{id}")),
+            total: Some(100),
+            downloaded: 10,
+            speed_bps: 1.0,
+            status,
+            resumable: true,
+            segments: vec![],
+            active_connections: 1,
+            created_at: std::time::SystemTime::UNIX_EPOCH,
+            completed_at: Some(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(id)),
+        }
+    }
+
+    #[test]
+    fn parallel_downloads_rotate_in_three_stable_slots() {
+        let tasks: Vec<_> = (1..=10).map(|id| task(id, TaskStatus::Downloading)).collect();
+        let snapshots: Vec<_> = tasks.iter().collect();
+        let mut cards = Cards::default();
+        for task in &tasks {
+            cards.open(task.id);
+        }
+        let start = Instant::now();
+        cards.update(&snapshots, start, false);
+        assert!(cards.visible(TaskId(1)) && !cards.visible(TaskId(4)));
+        cards.update(&snapshots, start + ROTATE_EVERY, false);
+        assert!(cards.visible(TaskId(4)) && cards.visible(TaskId(6)) && !cards.visible(TaskId(1)));
+        assert_eq!(cards.cards.iter().take(MAX_VISIBLE).count(), 3);
+        // 模拟原生窗口已绘制，悬停期间不能替换按钮所在的任务。
+        for card in &mut cards.cards {
+            card.motion = Some(Motion { from: Pos2::ZERO, to: Pos2::ZERO, secs: MOVE_SECS, started: Some(0.0) });
+        }
+        cards.update(&snapshots, start + ROTATE_EVERY * 2, true);
+        assert!(cards.visible(TaskId(4)));
+        cards.update(&snapshots, start + ROTATE_EVERY * 2 + Duration::from_secs(1), false);
+        assert!(cards.visible(TaskId(4)));
+        cards.update(&snapshots, start + ROTATE_EVERY * 3, false);
+        assert!(cards.visible(TaskId(7)) && cards.visible(TaskId(9)));
+        assert_ne!(viewport_id(0), viewport_id(1));
+    }
+
+    #[test]
+    fn queued_terminal_cards_keep_latest_three_and_expire_without_backlog() {
+        let tasks: Vec<_> = (1..=100).map(|id| task(id, TaskStatus::Completed)).collect();
+        let snapshots: Vec<_> = tasks.iter().collect();
+        let mut cards = Cards::default();
+        for task in &tasks {
+            cards.open(task.id);
+        }
+        // 轮转后的 Vec 排序不影响按完成时刻选最近三条。
+        cards.cards.rotate_left(40);
+        let start = Instant::now();
+        cards.update(&snapshots, start, false);
+        assert_eq!(cards.cards.len(), MAX_VISIBLE);
+        for id in 98..=100 {
+            assert!(cards.contains(TaskId(id)));
+        }
+        cards.update(&snapshots, start + LINGER, false);
+        assert!(cards.is_empty());
+    }
+
+    #[test]
+    fn handoff_is_not_rotated_away() {
+        let tasks: Vec<_> = (1..=4).map(|id| task(id, TaskStatus::Downloading)).collect();
+        let snapshots: Vec<_> = tasks.iter().collect();
+        let mut cards = Cards::default();
+        assert!(cards.open_held(TaskId(1)));
+        for task in tasks.iter().skip(1) {
+            cards.open(task.id);
+        }
+        let start = Instant::now();
+        cards.update(&snapshots, start, false);
+        cards.update(&snapshots, start + ROTATE_EVERY, false);
+        assert!(cards.visible(TaskId(1)) && cards.cards[0].held);
     }
 }
