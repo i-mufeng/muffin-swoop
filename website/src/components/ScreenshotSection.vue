@@ -89,8 +89,8 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.shots { position: relative; z-index: 1; padding: 0; }
-.shots .container { padding: 0; display: flex; flex-direction: column; }
+.shots { position: relative; z-index: 1; padding: 32px 0 48px; }
+.shots .container { max-width: 1120px; padding-inline: 32px; display: flex; flex-direction: column; }
 .controls { order: 2; margin-top: 18px; display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
 .seg {
   display: inline-flex;

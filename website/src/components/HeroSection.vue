@@ -3,7 +3,6 @@ import { computed } from 'vue'
 import { DOWNLOADS, GITHUB_RELEASES_URL, MICROSOFT_STORE_URL } from '../config'
 import { useLatestRelease } from '../composables/useLatestRelease'
 import { useI18n } from '../i18n'
-import ScreenshotSection from './ScreenshotSection.vue'
 
 const { release } = useLatestRelease()
 const { t } = useI18n()
@@ -60,38 +59,49 @@ const versionText = computed(() =>
         <span>MIT</span>
       </div>
       </div>
-      <div class="hero-preview"><ScreenshotSection /></div>
+      <a class="scroll-cue" href="#shots" :aria-label="t().shots.title">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 4v16M6 14l6 6 6-6" />
+        </svg>
+      </a>
     </div>
   </section>
 </template>
 
 <style scoped>
-.hero { position: relative; z-index: 1; border-bottom: 1px solid var(--hairline); }
+.hero { position: relative; z-index: 1; }
 .hero-inner {
-  max-width: 1320px; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
-  align-items: center; gap: 56px; padding-block: 100px 96px;
+  min-height: calc(100svh - 68px); display: flex; flex-direction: column;
+  align-items: center; padding-block: 64px 28px; text-align: center;
 }
-.hero-copy { min-width: 0; }
+.hero-copy { width: 100%; max-width: 1020px; margin-block: auto; }
 .ver { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--dim); text-decoration: none; }
 .ver::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
 .ver:hover { color: var(--ink); }
-h1 { margin-top: 24px; font-size: clamp(40px, 4.1vw, 56px); font-weight: 650; letter-spacing: -2px; line-height: 1.28; text-wrap: balance; }
-h1 span { display: block; }
-.tagline { margin-top: 22px; max-width: 380px; color: var(--dim); font-size: 16px; line-height: 1.9; text-wrap: pretty; }
+h1 { margin-top: 28px; font-size: clamp(40px, 4.5vw, 64px); font-weight: 650; letter-spacing: -2px; line-height: 1.28; text-wrap: balance; }
+h1 span { color: var(--dim); }
+.tagline { margin: 22px auto 0; max-width: 560px; color: var(--dim); font-size: 16px; line-height: 1.9; text-wrap: pretty; }
 .cta { margin-top: 32px; }
-.cta-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+.cta-row { justify-content: center; display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
 .cta .btn-primary { padding: 14px 20px; border-radius: 8px; font-size: 14px; }
 .cta .btn-ghost { font-size: 14px; }
-.highlights { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 28px; }
+.highlights { justify-content: center; display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 28px; }
 .highlights li { padding: 5px 10px; background: var(--card-bg-hover); border-radius: 5px; color: var(--dim); font-size: 12px; line-height: 1.5; white-space: nowrap; }
-.memory-details { margin-top: 16px; font-size: 12px; color: var(--dim); }
-.memory-details summary { display: list-item; cursor: pointer; width: fit-content; line-height: 1.8; }
+.memory-details { max-width: 580px; margin: 16px auto 0; font-size: 12px; color: var(--dim); }
+.memory-details summary { display: list-item; cursor: pointer; width: fit-content; margin-inline: auto; line-height: 1.8; }
 .memory-details summary:hover { color: var(--ink); }
 .memory-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .memory-details p { margin-top: 12px; line-height: 1.9; text-wrap: pretty; }
 .memory-details a { color: var(--ink); }
-.hero-preview { position: relative; min-width: 0; }
-.hero-preview::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at center, var(--accent-soft), transparent 70%); pointer-events: none; }
+.scroll-cue {
+  display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px;
+  margin-top: 40px; border: 1px solid var(--hairline); border-radius: 50%;
+  color: var(--dim); background: var(--card-bg); text-decoration: none;
+  transition: color var(--transition), border-color var(--transition), background var(--transition);
+}
+.scroll-cue:hover { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
+.scroll-cue svg { transition: transform var(--transition); }
+.scroll-cue:hover svg { transform: translateY(3px); }
 
 /* 平台选择使用原生 details，支持触控、键盘展开与 Esc 收起。 */
 .dl-direct { position: relative; }
@@ -127,23 +137,20 @@ h1 span { display: block; }
 }
 .dl-pop a:hover { background: var(--accent-soft); color: var(--accent); }
 .dl-pop a:hover::after { color: var(--accent); }
-.meta { margin-top: 20px; display: flex; gap: 20px; font-size: 11px; color: var(--dim); }
+.meta { justify-content: center; margin-top: 20px; display: flex; gap: 20px; font-size: 11px; color: var(--dim); }
 .meta a { color: inherit; text-decoration: none; }
 .meta a:hover { color: var(--ink); }
-@media (max-width: 1000px) {
-  .hero-inner { gap: 32px; padding-block: 72px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
-  h1 { font-size: 42px; }
+@media (max-width: 640px) {
+  .hero-inner { padding: 44px 24px 24px; }
+  h1 { font-size: clamp(32px, 8vw, 42px); letter-spacing: -1px; }
+  h1 span { display: block; }
+  .tagline { margin-top: 18px; }
+  .cta { margin-top: 28px; }
   .cta-row { gap: 12px; }
-}
-@media (max-width: 900px) {
-  .hero-inner { grid-template-columns: minmax(0, 1fr); gap: 44px; padding: 48px 24px 48px; }
-  .hero-copy { max-width: 520px; }
-  h1 { font-size: clamp(34px, 7vw, 48px); letter-spacing: -1.5px; }
-  .tagline { margin-top: 16px; }
-  .hero-preview::before { inset: 0; }
-  .cta { margin-top: 24px; }
+  .scroll-cue { margin-top: 32px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .dl-pop, .dl-trigger svg { transition: none; }
+  .dl-pop, .dl-trigger svg, .scroll-cue, .scroll-cue svg { transition: none; }
+  .scroll-cue:hover svg { transform: none; }
 }
 </style>
