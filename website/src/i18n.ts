@@ -27,7 +27,12 @@ const messages = {
       titleA: '轻量、快速的',
       titleB: '下载管理器',
       titleEnd: '。',
-      tagline: 'Rust 编写的多线程下载管理器：分段加速、断点续传、流媒体录制、整站镜像，一个小巧二进制，没有多余的一切。',
+      tagline: 'Rust 原生构建，让下载更快，让日常更轻。',
+      highlightsLabel: '产品特点',
+      highlights: ['多线程加速', '断点续传', '浏览器接管'],
+      memoryBadge: 'Windows 后台空闲约 3 MiB · 私有工作集',
+      memoryNote: '2026-10-21 发布版测试：窗口隐藏、浏览器桥接开启，剪贴板监听、通知与浮窗关闭。后台空闲私有工作集为 2.32–3.29 MiB，总工作集为 6.91–9.53 MiB，Private Bytes 约 79–82 MiB。工作集表示物理驻留内存，不等于全部提交内存；实际占用随设备、配置和任务变化，不代表 macOS 或所有使用场景。',
+      memorySource: '查看测试记录 ↗',
       ctaWindows: '下载 Windows 版',
       ctaMac: 'macOS 版',
       ctaStore: '在 Microsoft Store 安装',
@@ -85,7 +90,12 @@ const messages = {
       titleA: 'A lightweight, fast ',
       titleB: 'download manager',
       titleEnd: '.',
-      tagline: 'A multi-connection download manager written in Rust: segmented acceleration, resumable downloads, stream recording and site mirroring — one small binary, nothing more.',
+      tagline: 'Built natively in Rust. Faster downloads, a lighter everyday experience.',
+      highlightsLabel: 'Product highlights',
+      highlights: ['Multi-connection', 'Resume downloads', 'Browser integration'],
+      memoryBadge: 'Windows background idle ≈ 3 MiB · private working set',
+      memoryNote: 'Release build tested on October 21, 2026: window hidden, browser bridge enabled; clipboard monitoring, notifications and floating window disabled. Idle private working set: 2.32–3.29 MiB; total working set: 6.91–9.53 MiB; Private Bytes: about 79–82 MiB. Working set measures physical residency, not all committed memory. Usage varies by device, settings and workload; these results do not cover macOS or every usage scenario.',
+      memorySource: 'View test record ↗',
       ctaWindows: 'Download for Windows',
       ctaMac: 'macOS version',
       ctaStore: 'Get it from Microsoft Store',
@@ -137,7 +147,7 @@ const messages = {
   },
 } as const
 
-export type Messages = (typeof messages)['zh']
+export type Messages = (typeof messages)[Locale]
 
 export function useI18n() {
   function t(): Messages {

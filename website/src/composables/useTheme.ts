@@ -26,7 +26,7 @@ watch(
 interface ViewTransition {
   ready: Promise<void>
 }
-interface DocumentWithVT extends Document {
+type DocumentWithVT = Omit<Document, 'startViewTransition'> & {
   startViewTransition?: (callback: () => void) => ViewTransition
 }
 

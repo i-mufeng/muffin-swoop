@@ -58,11 +58,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <section id="shots" class="shots">
+  <section id="shots" class="shots" :aria-label="t().shots.title">
     <div class="container">
-      <div class="section-label">{{ t().shots.label }}</div>
-      <h2 class="section-title">{{ t().shots.title }}</h2>
-
       <div class="controls">
         <div class="seg mono">
           <button :class="{ on: shotTheme === 'dark' }" @click="pickTheme('dark')">
@@ -92,8 +89,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.shots { position: relative; z-index: 1; padding: 90px 0 40px; }
-.controls { margin-top: 32px; display: flex; gap: 14px; flex-wrap: wrap; }
+.shots { position: relative; z-index: 1; padding: 0; }
+.shots .container { padding: 0; display: flex; flex-direction: column; }
+.controls { order: 2; margin-top: 18px; display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
 .seg {
   display: inline-flex;
   border: 1px solid var(--hairline); border-radius: 999px; overflow: hidden;
@@ -101,18 +99,18 @@ onMounted(() => {
 .seg button {
   border: none; background: transparent; color: var(--dim);
   font-size: 12.5px; font-weight: 600; letter-spacing: 0.5px;
-  padding: 9px 20px; cursor: pointer;
+  padding: 7px 13px; cursor: pointer;
   transition: background var(--transition), color var(--transition);
 }
 .seg button.on { background: var(--accent-soft); color: var(--accent); }
 .seg button:not(.on):hover { color: var(--ink); }
 .frame {
   position: relative;
-  margin-top: 28px;
+  margin-top: 0;
   border: 1px solid var(--hairline); border-radius: var(--radius);
   overflow: hidden;
   background: var(--card-bg);
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.16);
 }
 .frame img { display: block; width: 100%; height: auto; }
 /* 交叉淡入：旧图绝对定位覆盖在新图上方淡出，无空白帧 */
@@ -122,4 +120,7 @@ onMounted(() => {
   position: absolute; inset: 0;
 }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .fade-enter-active, .fade-leave-active { transition: none; }
+}
 </style>

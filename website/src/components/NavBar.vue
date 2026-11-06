@@ -15,7 +15,7 @@ const { locale, t, toggleLocale } = useI18n()
         <a href="#features">{{ t().nav.features }}</a>
         <a href="#shots">{{ t().nav.shots }}</a>
         <a href="#download">{{ t().nav.download }}</a>
-        <a :href="GITHUB_URL" target="_blank" rel="noopener">{{ t().nav.github }}</a>
+        <a class="github-link" :href="GITHUB_URL" target="_blank" rel="noopener">{{ t().nav.github }}</a>
         <div class="lang-seg mono" role="group" aria-label="language">
           <button :class="{ on: locale === 'zh' }" @click="locale === 'zh' || toggleLocale()">中</button>
           <button :class="{ on: locale === 'en' }" @click="locale === 'en' || toggleLocale()">EN</button>
@@ -71,6 +71,14 @@ const { locale, t, toggleLocale } = useI18n()
 }
 .theme-btn:hover { border-color: var(--accent-border); background: var(--accent-soft); }
 @media (max-width: 640px) {
-  .links { gap: 16px; font-size: 13px; }
+  .nav-inner { padding-inline: 20px; }
+  .links { gap: 10px; font-size: 12px; }
+  .links a { white-space: nowrap; }
+  .github-link { display: none; }
+  .links > a[href="#shots"] { display: none; }
+  .lang-seg button { padding-inline: 9px; }
+}
+@media (max-width: 380px) {
+  .links > a[href="#features"] { display: none; }
 }
 </style>

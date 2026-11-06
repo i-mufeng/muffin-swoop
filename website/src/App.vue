@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
-import ParticleBackground from './components/ParticleBackground.vue'
 import NavBar from './components/NavBar.vue'
 import HeroSection from './components/HeroSection.vue'
 import FeaturesSection from './components/FeaturesSection.vue'
-import ScreenshotSection from './components/ScreenshotSection.vue'
 import DownloadSection from './components/DownloadSection.vue'
 import SiteFooter from './components/SiteFooter.vue'
 
@@ -26,12 +24,10 @@ onMounted(() => {
 </script>
 
 <template>
-  <ParticleBackground />
   <NavBar />
   <main>
     <HeroSection />
     <FeaturesSection />
-    <ScreenshotSection />
     <DownloadSection />
   </main>
   <SiteFooter />

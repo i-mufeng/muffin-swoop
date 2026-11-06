@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { DOWNLOADS, GITHUB_RELEASES_URL, MICROSOFT_STORE_URL } from '../config'
 import { useLatestRelease } from '../composables/useLatestRelease'
 import { useI18n } from '../i18n'
+import ScreenshotSection from './ScreenshotSection.vue'
 
 const { release } = useLatestRelease()
 const { t } = useI18n()
@@ -16,10 +17,11 @@ const versionText = computed(() =>
 <template>
   <section id="top" class="hero">
     <div class="container hero-inner">
+      <div class="hero-copy">
       <a class="ver mono" :href="GITHUB_RELEASES_URL" target="_blank" rel="noopener">
         {{ versionText }}
       </a>
-      <h1>{{ t().hero.titleA }}<span>{{ t().hero.titleB }}</span>{{ t().hero.titleEnd }}</h1>
+      <h1>{{ t().hero.titleA }}<span>{{ t().hero.titleB }}{{ t().hero.titleEnd }}</span></h1>
       <p class="tagline">{{ t().hero.tagline }}</p>
       <div class="cta">
         <div class="cta-row">
@@ -29,57 +31,74 @@ const versionText = computed(() =>
             </svg>
             {{ t().hero.ctaStore }}
           </a>
-          <div class="dl-direct">
-            <button class="btn btn-ghost dl-trigger" type="button">
+          <details class="dl-direct" @keydown.esc="($event.currentTarget as HTMLDetailsElement).open = false">
+            <summary class="btn btn-ghost dl-trigger">
               {{ t().hero.ctaDirect }}
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M18 15l-6-6-6 6" />
               </svg>
-            </button>
+            </summary>
             <div class="dl-pop">
               <a :href="DOWNLOADS.windows">{{ t().hero.ctaWin }}</a>
               <a :href="DOWNLOADS.macos">{{ t().hero.ctaMac }}</a>
             </div>
-          </div>
+          </details>
         </div>
       </div>
+      <ul class="highlights" :aria-label="t().hero.highlightsLabel">
+        <li v-for="highlight in t().hero.highlights" :key="highlight">{{ highlight }}</li>
+      </ul>
+
+          <details class="memory-details">
+            <summary>{{ t().hero.memoryBadge }}</summary>
+            <p>{{ t().hero.memoryNote }} <a href="https://github.com/i-mufeng/muffin-swoop/blob/fc172bbb4980c18ad3f0bc10ed4442e130eac600/docs/msstore.md#内存验证" target="_blank" rel="noopener">{{ t().hero.memorySource }}</a></p>
+          </details>
+
+
       <div class="meta mono">
         <a :href="GITHUB_RELEASES_URL" target="_blank" rel="noopener">{{ t().hero.releases }}</a>
         <span>MIT</span>
       </div>
+      </div>
+      <div class="hero-preview"><ScreenshotSection /></div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.hero { position: relative; z-index: 1; }
+.hero { position: relative; z-index: 1; border-bottom: 1px solid var(--hairline); }
 .hero-inner {
-  min-height: calc(100vh - 68px);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  text-align: center;
-  padding-top: 40px; padding-bottom: 60px;
+  max-width: 1320px; display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
+  align-items: center; gap: 56px; padding-block: 100px 96px;
 }
-.ver {
-  font-size: 13px; color: var(--accent);
-  border: 1px solid var(--accent-border); border-radius: 999px;
-  padding: 7px 18px; background: var(--accent-soft);
-  text-decoration: none; transition: filter var(--transition);
-}
-.ver:hover { filter: brightness(1.15); }
-h1 { margin-top: 34px; font-size: 64px; font-weight: 700; letter-spacing: -2px; line-height: 1.15; }
-h1 span { color: var(--dim); }
-.tagline {
-  margin-top: 24px; font-size: 16.5px; color: var(--dim);
-  line-height: 1.9; max-width: 560px;
-}
-.cta { margin-top: 46px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.cta-row { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; align-items: center; }
+.hero-copy { min-width: 0; }
+.ver { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; color: var(--dim); text-decoration: none; }
+.ver::before { content: ''; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; }
+.ver:hover { color: var(--ink); }
+h1 { margin-top: 24px; font-size: clamp(40px, 4.1vw, 56px); font-weight: 650; letter-spacing: -2px; line-height: 1.28; text-wrap: balance; }
+h1 span { display: block; }
+.tagline { margin-top: 22px; max-width: 380px; color: var(--dim); font-size: 16px; line-height: 1.9; text-wrap: pretty; }
+.cta { margin-top: 32px; }
+.cta-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; }
+.cta .btn-primary { padding: 14px 20px; border-radius: 8px; font-size: 14px; }
+.cta .btn-ghost { font-size: 14px; }
+.highlights { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 28px; }
+.highlights li { padding: 5px 10px; background: var(--card-bg-hover); border-radius: 5px; color: var(--dim); font-size: 12px; line-height: 1.5; white-space: nowrap; }
+.memory-details { margin-top: 16px; font-size: 12px; color: var(--dim); }
+.memory-details summary { display: list-item; cursor: pointer; width: fit-content; line-height: 1.8; }
+.memory-details summary:hover { color: var(--ink); }
+.memory-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+.memory-details p { margin-top: 12px; line-height: 1.9; text-wrap: pretty; }
+.memory-details a { color: var(--ink); }
+.hero-preview { position: relative; min-width: 0; }
+.hero-preview::before { content: ''; position: absolute; inset: 0; background: radial-gradient(ellipse at center, var(--accent-soft), transparent 70%); pointer-events: none; }
 
-/* 直接下载：悬停上浮平台选择浮层 */
+/* 平台选择使用原生 details，支持触控、键盘展开与 Esc 收起。 */
 .dl-direct { position: relative; }
+.dl-trigger { list-style: none; }
+.dl-trigger::-webkit-details-marker { display: none; }
 .dl-trigger svg { transition: transform var(--transition); }
-.dl-direct:hover .dl-trigger svg,
-.dl-direct:focus-within .dl-trigger svg { transform: rotate(180deg); }
+.dl-direct[open] .dl-trigger svg { transform: rotate(180deg); }
 .dl-pop {
   position: absolute; left: 50%; bottom: calc(100% + 10px);
   transform: translate(-50%, 6px);
@@ -91,12 +110,7 @@ h1 span { color: var(--dim); }
   transition: opacity var(--transition), transform var(--transition), visibility var(--transition);
   z-index: 20;
 }
-/* 悬停桥：填平触发器与浮层之间的空隙，鼠标移上去不会断 */
-.dl-pop::before {
-  content: ''; position: absolute; left: 0; right: 0; bottom: -12px; height: 12px;
-}
-.dl-direct:hover .dl-pop,
-.dl-direct:focus-within .dl-pop {
+.dl-direct[open] .dl-pop {
   opacity: 1; visibility: visible; pointer-events: auto;
   transform: translate(-50%, 0);
 }
@@ -113,13 +127,23 @@ h1 span { color: var(--dim); }
 }
 .dl-pop a:hover { background: var(--accent-soft); color: var(--accent); }
 .dl-pop a:hover::after { color: var(--accent); }
-.meta {
-  margin-top: 60px; display: flex; gap: 36px; flex-wrap: wrap; justify-content: center;
-  font-size: 12.5px; color: var(--dim);
+.meta { margin-top: 20px; display: flex; gap: 20px; font-size: 11px; color: var(--dim); }
+.meta a { color: inherit; text-decoration: none; }
+.meta a:hover { color: var(--ink); }
+@media (max-width: 1000px) {
+  .hero-inner { gap: 32px; padding-block: 72px; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); }
+  h1 { font-size: 42px; }
+  .cta-row { gap: 12px; }
 }
-.meta a { color: var(--accent); text-decoration: none; }
-.meta a:hover { text-decoration: underline; }
-@media (max-width: 640px) {
-  h1 { font-size: 38px; letter-spacing: -1px; }
+@media (max-width: 900px) {
+  .hero-inner { grid-template-columns: minmax(0, 1fr); gap: 44px; padding: 48px 24px 48px; }
+  .hero-copy { max-width: 520px; }
+  h1 { font-size: clamp(34px, 7vw, 48px); letter-spacing: -1.5px; }
+  .tagline { margin-top: 16px; }
+  .hero-preview::before { inset: 0; }
+  .cta { margin-top: 24px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dl-pop, .dl-trigger svg { transition: none; }
 }
 </style>
