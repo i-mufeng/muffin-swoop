@@ -9,7 +9,7 @@
 
 :root[data-theme='dark'] {
   --bg: #0a0a0b;
-  --bg-image: none;
+  --bg-image: url('/bg-dark.png');
   --ink: #f4f4f5;
   --dim: #8b8e98;
   --accent: #34d399;
