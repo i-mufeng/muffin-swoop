@@ -46,13 +46,8 @@ const versionText = computed(() =>
       </div>
       <ul class="highlights" :aria-label="t().hero.highlightsLabel">
         <li v-for="highlight in t().hero.highlights" :key="highlight">{{ highlight }}</li>
+        <li :title="t().hero.memoryNote">{{ t().hero.memoryBadge }}</li>
       </ul>
-
-          <details class="memory-details">
-            <summary>{{ t().hero.memoryBadge }}</summary>
-            <p>{{ t().hero.memoryNote }} <a href="https://github.com/i-mufeng/muffin-swoop/blob/fc172bbb4980c18ad3f0bc10ed4442e130eac600/docs/msstore.md#内存验证" target="_blank" rel="noopener">{{ t().hero.memorySource }}</a></p>
-          </details>
-
 
       <div class="meta mono">
         <a :href="GITHUB_RELEASES_URL" target="_blank" rel="noopener">{{ t().hero.releases }}</a>
@@ -87,12 +82,6 @@ h1 span { color: var(--dim); }
 .cta .btn-ghost { font-size: 14px; }
 .highlights { justify-content: center; display: flex; flex-wrap: wrap; gap: 8px; list-style: none; margin-top: 28px; }
 .highlights li { padding: 5px 10px; background: var(--card-bg-hover); border-radius: 5px; color: var(--dim); font-size: 12px; line-height: 1.5; white-space: nowrap; }
-.memory-details { max-width: 580px; margin: 16px auto 0; font-size: 12px; color: var(--dim); }
-.memory-details summary { display: list-item; cursor: pointer; width: fit-content; margin-inline: auto; line-height: 1.8; }
-.memory-details summary:hover { color: var(--ink); }
-.memory-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
-.memory-details p { margin-top: 12px; line-height: 1.9; text-wrap: pretty; }
-.memory-details a { color: var(--ink); }
 .scroll-cue {
   display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px;
   margin-top: 40px; border: 1px solid var(--hairline); border-radius: 50%;
@@ -147,6 +136,8 @@ h1 span { color: var(--dim); }
   .tagline { margin-top: 18px; }
   .cta { margin-top: 28px; }
   .cta-row { gap: 12px; }
+  .highlights { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 320px; margin-inline: auto; }
+  .highlights li { white-space: normal; align-content: center; }
   .scroll-cue { margin-top: 32px; }
 }
 @media (prefers-reduced-motion: reduce) {
